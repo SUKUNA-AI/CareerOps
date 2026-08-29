@@ -1,0 +1,34 @@
+{
+  "identities": [
+    {
+      "name": "careerops-admin",
+      "credentials": [
+        {
+          "accessKey": "<SECRET>",
+          "secretKey": "<SECRET>"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "careerops-collector",
+      "credentials": [
+        {
+          "accessKey": "<SECRET>",
+          "secretKey": "<SECRET>"
+        }
+      ],
+      "actions": [
+        "Read:careerops-raw",
+        "List:careerops-raw",
+        "Write:careerops-raw"
+      ]
+    }
+  ]
+}
