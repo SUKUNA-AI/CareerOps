@@ -1,0 +1,189 @@
+name: careerops-seaweedfs
+
+services:
+  master:
+    image: chrislusf/seaweedfs:4.41
+    restart: unless-stopped
+
+    cpus: "0.50"
+    mem_limit: 384m
+
+    command:
+      - master
+      - -ip=master
+      - -ip.bind=0.0.0.0
+      - -port=9333
+      - -mdir=/data
+      - -peers=none
+      - -defaultReplication=000
+
+    volumes:
+      - /srv/careerops/seaweedfs/master:/data
+
+    networks:
+      - seaweed
+
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1:9333/cluster/status
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  volume:
+    image: chrislusf/seaweedfs:4.41
+    restart: unless-stopped
+
+    cpus: "1.50"
+    mem_limit: 1536m
+
+    command:
+      - volume
+      - -ip=volume
+      - -ip.bind=0.0.0.0
+      - -port=8080
+      - -dir=/data
+      - -master=master:9333
+      - -dataCenter=home
+      - -rack=edge
+      - -max=10
+      - -minFreeSpace=50GiB
+
+    volumes:
+      - /srv/careerops/seaweedfs/volume:/data
+
+    networks:
+      - seaweed
+
+    depends_on:
+      master:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1:8080/status
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  filer:
+    image: chrislusf/seaweedfs:4.41
+    restart: unless-stopped
+
+    cpus: "0.75"
+    mem_limit: 768m
+
+    command:
+      - filer
+      - -ip=filer
+      - -ip.bind=0.0.0.0
+      - -port=8888
+      - -master=master:9333
+      - -defaultStoreDir=/data
+
+    volumes:
+      - /srv/careerops/seaweedfs/filer:/data
+
+    networks:
+      - seaweed
+
+    depends_on:
+      master:
+        condition: service_healthy
+      volume:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1:8888/
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  s3:
+    image: chrislusf/seaweedfs:4.41
+    restart: unless-stopped
+
+    cpus: "0.75"
+    mem_limit: 512m
+
+    command:
+      - s3
+      - -ip=s3
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -filer=filer:8888
+      - -config=/etc/seaweedfs/s3.json
+      - -allowDeleteBucketNotEmpty=false
+
+    volumes:
+      - /etc/careerops/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+    ports:
+      - "127.0.0.1:8333:8333"
+      - "10.42.0.1:8333:8333"
+
+    networks:
+      - seaweed
+
+    depends_on:
+      filer:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -S --spider http://127.0.0.1:8333/ 2>&1
+          | grep -q "403 Forbidden"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+networks:
+  seaweed:
+    driver: bridge
