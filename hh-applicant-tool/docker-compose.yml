@@ -1,0 +1,20 @@
+services:
+  hh_applicant_tool:
+    container_name: hh_applicant_tool
+    image: hh_applicant_tool:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app:ro
+      - ./config:/app/config:rw
+      # Пробрасываем таймзону хоста
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    environment:
+      # Это не трогаем
+      - CONFIG_DIR=/app/config
+      # Смените или закомментируйте при проблемах
+      - TERM=${TERM}
+      # Если время на сервере отличается
+      # - TZ=Europe/Moscow

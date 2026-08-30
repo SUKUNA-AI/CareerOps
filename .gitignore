@@ -28,6 +28,14 @@ Thumbs.db
 .env.*
 !.env.example
 
+# CareerOPS runtime state
+.careerops/
+
+# hh-applicant-tool runtime state
+hh-applicant-tool/config/*
+!hh-applicant-tool/config/.gitkeep
+hh-applicant-tool/.venv/
+
 # Local artifacts
 dist/
 build/
