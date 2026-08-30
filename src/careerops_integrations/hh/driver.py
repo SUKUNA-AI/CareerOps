@@ -177,6 +177,9 @@ class HHApplicantToolCLI:
     def fetch_vacancy(self, vacancy_id: str | int) -> dict[str, Any]:
         return self.call_api(f"vacancies/{vacancy_id}")
 
+    def fetch_resume(self, resume_id: str) -> dict[str, Any]:
+        return self.call_api(f"resumes/{resume_id}")
+
     def submit_application(
         self,
         *,

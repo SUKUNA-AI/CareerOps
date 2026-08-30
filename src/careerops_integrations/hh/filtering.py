@@ -184,8 +184,27 @@ def _title_decision(title: str) -> VacancyDecision:
 
 
 def prefilter_ml_search_item(search_item: dict[str, Any]) -> VacancyDecision:
-    """Cheap title-only gate for HH search results before full vacancy fetch."""
-    return _title_decision(str(search_item.get("name") or ""))
+    """Cheap search-item gate before the more expensive full vacancy fetch."""
+    title_decision = _title_decision(str(search_item.get("name") or ""))
+    if not title_decision.accepted:
+        return title_decision
+
+    relations = tuple(str(value) for value in (search_item.get("relations") or []))
+    if relations:
+        return VacancyDecision(
+            False,
+            "already_has_hh_relation",
+            matched_domains=title_decision.matched_domains,
+        )
+
+    if search_item.get("archived"):
+        return VacancyDecision(
+            False,
+            "archived",
+            matched_domains=title_decision.matched_domains,
+        )
+
+    return title_decision
 
 
 def _area_id(vacancy: dict[str, Any]) -> int | None:

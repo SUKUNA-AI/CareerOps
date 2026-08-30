@@ -1,0 +1,13 @@
+[Unit]
+Description=CareerOPS HH daily plan generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sukuna
+Group=sukuna
+WorkingDirectory=/srv/careerops/app
+EnvironmentFile=-/etc/careerops/hh/env
+EnvironmentFile=-/etc/careerops/hh/scheduler.env
+ExecStart=/srv/careerops/app/.venv/bin/python -m careerops_scheduler.planner

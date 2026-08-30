@@ -12,6 +12,7 @@ from uuid import uuid4
 from careerops_storage import S3JsonStore, S3Settings
 
 from .application_audit import HHApplicationAuditService, HHApplicationBlocked
+from .cover_letters import build_cover_letter
 from .driver import HHApplicantToolCLI
 from .filtering import prefilter_ml_search_item, validate_ml_vacancy
 
@@ -41,7 +42,11 @@ def main() -> None:
     parser.add_argument("--config-dir", type=Path, default=Path("hh-applicant-tool/config"))
     parser.add_argument("--profile", default="careerops-ml")
     parser.add_argument("--resume-id", required=True)
-    parser.add_argument("--letter-file", type=Path, required=True)
+    parser.add_argument(
+        "--letter-file",
+        type=Path,
+        help="Optional fixed cover letter. Omit to generate a short vacancy-specific letter.",
+    )
     parser.add_argument("--search", default=DEFAULT_ML_SEARCH)
     parser.add_argument("--area", type=int, default=1)
     parser.add_argument("--period", type=int, default=14)
@@ -69,12 +74,21 @@ def main() -> None:
     if args.min_delay < 0 or args.max_delay < args.min_delay:
         raise SystemExit("invalid delay range")
 
-    message = args.letter_file.read_text(encoding="utf-8").strip()
-    if not message:
-        raise SystemExit("Letter file is empty")
+    fixed_message: str | None = None
+    if args.letter_file is not None:
+        fixed_message = args.letter_file.read_text(encoding="utf-8").strip()
+        if not fixed_message:
+            raise SystemExit("Letter file is empty")
 
     store = S3JsonStore(S3Settings.from_env())
     driver = HHApplicantToolCLI(config_dir=args.config_dir, profile=args.profile)
+
+    resume: dict[str, object] = {}
+    if fixed_message is None:
+        try:
+            resume = driver.fetch_resume(args.resume_id)
+        except Exception as exc:  # noqa: BLE001 - letter can degrade safely
+            print(f"WARN: could not fetch resume for dynamic cover letters: {exc}")
     application_service = HHApplicationAuditService(
         driver=driver,
         store=store,
@@ -101,6 +115,7 @@ def main() -> None:
             "per_page": args.per_page,
             "professional_roles": args.professional_roles or [],
             "max_responses": args.max_responses,
+            "cover_letter_mode": "fixed_file" if fixed_message is not None else "vacancy_template_v1",
             "live": args.live,
             "started_at": started_at.isoformat(),
         },
@@ -245,8 +260,49 @@ def main() -> None:
             continue
 
         accepted += 1
+
+        if fixed_message is not None:
+            message = fixed_message
+            cover_letter_payload = {
+                "event_type": "hh.cover_letter.generated",
+                "schema_version": 1,
+                "run_id": str(run_id),
+                "vacancy_id": vacancy_id,
+                "strategy": "fixed_file",
+                "template_id": "fixed",
+                "matched_domains": list(decision.matched_domains),
+                "matched_skills": [],
+                "message": message,
+                "created_at": _now().isoformat(),
+            }
+        else:
+            cover_letter = build_cover_letter(
+                vacancy=vacancy,
+                resume=resume,
+                matched_domains=decision.matched_domains,
+                seed=f"{run_id}:{vacancy_id}",
+            )
+            message = cover_letter.message
+            cover_letter_payload = {
+                "event_type": "hh.cover_letter.generated",
+                "schema_version": 1,
+                "run_id": str(run_id),
+                "vacancy_id": vacancy_id,
+                **cover_letter.to_dict(),
+                "created_at": _now().isoformat(),
+            }
+
+        cover_letter_uri = _write_json(
+            store,
+            f"{candidate_prefix}/cover_letter.json",
+            cover_letter_payload,
+        )
+
         if not args.live:
-            print(f"PASS {vacancy_id}: {title} [{submission_mode}] -> {decision_uri}")
+            print(
+                f"PASS {vacancy_id}: {title} [{submission_mode}, letter={cover_letter_payload['template_id']}] "
+                f"-> {decision_uri}"
+            )
             continue
 
         if submitted:
@@ -257,6 +313,7 @@ def main() -> None:
                 vacancy_id=vacancy_id,
                 resume_id=args.resume_id,
                 message=message,
+                before=vacancy,
             )
         except HHApplicationBlocked as exc:
             reasons["blocked_after_recheck"] += 1
@@ -305,6 +362,7 @@ def main() -> None:
                 "submission_mode": result.submission_mode,
                 "application_run_id": str(result.run_id),
                 "application_result_uri": result.result_uri,
+                "cover_letter_uri": cover_letter_uri,
                 "created_at": _now().isoformat(),
             },
         )
@@ -330,6 +388,7 @@ def main() -> None:
     summary_uri = _write_json(store, f"{run_prefix}/summary.json", summary)
     summary["summary_uri"] = summary_uri
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print("CAREEROPS_SUMMARY_JSON=" + json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":

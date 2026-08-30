@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a due CareerOPS HH batch
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

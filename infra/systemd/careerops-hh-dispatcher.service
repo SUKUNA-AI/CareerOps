@@ -1,0 +1,14 @@
+[Unit]
+Description=CareerOPS HH due-batch dispatcher
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=sukuna
+Group=sukuna
+WorkingDirectory=/srv/careerops/app
+EnvironmentFile=-/etc/careerops/hh/env
+EnvironmentFile=-/etc/careerops/hh/scheduler.env
+ExecStart=/srv/careerops/app/.venv/bin/python -m careerops_scheduler.dispatcher

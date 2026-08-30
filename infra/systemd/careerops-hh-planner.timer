@@ -1,0 +1,10 @@
+[Unit]
+Description=Generate the CareerOPS HH plan every morning
+
+[Timer]
+OnCalendar=*-*-* 07:30:00 Europe/Moscow
+Persistent=true
+AccuracySec=2min
+
+[Install]
+WantedBy=timers.target

@@ -145,3 +145,31 @@ def test_hard_guards_block_application(overrides: dict[str, Any]) -> None:
             resume_id="resume",
             message="hello",
         )
+
+
+def test_pre_fetched_before_avoids_duplicate_initial_fetch() -> None:
+    class CountingDriver(FakeDriver):
+        def __init__(self, before):
+            super().__init__(before)
+            self.fetch_count = 0
+
+        def fetch_vacancy(self, vacancy_id: str):
+            self.fetch_count += 1
+            return super().fetch_vacancy(vacancy_id)
+
+    before = _vacancy()
+    driver = CountingDriver(before)
+    service = HHApplicationAuditService(
+        driver=driver,
+        store=FakeStore(),
+        profile_id="careerops-ml",
+    )
+    result = service.apply(
+        vacancy_id="123",
+        resume_id="resume",
+        message="hello",
+        before=before,
+    )
+    assert result.confirmed is True
+    # Only the mandatory post-submit confirmation fetch remains.
+    assert driver.fetch_count == 1

@@ -103,11 +103,12 @@ class HHApplicationAuditService:
         resume_id: str,
         message: str,
         run_id: UUID | None = None,
+        before: dict[str, Any] | None = None,
     ) -> AuditedApplicationResult:
         run_id = run_id or uuid4()
         started_at = _now()
 
-        before = self.driver.fetch_vacancy(vacancy_id)
+        before = before or self.driver.fetch_vacancy(vacancy_id)
         _validate_before_submit(before)
         submission_mode = _submission_mode(before)
 

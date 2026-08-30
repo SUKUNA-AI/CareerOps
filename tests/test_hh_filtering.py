@@ -198,3 +198,10 @@ def test_prefilter_accepts_senior_ml_without_experience_check():
 def test_external_response_still_blocks_after_full_fetch():
     d = validate_ml_vacancy(vacancy("ML Engineer", response_url="https://example.com"))
     assert d.accepted is False and d.reason == "external_response_url"
+
+
+def test_prefilter_rejects_existing_relation_without_full_fetch():
+    d = prefilter_ml_search_item(
+        {"id": "1", "name": "ML Engineer", "relations": ["got_response"]}
+    )
+    assert d.accepted is False and d.reason == "already_has_hh_relation"
