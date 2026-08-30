@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Never bake HH auth state into worker images.
+hh-applicant-tool/config/*
+!hh-applicant-tool/config/.gitkeep
+
+.env
+.env.*

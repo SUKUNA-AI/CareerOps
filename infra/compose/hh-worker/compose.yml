@@ -1,0 +1,13 @@
+services:
+  careerops-hh-worker:
+    container_name: careerops-hh-worker
+    build:
+      context: ../../..
+      dockerfile: infra/compose/hh-worker/Dockerfile
+    network_mode: host
+    working_dir: /app
+    env_file:
+      - /etc/careerops/hh/env
+    volumes:
+      - ../../../hh-applicant-tool/config:/app/hh-applicant-tool/config:rw
+    restart: "no"

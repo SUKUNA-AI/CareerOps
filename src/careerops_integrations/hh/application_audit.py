@@ -25,6 +25,14 @@ class HHApplicationDriver(Protocol):
         message: str,
     ) -> dict[str, Any]: ...
 
+    def submit_application_with_test(
+        self,
+        *,
+        resume_id: str,
+        vacancy_id: str,
+        message: str,
+    ) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class AuditedApplicationResult:
@@ -32,6 +40,7 @@ class AuditedApplicationResult:
     vacancy_id: str
     status: str
     confirmed: bool
+    submission_mode: str
     prefix: str
     before_uri: str
     request_uri: str
@@ -65,15 +74,14 @@ def _validate_before_submit(vacancy: dict[str, Any]) -> None:
             f"vacancy {vacancy_id} is closed_for_applicants"
         )
 
-    if vacancy.get("has_test"):
-        raise HHApplicationBlocked(
-            f"vacancy {vacancy_id} has HH test; MVP requires manual review"
-        )
-
     if vacancy.get("response_url"):
         raise HHApplicationBlocked(
             f"vacancy {vacancy_id} uses external response_url"
         )
+
+
+def _submission_mode(vacancy: dict[str, Any]) -> str:
+    return "upstream_hh_test" if vacancy.get("has_test") else "negotiations_api"
 
 
 class HHApplicationAuditService:
@@ -101,6 +109,7 @@ class HHApplicationAuditService:
 
         before = self.driver.fetch_vacancy(vacancy_id)
         _validate_before_submit(before)
+        submission_mode = _submission_mode(before)
 
         prefix = (
             "applications/"
@@ -116,7 +125,7 @@ class HHApplicationAuditService:
 
         request_payload = {
             "event_type": "hh.application.requested",
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": str(run_id),
             "profile_id": self.profile_id,
             "resume_id": resume_id,
@@ -124,6 +133,8 @@ class HHApplicationAuditService:
             "vacancy_title": before.get("name"),
             "company_name": _company_name(before),
             "message": message,
+            "submission_mode": submission_mode,
+            "has_test": bool(before.get("has_test")),
             "requested_at": started_at.isoformat(),
         }
         request_ref = self.store.put_json(
@@ -132,19 +143,27 @@ class HHApplicationAuditService:
         )
 
         try:
-            upstream_result = self.driver.submit_application(
-                resume_id=resume_id,
-                vacancy_id=vacancy_id,
-                message=message,
-            )
+            if submission_mode == "upstream_hh_test":
+                upstream_result = self.driver.submit_application_with_test(
+                    resume_id=resume_id,
+                    vacancy_id=vacancy_id,
+                    message=message,
+                )
+            else:
+                upstream_result = self.driver.submit_application(
+                    resume_id=resume_id,
+                    vacancy_id=vacancy_id,
+                    message=message,
+                )
         except Exception as exc:
             failed_payload = {
                 "event_type": "hh.application.failed",
-                "schema_version": 1,
+                "schema_version": 2,
                 "run_id": str(run_id),
                 "profile_id": self.profile_id,
                 "resume_id": resume_id,
                 "vacancy_id": vacancy_id,
+                "submission_mode": submission_mode,
                 "status": "failed",
                 "error_type": type(exc).__name__,
                 "error": str(exc),
@@ -170,11 +189,12 @@ class HHApplicationAuditService:
 
         result_payload = {
             "event_type": "hh.application.submitted",
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": str(run_id),
             "profile_id": self.profile_id,
             "resume_id": resume_id,
             "vacancy_id": vacancy_id,
+            "submission_mode": submission_mode,
             "status": "submitted" if confirmed else "unconfirmed",
             "confirmed": confirmed,
             "relations": list(relations),
@@ -191,6 +211,7 @@ class HHApplicationAuditService:
             vacancy_id=vacancy_id,
             status=result_payload["status"],
             confirmed=confirmed,
+            submission_mode=submission_mode,
             prefix=prefix,
             before_uri=before_ref.uri,
             request_uri=request_ref.uri,

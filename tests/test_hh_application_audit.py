@@ -29,6 +29,7 @@ class FakeDriver:
     def __init__(self, before: dict[str, Any]) -> None:
         self.before = before
         self.submitted = False
+        self.mode: str | None = None
 
     def fetch_vacancy(self, vacancy_id: str) -> dict[str, Any]:
         payload = dict(self.before)
@@ -44,7 +45,19 @@ class FakeDriver:
         message: str,
     ) -> dict[str, Any]:
         self.submitted = True
+        self.mode = "negotiations_api"
         return {}
+
+    def submit_application_with_test(
+        self,
+        *,
+        resume_id: str,
+        vacancy_id: str,
+        message: str,
+    ) -> dict[str, Any]:
+        self.submitted = True
+        self.mode = "upstream_hh_test"
+        return {"success": "true"}
 
 
 def _vacancy(**overrides: Any) -> dict[str, Any]:
@@ -64,8 +77,9 @@ def _vacancy(**overrides: Any) -> dict[str, Any]:
 
 def test_audited_application_persists_four_objects() -> None:
     store = FakeStore()
+    driver = FakeDriver(_vacancy())
     service = HHApplicationAuditService(
-        driver=FakeDriver(_vacancy()),
+        driver=driver,
         store=store,
         profile_id="careerops-ml",
     )
@@ -78,6 +92,8 @@ def test_audited_application_persists_four_objects() -> None:
 
     assert result.confirmed is True
     assert result.status == "submitted"
+    assert result.submission_mode == "negotiations_api"
+    assert driver.mode == "negotiations_api"
 
     names = {key.rsplit("/", 1)[-1] for key in store.objects}
     assert names == {
@@ -88,13 +104,31 @@ def test_audited_application_persists_four_objects() -> None:
     }
 
 
+def test_test_vacancy_uses_upstream_test_executor() -> None:
+    store = FakeStore()
+    driver = FakeDriver(_vacancy(has_test=True))
+    service = HHApplicationAuditService(
+        driver=driver,
+        store=store,
+        profile_id="careerops-ml",
+    )
+
+    result = service.apply(vacancy_id="123", resume_id="resume", message="hello")
+
+    assert result.confirmed is True
+    assert result.submission_mode == "upstream_hh_test"
+    assert driver.mode == "upstream_hh_test"
+    request = next(v for k, v in store.objects.items() if k.endswith("application_request.json"))
+    assert request["has_test"] is True
+    assert request["submission_mode"] == "upstream_hh_test"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"relations": ["got_response"]},
         {"archived": True},
         {"closed_for_applicants": True},
-        {"has_test": True},
         {"response_url": "https://example.com/apply"},
     ],
 )
