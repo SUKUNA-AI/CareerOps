@@ -11,10 +11,20 @@ from .reader import HHUpstreamSQLiteReader
 
 
 class HHVacancySync:
-    def __init__(self, *, reader, driver, raw_store) -> None:
-        self.reader: HHUpstreamSQLiteReader = reader
-        self.driver: HHApplicantToolCLI = driver
-        self.raw_store: LocalRawStore = raw_store
+    """Development helper that maps upstream HH vacancies into local RAW."""
+
+    def __init__(
+        self,
+        *,
+        reader: HHUpstreamSQLiteReader,
+        driver: HHApplicantToolCLI,
+        raw_store: LocalRawStore,
+    ) -> None:
+        """Bind upstream reader, HH driver, and local RAW sink."""
+
+        self.reader = reader
+        self.driver = driver
+        self.raw_store = raw_store
 
     def sync_ids(
         self,
@@ -22,6 +32,8 @@ class HHVacancySync:
         *,
         run_id: UUID | None = None,
     ) -> list[SyncedHHVacancy]:
+        """Fetch, archive, and map the requested vacancy ids sequentially."""
+
         run_id = run_id or uuid4()
         result: list[SyncedHHVacancy] = []
 
@@ -43,4 +55,6 @@ class HHVacancySync:
         return result
 
     def sync_recent(self, *, limit: int = 10) -> list[SyncedHHVacancy]:
+        """Synchronize the most recent ids from the upstream SQLite index."""
+
         return self.sync_ids(self.reader.vacancy_ids(limit=limit))

@@ -10,6 +10,8 @@ class HHUpstreamSQLiteReader:
     """Read-only index reader for hh-applicant-tool SQLite state."""
 
     def __init__(self, database_path: str | Path) -> None:
+        """Validate and bind the upstream read-only SQLite database path."""
+
         self.database_path = Path(database_path).resolve()
         if not self.database_path.is_file():
             raise FileNotFoundError(
@@ -17,26 +19,36 @@ class HHUpstreamSQLiteReader:
             )
 
     @classmethod
-    def from_profile(cls, *, config_dir: str | Path, profile: str) -> "HHUpstreamSQLiteReader":
+    def from_profile(cls, *, config_dir: str | Path, profile: str) -> HHUpstreamSQLiteReader:
+        """Resolve the upstream database from a profile directory."""
+
         return cls(Path(config_dir) / profile / "data")
 
     def _connect(self) -> sqlite3.Connection:
+        """Open one SQLite connection in URI read-only mode."""
+
         uri = f"{self.database_path.as_uri()}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
         conn.row_factory = sqlite3.Row
         return conn
 
     def columns(self) -> set[str]:
+        """Return columns exposed by the upstream vacancies table."""
+
         with self._connect() as conn:
             rows = conn.execute("PRAGMA table_info(vacancies)").fetchall()
         return {str(row["name"]) for row in rows}
 
     def count(self) -> int:
+        """Count upstream vacancy index rows."""
+
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS n FROM vacancies").fetchone()
         return int(row["n"])
 
     def iter_vacancies(self, *, limit: int | None = None) -> Iterator[dict[str, Any]]:
+        """Yield compatible upstream index rows, optionally bounded."""
+
         columns = self.columns()
         preferred = [
             "id", "name", "alternate_url", "area_id", "area_name",
@@ -61,4 +73,6 @@ class HHUpstreamSQLiteReader:
                 yield dict(row)
 
     def vacancy_ids(self, *, limit: int | None = None) -> list[str]:
+        """Return vacancy ids from the read-only upstream index."""
+
         return [str(row["id"]) for row in self.iter_vacancies(limit=limit)]

@@ -8,6 +8,8 @@ from careerops_contracts import CanonicalVacancy, RawVacancyRef
 
 
 class HHVacancyOperational(BaseModel):
+    """HH-only current operational flags kept outside the canonical contract."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     vacancy_id: str = Field(min_length=1)
@@ -20,10 +22,14 @@ class HHVacancyOperational(BaseModel):
 
     @property
     def already_interacted(self) -> bool:
+        """Report whether HH exposes any relationship with the vacancy."""
+
         return bool(self.relations)
 
 
 class SyncedHHVacancy(BaseModel):
+    """Development sync result containing RAW, canonical, and HH state."""
+
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
     raw: RawVacancyRef

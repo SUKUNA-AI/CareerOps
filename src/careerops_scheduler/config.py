@@ -6,12 +6,18 @@ from pathlib import Path
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an optional integer environment setting."""
+
     raw = os.getenv(name)
-    return int(raw) if raw not in (None, "") else default
+    if raw is None or raw == "":
+        return default
+    return int(raw)
 
 
 @dataclass(frozen=True, slots=True)
 class SchedulerSettings:
+    """Validated operating limits and paths for the HH scheduler."""
+
     timezone: str = "Europe/Moscow"
     daily_cap: int = 150
     min_runs: int = 7
@@ -32,7 +38,9 @@ class SchedulerSettings:
     per_page: int = 100
 
     @classmethod
-    def from_env(cls) -> "SchedulerSettings":
+    def from_env(cls) -> SchedulerSettings:
+        """Construct scheduler settings from environment variables."""
+
         return cls(
             timezone=os.getenv("CAREEROPS_HH_TIMEZONE", "Europe/Moscow"),
             daily_cap=_env_int("CAREEROPS_HH_DAILY_CAP", 150),
@@ -56,9 +64,13 @@ class SchedulerSettings:
 
     @property
     def compose_dir(self) -> Path:
+        """Return the hh-worker Docker Compose directory."""
+
         return self.repo_root / "infra" / "compose" / "hh-worker"
 
     def validate(self) -> None:
+        """Reject impossible or unsafe scheduler limits."""
+
         if self.daily_cap < 1:
             raise ValueError("daily_cap must be >= 1")
         if not 1 <= self.min_runs <= self.max_runs:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def submit_vacancy_test_via_upstream(
@@ -19,8 +19,10 @@ def submit_vacancy_test_via_upstream(
     """
 
     # Imports are local so ordinary API-only paths do not depend on upstream internals.
-    from hh_applicant_tool.main import HHApplicantTool
-    from hh_applicant_tool.operations.apply_vacancies import Operation
+    from hh_applicant_tool.main import HHApplicantTool  # type: ignore[import-untyped]
+    from hh_applicant_tool.operations.apply_vacancies import (  # type: ignore[import-untyped]
+        Operation,
+    )
 
     tool = HHApplicantTool()
     tool.config_dir = Path(config_dir).resolve()
@@ -54,6 +56,9 @@ def submit_vacancy_test_via_upstream(
     success = result.get("success") if isinstance(result, dict) else None
     if success not in (True, "true", "True", 1, "1"):
         error = result.get("error") if isinstance(result, dict) else None
-        raise RuntimeError(f"upstream HH vacancy-test submission failed: error={error!r}, result={result!r}")
+        raise RuntimeError(
+            "upstream HH vacancy-test submission failed: "
+            f"error={error!r}, result={result!r}"
+        )
 
-    return result
+    return cast(dict[str, Any], result)

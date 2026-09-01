@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -19,9 +20,17 @@ class _Ref:
 class FakeStore:
     def __init__(self) -> None:
         self.objects: dict[str, Any] = {}
+        self.collected_at: dict[str, datetime | None] = {}
 
-    def put_json(self, key: str, payload: Any) -> _Ref:
+    async def put_json(
+        self,
+        key: str,
+        payload: Any,
+        *,
+        collected_at: datetime | None = None,
+    ) -> _Ref:
         self.objects[key] = payload
+        self.collected_at[key] = collected_at
         return _Ref(uri=f"s3://careerops-raw/_lab/hh/{key}")
 
 
@@ -75,7 +84,8 @@ def _vacancy(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
-def test_audited_application_persists_four_objects() -> None:
+@pytest.mark.asyncio
+async def test_audited_application_persists_four_objects() -> None:
     store = FakeStore()
     driver = FakeDriver(_vacancy())
     service = HHApplicationAuditService(
@@ -84,7 +94,7 @@ def test_audited_application_persists_four_objects() -> None:
         profile_id="careerops-ml",
     )
 
-    result = service.apply(
+    result = await service.apply(
         vacancy_id="123",
         resume_id="resume",
         message="hello",
@@ -102,9 +112,22 @@ def test_audited_application_persists_four_objects() -> None:
         "vacancy_after.json",
         "application_result.json",
     }
+    snapshots = [
+        payload
+        for key, payload in store.objects.items()
+        if key.endswith(("vacancy_before.json", "vacancy_after.json"))
+    ]
+    assert all("collected_at" not in payload for payload in snapshots)
+    snapshot_times = [
+        collected_at
+        for key, collected_at in store.collected_at.items()
+        if key.endswith(("vacancy_before.json", "vacancy_after.json"))
+    ]
+    assert all(value is not None and value.tzinfo is not None for value in snapshot_times)
 
 
-def test_test_vacancy_uses_upstream_test_executor() -> None:
+@pytest.mark.asyncio
+async def test_test_vacancy_uses_upstream_test_executor() -> None:
     store = FakeStore()
     driver = FakeDriver(_vacancy(has_test=True))
     service = HHApplicationAuditService(
@@ -113,7 +136,7 @@ def test_test_vacancy_uses_upstream_test_executor() -> None:
         profile_id="careerops-ml",
     )
 
-    result = service.apply(vacancy_id="123", resume_id="resume", message="hello")
+    result = await service.apply(vacancy_id="123", resume_id="resume", message="hello")
 
     assert result.confirmed is True
     assert result.submission_mode == "upstream_hh_test"
@@ -132,7 +155,8 @@ def test_test_vacancy_uses_upstream_test_executor() -> None:
         {"response_url": "https://example.com/apply"},
     ],
 )
-def test_hard_guards_block_application(overrides: dict[str, Any]) -> None:
+@pytest.mark.asyncio
+async def test_hard_guards_block_application(overrides: dict[str, Any]) -> None:
     service = HHApplicationAuditService(
         driver=FakeDriver(_vacancy(**overrides)),
         store=FakeStore(),
@@ -140,14 +164,15 @@ def test_hard_guards_block_application(overrides: dict[str, Any]) -> None:
     )
 
     with pytest.raises(HHApplicationBlocked):
-        service.apply(
+        await service.apply(
             vacancy_id="123",
             resume_id="resume",
             message="hello",
         )
 
 
-def test_pre_fetched_before_avoids_duplicate_initial_fetch() -> None:
+@pytest.mark.asyncio
+async def test_pre_fetched_before_avoids_duplicate_initial_fetch() -> None:
     class CountingDriver(FakeDriver):
         def __init__(self, before):
             super().__init__(before)
@@ -164,7 +189,7 @@ def test_pre_fetched_before_avoids_duplicate_initial_fetch() -> None:
         store=FakeStore(),
         profile_id="careerops-ml",
     )
-    result = service.apply(
+    result = await service.apply(
         vacancy_id="123",
         resume_id="resume",
         message="hello",

@@ -30,7 +30,10 @@ def test_plan_respects_minimum_time_gap():
     from datetime import datetime
 
     times = [datetime.fromisoformat(slot["scheduled_at"]) for slot in plan["slots"]]
-    gaps = [(b - a).total_seconds() / 60 for a, b in zip(times, times[1:])]
+    gaps = [
+        (b - a).total_seconds() / 60
+        for a, b in zip(times, times[1:], strict=False)
+    ]
     assert all(gap >= 80 for gap in gaps)
     assert all(t.tzinfo is not None for t in times)
     assert times[0].astimezone(ZoneInfo("Europe/Moscow")).date() == date(2026, 8, 31)
