@@ -43,15 +43,24 @@ def test_accepts_senior_cv_engineer():
 
 
 def test_accepts_middle_ai_engineer():
-    assert validate_ml_vacancy(vacancy("Middle+ AI Engineer (Native Omnimodality & VLA)")).accepted is True
+    decision = validate_ml_vacancy(
+        vacancy("Middle+ AI Engineer (Native Omnimodality & VLA)")
+    )
+    assert decision.accepted is True
 
 
 def test_accepts_mlops_devops():
-    assert validate_ml_vacancy(vacancy("DevOps / MLOps Engineer (LLM Infrastructure)")).accepted is True
+    decision = validate_ml_vacancy(
+        vacancy("DevOps / MLOps Engineer (LLM Infrastructure)")
+    )
+    assert decision.accepted is True
 
 
 def test_accepts_mlops_center_devops():
-    assert validate_ml_vacancy(vacancy("Старший DevOps - инженер (в Центр MLOps-экспертизы банка)")).accepted is True
+    decision = validate_ml_vacancy(
+        vacancy("Старший DevOps - инженер (в Центр MLOps-экспертизы банка)")
+    )
+    assert decision.accepted is True
 
 
 def test_accepts_python_ai_agents_developer():
@@ -139,7 +148,10 @@ def test_rejects_unity_ai():
 
 
 def test_rejects_quality_control_cv():
-    assert validate_ml_vacancy(vacancy("Инженер по контролю качества кода и моделей (Computer Vision)")).accepted is False
+    decision = validate_ml_vacancy(
+        vacancy("Инженер по контролю качества кода и моделей (Computer Vision)")
+    )
+    assert decision.accepted is False
 
 
 def test_rejects_generic_ai_specialist_without_engineering_role():

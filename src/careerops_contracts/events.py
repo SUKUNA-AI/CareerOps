@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EventEnvelope(BaseModel):
+    """Common immutable metadata carried by normalized CareerOPS events."""
+
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
@@ -31,6 +33,8 @@ class EventEnvelope(BaseModel):
     @field_validator("occurred_at")
     @classmethod
     def occurred_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        """Reject ambiguous event timestamps without a timezone."""
+
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("occurred_at must be timezone-aware")
 

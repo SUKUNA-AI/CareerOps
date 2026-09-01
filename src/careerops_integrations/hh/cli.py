@@ -11,6 +11,8 @@ from .sync import HHVacancySync
 
 
 def _build(args: argparse.Namespace) -> HHVacancySync:
+    """Build the local development sync stack from CLI arguments."""
+
     reader = HHUpstreamSQLiteReader.from_profile(
         config_dir=args.config_dir,
         profile=args.profile,
@@ -24,6 +26,8 @@ def _build(args: argparse.Namespace) -> HHVacancySync:
 
 
 def main() -> None:
+    """Inspect, fetch, or locally synchronize HH vacancies."""
+
     parser = argparse.ArgumentParser(description="CareerOPS HH integration")
     parser.add_argument("--config-dir", type=Path, default=Path("hh-applicant-tool/config"))
     parser.add_argument("--profile", default="careerops-ml")

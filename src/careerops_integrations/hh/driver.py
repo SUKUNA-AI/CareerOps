@@ -4,16 +4,17 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 
 class HHDriverError(RuntimeError):
-    pass
+    """Report invalid output or failure from the upstream HH CLI."""
 
 
 ParamScalar = str | int | bool
-ParamValue = ParamScalar | list[ParamScalar] | tuple[ParamScalar, ...]
+ParamValue = ParamScalar | Sequence[ParamScalar]
 
 
 class HHApplicantToolCLI:
@@ -27,12 +28,16 @@ class HHApplicantToolCLI:
         python_executable: str | Path | None = None,
         timeout_seconds: float = 60.0,
     ) -> None:
+        """Configure the upstream CLI process and timeout."""
+
         self.config_dir = Path(config_dir).resolve()
         self.profile = profile
         self.python_executable = str(python_executable or sys.executable)
         self.timeout_seconds = timeout_seconds
 
     def _base_command(self) -> list[str]:
+        """Build common arguments for every upstream CLI invocation."""
+
         return [
             self.python_executable,
             "-m",
@@ -45,6 +50,8 @@ class HHApplicantToolCLI:
 
     @staticmethod
     def _subprocess_env() -> dict[str, str]:
+        """Force stable UTF-8 encoding for the child process."""
+
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
@@ -52,6 +59,8 @@ class HHApplicantToolCLI:
 
     @staticmethod
     def _decode_json_output(stdout: str) -> dict[str, Any]:
+        """Decode a JSON object from plain or log-prefixed CLI output."""
+
         text = stdout.strip()
         if not text:
             raise HHDriverError("hh-applicant-tool returned empty stdout")
@@ -81,6 +90,8 @@ class HHApplicantToolCLI:
 
     @staticmethod
     def _encode_param(value: ParamScalar) -> str:
+        """Encode one API query parameter for the upstream CLI."""
+
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)
@@ -92,6 +103,8 @@ class HHApplicantToolCLI:
         params: dict[str, ParamValue] | None = None,
         method: str = "GET",
     ) -> dict[str, Any]:
+        """Invoke the upstream public call-api command and validate JSON output."""
+
         command = self._base_command() + ["call-api", endpoint]
 
         for key, value in (params or {}).items():
@@ -132,6 +145,8 @@ class HHApplicantToolCLI:
         pages: int = 1,
         professional_roles: list[int] | None = None,
     ) -> list[dict[str, Any]]:
+        """Search paginated vacancies and deduplicate them by HH id."""
+
         if not text.strip():
             raise ValueError("search text must not be empty")
         if not 1 <= per_page <= 100:
@@ -175,9 +190,13 @@ class HHApplicantToolCLI:
         return found
 
     def fetch_vacancy(self, vacancy_id: str | int) -> dict[str, Any]:
+        """Fetch one full HH vacancy payload."""
+
         return self.call_api(f"vacancies/{vacancy_id}")
 
     def fetch_resume(self, resume_id: str) -> dict[str, Any]:
+        """Fetch one HH resume payload for factual cover-letter matching."""
+
         return self.call_api(f"resumes/{resume_id}")
 
     def submit_application(
@@ -187,6 +206,8 @@ class HHApplicantToolCLI:
         vacancy_id: str,
         message: str,
     ) -> dict[str, Any]:
+        """Submit a standard HH negotiation application."""
+
         return self.call_api(
             "negotiations",
             params={
@@ -196,6 +217,7 @@ class HHApplicantToolCLI:
             },
             method="POST",
         )
+
     def submit_application_with_test(
         self,
         *,
@@ -203,6 +225,8 @@ class HHApplicantToolCLI:
         vacancy_id: str,
         message: str,
     ) -> dict[str, Any]:
+        """Delegate a test-bearing vacancy to the existing upstream bridge."""
+
         from .test_bridge import submit_vacancy_test_via_upstream
 
         return submit_vacancy_test_via_upstream(

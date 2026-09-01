@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
+import asyncio
 import json
 import os
 import subprocess
+import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Any, cast
 from zoneinfo import ZoneInfo
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 from .config import SchedulerSettings
 from .planner import ensure_plan
@@ -17,7 +24,9 @@ from .planner import ensure_plan
 SUMMARY_PREFIX = "CAREEROPS_SUMMARY_JSON="
 
 
-def _atomic_write(path: Path, payload: dict) -> None:
+def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
+    """Replace a local JSON state file atomically."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -26,18 +35,37 @@ def _atomic_write(path: Path, payload: dict) -> None:
 
 @contextmanager
 def _lock(state_dir: Path) -> Iterator[None]:
+    """Hold the cross-platform single-dispatcher file lock."""
+
     state_dir.mkdir(parents=True, exist_ok=True)
     lock_path = state_dir / "dispatcher.lock"
     with lock_path.open("a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
+        if sys.platform == "win32":
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                fh.write("\0")
+                fh.flush()
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _state_path(settings: SchedulerSettings, day: str) -> Path:
+    """Return the local state-file path for one scheduler day."""
+
     return settings.state_dir / f"state-{day}.json"
 
 
-def _new_state(plan: dict) -> dict:
+def _new_state(plan: dict[str, Any]) -> dict[str, Any]:
+    """Create initial mutable state for a generated plan."""
+
     return {
         "event_type": "hh.scheduler.state",
         "schema_version": 1,
@@ -51,39 +79,62 @@ def _new_state(plan: dict) -> dict:
     }
 
 
-def _load_state(settings: SchedulerSettings, plan: dict) -> dict:
+def _load_state(
+    settings: SchedulerSettings,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    """Read existing day state or create it from the plan."""
+
     path = _state_path(settings, plan["date"])
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
     state = _new_state(plan)
     _atomic_write(path, state)
     return state
 
 
 def effective_quota(*, planned: int, carry: int, remaining: int, max_per_run: int) -> int:
+    """Clamp planned quota plus carry to run and daily limits."""
+
     return max(0, min(max_per_run, remaining, planned + max(0, carry)))
 
 
-def _extract_summary(lines: list[str]) -> dict | None:
+def _extract_summary(lines: list[str]) -> dict[str, Any] | None:
+    """Extract the worker's last machine-readable batch summary."""
+
     for line in reversed(lines):
         if line.startswith(SUMMARY_PREFIX):
-            return json.loads(line[len(SUMMARY_PREFIX) :])
+            return cast(dict[str, Any], json.loads(line[len(SUMMARY_PREFIX) :]))
     return None
 
 
-def _persist_dispatch_s3(day: str, slot_id: str, payload: dict) -> str | None:
+async def _persist_dispatch_s3(
+    day: str,
+    slot_id: str,
+    payload: dict[str, Any],
+) -> str | None:
+    """Mirror one dispatch result through the asynchronous S3 API."""
+
     try:
         from careerops_storage import S3JsonStore, S3Settings
 
-        store = S3JsonStore(S3Settings.from_env())
-        ref = store.put_json(f"scheduler/date={day}/slot={slot_id}/dispatch.json", payload)
+        async with S3JsonStore(S3Settings.from_env()) as store:
+            ref = await store.put_json(
+                f"scheduler/date={day}/slot={slot_id}/dispatch.json",
+                payload,
+            )
         return ref.uri
     except Exception as exc:  # noqa: BLE001
         print(f"WARN: dispatch state was not mirrored to S3: {exc}")
         return None
 
 
-def _run_worker(settings: SchedulerSettings, quota: int) -> tuple[int, list[str], dict | None]:
+def _run_worker(
+    settings: SchedulerSettings,
+    quota: int,
+) -> tuple[int, list[str], dict[str, Any] | None]:
+    """Run the existing container worker and capture its summary line."""
+
     if not settings.resume_id:
         raise RuntimeError("CAREEROPS_HH_RESUME_ID is not configured")
 
@@ -132,7 +183,13 @@ def _run_worker(settings: SchedulerSettings, quota: int) -> tuple[int, list[str]
     return returncode, lines, _extract_summary(lines)
 
 
-def dispatch_once(settings: SchedulerSettings, *, now: datetime | None = None) -> dict:
+async def dispatch_once(
+    settings: SchedulerSettings,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Execute one due scheduler slot and asynchronously mirror its result."""
+
     settings.validate()
     tz = ZoneInfo(settings.timezone)
     now = now or datetime.now(tz)
@@ -142,7 +199,7 @@ def dispatch_once(settings: SchedulerSettings, *, now: datetime | None = None) -
         now = now.astimezone(tz)
 
     with _lock(settings.state_dir):
-        plan = ensure_plan(settings, target_date=now.date())
+        plan = await ensure_plan(settings, target_date=now.date())
         state = _load_state(settings, plan)
         state_path = _state_path(settings, plan["date"])
 
@@ -157,7 +214,7 @@ def dispatch_once(settings: SchedulerSettings, *, now: datetime | None = None) -
             print(json.dumps(result, ensure_ascii=False))
             return result
 
-        due_slot: dict | None = None
+        due_slot: dict[str, Any] | None = None
         for slot in plan["slots"]:
             slot_state = state["slots"].setdefault(slot["id"], {"status": "pending"})
             if slot_state.get("status") != "pending":
@@ -270,18 +327,26 @@ def dispatch_once(settings: SchedulerSettings, *, now: datetime | None = None) -
             "batch_summary_uri": summary.get("summary_uri"),
             "finished_at": finished_at.isoformat(),
         }
-        uri = _persist_dispatch_s3(plan["date"], slot_id, dispatch_payload)
+        uri = await _persist_dispatch_s3(plan["date"], slot_id, dispatch_payload)
         if uri:
             dispatch_payload["s3_uri"] = uri
         print(json.dumps(dispatch_payload, ensure_ascii=False, indent=2))
         return dispatch_payload
 
 
-def main() -> None:
+async def _async_main() -> None:
+    """Parse dispatcher CLI arguments and run one due slot."""
+
     parser = argparse.ArgumentParser(description="Dispatch one due CareerOPS HH batch")
     parser.parse_args()
     settings = SchedulerSettings.from_env()
-    dispatch_once(settings)
+    await dispatch_once(settings)
+
+
+def main() -> None:
+    """Run the asynchronous dispatcher from its synchronous console entry point."""
+
+    asyncio.run(_async_main())
 
 
 if __name__ == "__main__":

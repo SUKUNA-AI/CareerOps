@@ -4,7 +4,6 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-
 _DOMAIN_PATTERNS: dict[str, re.Pattern[str]] = {
     "ml": re.compile(
         r"(?i)(?:\bmachine\s+learning\b|(?<![a-z0-9])ml(?![a-z0-9])|"
@@ -119,22 +118,30 @@ _AI_TARGET_ROLE = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class VacancyDecision:
+    """Immutable acceptance decision and its matched or blocked evidence."""
+
     accepted: bool
     reason: str
     matched_domains: tuple[str, ...] = ()
     blocked_terms: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible decision for immutable audit."""
+
         return asdict(self)
 
 
 def _excluded_context(text: str) -> tuple[str, ...]:
+    """Return configured unsafe context categories found in source text."""
+
     return tuple(
         name for name, pattern in _EXCLUDED_CONTEXT_PATTERNS.items() if pattern.search(text)
     )
 
 
 def _title_decision(title: str) -> VacancyDecision:
+    """Apply cheap role/domain rules to a vacancy title."""
+
     title = title.strip()
     if not title:
         return VacancyDecision(False, "missing_title")
@@ -208,6 +215,8 @@ def prefilter_ml_search_item(search_item: dict[str, Any]) -> VacancyDecision:
 
 
 def _area_id(vacancy: dict[str, Any]) -> int | None:
+    """Parse the optional HH area id without inventing a value."""
+
     area = vacancy.get("area") or {}
     raw = area.get("id")
     try:
@@ -217,6 +226,8 @@ def _area_id(vacancy: dict[str, Any]) -> int | None:
 
 
 def _full_context(vacancy: dict[str, Any]) -> str:
+    """Combine source-supported fields for full context exclusions."""
+
     area = vacancy.get("area") or {}
     address = vacancy.get("address") or {}
     employer = vacancy.get("employer") or {}

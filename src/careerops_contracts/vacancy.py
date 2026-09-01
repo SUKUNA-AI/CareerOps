@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from decimal import Decimal
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
 class RawVacancyRef(BaseModel):
+    """Immutable provenance reference to one collected RAW vacancy object."""
+
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
@@ -25,6 +28,8 @@ class RawVacancyRef(BaseModel):
     @field_validator("collected_at")
     @classmethod
     def normalize_collected_at(cls, value: datetime) -> datetime:
+        """Require a timezone-aware collection time and normalize it to UTC."""
+
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("collected_at must be timezone-aware")
 
@@ -32,6 +37,8 @@ class RawVacancyRef(BaseModel):
 
 
 class CanonicalVacancy(BaseModel):
+    """Source-neutral normalized vacancy contract used by OLTP persistence."""
+
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
@@ -78,6 +85,8 @@ class CanonicalVacancy(BaseModel):
         cls,
         value: datetime | None,
     ) -> datetime | None:
+        """Normalize optional business and collection timestamps to UTC."""
+
         if value is None:
             return None
 
