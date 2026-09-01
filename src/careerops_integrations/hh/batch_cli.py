@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import random
-import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +16,6 @@ from .cover_letters import build_cover_letter
 from .driver import HHApplicantToolCLI
 from .filtering import prefilter_ml_search_item, validate_ml_vacancy
 
-
 DEFAULT_ML_SEARCH = (
     'NAME:("ML Engineer" OR "ML-инженер" OR "Machine Learning" OR '
     '"Data Scientist" OR "Data Science" OR "AI Engineer" OR "AI-инженер" OR '
@@ -28,16 +27,37 @@ DEFAULT_ML_SEARCH = (
 
 
 def _now() -> datetime:
+    """Return the current UTC timestamp for producer-owned audit fields."""
+
     return datetime.now(UTC)
 
 
-def _write_json(store: S3JsonStore, key: str, payload: object) -> str:
-    return store.put_json(key, payload).uri
+async def _write_json(
+    store: S3JsonStore,
+    key: str,
+    payload: object,
+    *,
+    collected_at: datetime | None = None,
+) -> str:
+    """Persist a JSON audit object and return its immutable S3 URI."""
+
+    return (
+        await store.put_json(
+            key,
+            payload,
+            collected_at=collected_at,
+        )
+    ).uri
 
 
-def main() -> None:
+async def _run(store: S3JsonStore) -> None:
+    """Run the HH producer while persisting every audit object asynchronously."""
+
     parser = argparse.ArgumentParser(
-        description="CareerOPS ML/DS/AI batch application runner with strict validation and S3 audit"
+        description=(
+            "CareerOPS ML/DS/AI batch application runner with strict validation "
+            "and S3 audit"
+        )
     )
     parser.add_argument("--config-dir", type=Path, default=Path("hh-applicant-tool/config"))
     parser.add_argument("--profile", default="careerops-ml")
@@ -80,7 +100,6 @@ def main() -> None:
         if not fixed_message:
             raise SystemExit("Letter file is empty")
 
-    store = S3JsonStore(S3Settings.from_env())
     driver = HHApplicantToolCLI(config_dir=args.config_dir, profile=args.profile)
 
     resume: dict[str, object] = {}
@@ -99,7 +118,7 @@ def main() -> None:
     started_at = _now()
     run_prefix = f"batches/date={started_at.date().isoformat()}/run_id={run_id}"
 
-    _write_json(
+    await _write_json(
         store,
         f"{run_prefix}/run.json",
         {
@@ -115,7 +134,9 @@ def main() -> None:
             "per_page": args.per_page,
             "professional_roles": args.professional_roles or [],
             "max_responses": args.max_responses,
-            "cover_letter_mode": "fixed_file" if fixed_message is not None else "vacancy_template_v1",
+            "cover_letter_mode": (
+                "fixed_file" if fixed_message is not None else "vacancy_template_v1"
+            ),
             "live": args.live,
             "started_at": started_at.isoformat(),
         },
@@ -131,7 +152,7 @@ def main() -> None:
         professional_roles=args.professional_roles,
     )
 
-    _write_json(
+    await _write_json(
         store,
         f"{run_prefix}/discovery.json",
         {
@@ -164,10 +185,11 @@ def main() -> None:
         candidate_prefix = f"{run_prefix}/candidates/vacancy_id={vacancy_id}"
         title = str(search_item.get("name") or "")
 
-        search_item_uri = _write_json(
+        search_item_uri = await _write_json(
             store,
             f"{candidate_prefix}/search_item.json",
             search_item,
+            collected_at=_now(),
         )
 
         predecision = prefilter_ml_search_item(search_item)
@@ -175,7 +197,7 @@ def main() -> None:
             prefiltered += 1
             reason = f"prefilter_{predecision.reason}"
             reasons[reason] += 1
-            _write_json(
+            await _write_json(
                 store,
                 f"{candidate_prefix}/decision.json",
                 {
@@ -203,7 +225,7 @@ def main() -> None:
             failed += 1
             reason = "captcha_required" if captcha else "fetch_failed"
             reasons[reason] += 1
-            _write_json(
+            await _write_json(
                 store,
                 f"{candidate_prefix}/decision.json",
                 {
@@ -223,18 +245,26 @@ def main() -> None:
             )
             if captcha:
                 stopped_on_captcha = True
-                print(f"STOP {vacancy_id}: HH captcha_required; ending batch without more API calls")
+                print(
+                    f"STOP {vacancy_id}: HH captcha_required; "
+                    "ending batch without more API calls"
+                )
                 break
             print(f"ERROR {vacancy_id}: fetch_failed: {exc}")
             continue
 
-        vacancy_uri = _write_json(store, f"{candidate_prefix}/vacancy.json", vacancy)
+        vacancy_uri = await _write_json(
+            store,
+            f"{candidate_prefix}/vacancy.json",
+            vacancy,
+            collected_at=_now(),
+        )
         decision = validate_ml_vacancy(vacancy, required_area_id=args.area)
         submission_mode = (
             "upstream_hh_test" if vacancy.get("has_test") else "negotiations_api"
         )
         reasons[decision.reason] += 1
-        decision_uri = _write_json(
+        decision_uri = await _write_json(
             store,
             f"{candidate_prefix}/decision.json",
             {
@@ -292,7 +322,7 @@ def main() -> None:
                 "created_at": _now().isoformat(),
             }
 
-        cover_letter_uri = _write_json(
+        cover_letter_uri = await _write_json(
             store,
             f"{candidate_prefix}/cover_letter.json",
             cover_letter_payload,
@@ -300,16 +330,17 @@ def main() -> None:
 
         if not args.live:
             print(
-                f"PASS {vacancy_id}: {title} [{submission_mode}, letter={cover_letter_payload['template_id']}] "
+                f"PASS {vacancy_id}: {title} "
+                f"[{submission_mode}, letter={cover_letter_payload['template_id']}] "
                 f"-> {decision_uri}"
             )
             continue
 
         if submitted:
-            time.sleep(random.uniform(args.min_delay, args.max_delay))
+            await asyncio.sleep(random.uniform(args.min_delay, args.max_delay))
 
         try:
-            result = application_service.apply(
+            result = await application_service.apply(
                 vacancy_id=vacancy_id,
                 resume_id=args.resume_id,
                 message=message,
@@ -325,7 +356,7 @@ def main() -> None:
             captcha = "captcha_required" in text
             reason = "captcha_required" if captcha else "application_failed"
             reasons[reason] += 1
-            _write_json(
+            await _write_json(
                 store,
                 f"{candidate_prefix}/outcome.json",
                 {
@@ -349,7 +380,7 @@ def main() -> None:
 
         submitted += 1
         confirmed += int(result.confirmed)
-        _write_json(
+        await _write_json(
             store,
             f"{candidate_prefix}/outcome.json",
             {
@@ -366,7 +397,10 @@ def main() -> None:
                 "created_at": _now().isoformat(),
             },
         )
-        print(f"APPLY {vacancy_id}: {title} [{result.submission_mode}, {result.status}, confirmed={result.confirmed}]")
+        print(
+            f"APPLY {vacancy_id}: {title} "
+            f"[{result.submission_mode}, {result.status}, confirmed={result.confirmed}]"
+        )
 
     summary = {
         "event_type": "hh.batch.finished",
@@ -385,10 +419,26 @@ def main() -> None:
         "finished_at": _now().isoformat(),
         "s3_prefix": run_prefix,
     }
-    summary_uri = _write_json(store, f"{run_prefix}/summary.json", summary)
+    summary_uri = await _write_json(store, f"{run_prefix}/summary.json", summary)
     summary["summary_uri"] = summary_uri
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    print("CAREEROPS_SUMMARY_JSON=" + json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+    print(
+        "CAREEROPS_SUMMARY_JSON="
+        + json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+async def _async_main() -> None:
+    """Open one pooled async S3 client for the complete producer run."""
+
+    async with S3JsonStore(S3Settings.from_env()) as store:
+        await _run(store)
+
+
+def main() -> None:
+    """Run the asynchronous producer from its synchronous console entry point."""
+
+    asyncio.run(_async_main())
 
 
 if __name__ == "__main__":
