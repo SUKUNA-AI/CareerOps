@@ -10,6 +10,102 @@ from careerops_integrations.hh.configuration import (
     load_discovery_config,
 )
 
+DISCOVERY_PATH = Path("config/hh_discovery.toml")
+ACCOUNTS_PATH = Path("config/hh_accounts.example.toml")
+
+
+def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
+    discovery = load_discovery_config(DISCOVERY_PATH)
+    accounts = load_accounts_config(ACCOUNTS_PATH, discovery=discovery)
+
+    assert len(discovery.query_sets) == 18
+    assert sum(discovery.enabled_query_count_by_set.values()) == 366
+    assert [account.key for account in accounts.enabled_accounts] == [
+        "ml_3y",
+        "ml_5y",
+        "junior",
+    ]
+    junior = accounts.resolve_account("junior")
+    assert [binding.key for binding in junior.enabled_bindings] == [
+        "de_junior",
+        "backend_junior",
+        "ml_ds_junior",
+    ]
+    assert len(junior.query_set_keys) == 13
+    assert discovery.defaults.pages == 1
+    assert discovery.defaults.per_page == 50
+    assert discovery.defaults.max_queries_per_run == 50
+    assert discovery.defaults.max_unique_vacancies_per_run == 250
+    assert discovery.defaults.max_full_fetch_per_run == 100
+    assert discovery.defaults.search_query_delay_seconds == 1.0
+    assert discovery.defaults.full_fetch_min_delay_seconds == 1.5
+    assert discovery.defaults.full_fetch_max_delay_seconds == 3.0
+    assert junior.apply_runs_per_day * junior.max_apply_per_run >= junior.apply_daily_cap
+
+
+def test_duplicate_query_set_reference_executes_once_per_account_union() -> None:
+    discovery = load_discovery_config(DISCOVERY_PATH)
+    once = discovery.select_queries(["ml_core"])
+    duplicated = discovery.select_queries(["ml_core", "ml_core"])
+    assert duplicated == once
+
+
+def test_catalog_contains_required_broad_ru_en_families() -> None:
+    discovery = load_discovery_config(DISCOVERY_PATH)
+    texts = {
+        query.text
+        for query_set in discovery.query_sets.values()
+        for query in query_set.queries
+    }
+    required = {
+        "ML Engineer",
+        "ML-инженер",
+        "Data Scientist",
+        "Дата сайентист",
+        "LLM Engineer",
+        "NLP-инженер",
+        "VLM Engineer",
+        "OCR Developer",
+        "AI Platform Engineer",
+        "ML Infrastructure Engineer",
+        "Senior ML Engineer",
+        "Tech Lead ML",
+        "Тимлид Data Science",
+        "Data Engineer",
+        "ETL Developer",
+        "DWH-разработчик",
+        "Kafka Engineer",
+        "Data Analyst ClickHouse",
+        "Python Backend Developer",
+        "FastAPI Developer",
+        "Django Developer",
+        "Flask Developer",
+        "Junior Python Developer",
+        "Стажёр машинного обучения",
+    }
+    assert required <= texts
+
+
+def test_example_has_only_placeholders_and_no_credential_fields() -> None:
+    text = ACCOUNTS_PATH.read_text(encoding="utf-8")
+    accounts = load_accounts_config(
+        ACCOUNTS_PATH,
+        discovery=load_discovery_config(DISCOVERY_PATH),
+    )
+    source_ids = [
+        binding.source_resume_id
+        for account in accounts.accounts
+        for binding in account.bindings
+    ]
+    assert all(source_id.startswith("REPLACE_ME_") for source_id in source_ids)
+    for forbidden in ("token", "cookie", "password", "secret", "access_key"):
+        assert forbidden not in text.lower()
+    assert all(
+        not binding.auto_apply
+        for account in accounts.accounts
+        for binding in account.bindings
+    )
+
 
 def _write_minimal_discovery(path: Path) -> None:
     path.write_text(
