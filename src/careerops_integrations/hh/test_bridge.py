@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+from .runtime import HHExternalWriteGuard
+
 
 def submit_vacancy_test_via_upstream(
     *,
@@ -11,12 +13,15 @@ def submit_vacancy_test_via_upstream(
     vacancy_id: str,
     resume_id: str,
     message: str,
+    external_write_guard: HHExternalWriteGuard,
 ) -> dict[str, Any]:
     """Use vendored hh-applicant-tool's native private test-response flow.
 
     CareerOPS intentionally does not reimplement HH's web-form protocol here.
     The upstream source is vendored at a pinned revision and owns this behavior.
     """
+
+    external_write_guard.require("HH vacancy-test upstream bridge")
 
     # Imports are local so ordinary API-only paths do not depend on upstream internals.
     from hh_applicant_tool.main import HHApplicantTool  # type: ignore[import-untyped]
