@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
-from collections.abc import Iterator
+import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+
+
+def pytest_asyncio_loop_factories(
+    config: pytest.Config,
+    item: pytest.Item,
+) -> dict[str, Callable[[], asyncio.AbstractEventLoop]]:
+    """Use the psycopg-compatible Selector loop for async tests on Windows."""
+
+    del config, item
+    if sys.platform == "win32":
+        return {"windows_selector": asyncio.SelectorEventLoop}
+    return {"default": asyncio.new_event_loop}
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md letter.example.txt ./
 COPY src ./src
+COPY config ./config
 COPY hh-applicant-tool ./hh-applicant-tool
 
 RUN pip install --no-cache-dir . && \

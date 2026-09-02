@@ -28,6 +28,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "integration_postgres: requires an explicitly configured disposable local PostgreSQL",
+]
 
 [tool.ruff]
 target-version = "py312"

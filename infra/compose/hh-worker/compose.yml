@@ -8,6 +8,9 @@ services:
     working_dir: /app
     env_file:
       - /etc/careerops/hh/env
+      - /etc/careerops/hh/scheduler.env
     volumes:
       - ../../../hh-applicant-tool/config:/app/hh-applicant-tool/config:rw
+      - /etc/careerops/hh/accounts.toml:/etc/careerops/hh/accounts.toml:ro
+      - ../../../config:/srv/careerops/app/config:ro
     restart: "no"
