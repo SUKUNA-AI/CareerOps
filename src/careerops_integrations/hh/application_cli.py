@@ -9,16 +9,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from careerops_storage import S3JsonStore, S3Settings
+from careerops_storage import (
+    PostgresApplicationClaimStore,
+    PostgresSettings,
+    S3JsonStore,
+    S3Settings,
+    connect_postgres,
+)
 
 from .application_audit import HHApplicationAuditService
+from .apply_batch import _require_published_resume
 from .driver import HHApplicantToolCLI
+from .runtime import HHExternalWriteGuard, RuntimeMode
 
 
-def _build_driver(args: argparse.Namespace) -> HHApplicantToolCLI:
+def _build_driver(
+    args: argparse.Namespace,
+    guard: HHExternalWriteGuard,
+) -> HHApplicantToolCLI:
     """Construct the existing synchronous HH adapter from CLI arguments."""
 
-    return HHApplicantToolCLI(config_dir=args.config_dir, profile=args.profile)
+    return HHApplicantToolCLI(
+        config_dir=args.config_dir,
+        profile=args.profile,
+        external_write_guard=guard,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,6 +48,7 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("hh-applicant-tool/config"),
     )
     parser.add_argument("--profile", default="careerops-ml")
+    parser.add_argument("--mode")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("s3-smoke")
     apply_parser = sub.add_parser("apply")
@@ -42,13 +58,26 @@ def _parser() -> argparse.ArgumentParser:
     apply_parser.add_argument(
         "--live",
         action="store_true",
-        help="Actually submit to HH. Required safety flag.",
+        help=(
+            "Deprecated alias for --mode apply; never bypasses "
+            "CAREEROPS_HH_ALLOW_EXTERNAL_WRITES."
+        ),
     )
     return parser
 
 
-async def _run(args: argparse.Namespace, store: S3JsonStore) -> None:
+async def _run(
+    args: argparse.Namespace,
+    store: S3JsonStore,
+    claim_store: PostgresApplicationClaimStore | None = None,
+) -> None:
     """Execute the selected command through one shared async S3 client."""
+
+    mode = RuntimeMode.parse(args.mode)
+    if getattr(args, "live", False):
+        if args.mode is not None and mode is not RuntimeMode.APPLY:
+            raise SystemExit("--live conflicts with --mode observe")
+        mode = RuntimeMode.APPLY
 
     if args.command == "s3-smoke":
         run_id = uuid4()
@@ -77,17 +106,34 @@ async def _run(args: argparse.Namespace, store: S3JsonStore) -> None:
         )
         return
 
-    if not args.live:
-        raise SystemExit("Refusing to submit: add --live after checking vacancy/letter.")
+    if mode is not RuntimeMode.APPLY:
+        raise SystemExit("Refusing to submit: select --mode apply (or deprecated --live).")
+    guard = HHExternalWriteGuard.from_env(mode)
+    guard.validate_write_capable_startup()
+    if claim_store is None:
+        raise SystemExit("APPLY requires persistent PostgreSQL application claims")
 
     message = args.letter_file.read_text(encoding="utf-8").strip()
     if not message:
         raise SystemExit("Letter file is empty.")
 
+    driver = _build_driver(args, guard)
+    try:
+        resume = driver.fetch_resume(args.resume_id)
+        _require_published_resume(resume, resume_id=args.resume_id)
+    except Exception as exc:
+        raise SystemExit(
+            "Current HH resume is not provably published; APPLY aborted: "
+            f"{exc}"
+        ) from exc
+
     service = HHApplicationAuditService(
-        driver=_build_driver(args),
+        driver=driver,
         store=store,
+        claim_store=claim_store,
+        account_key=args.profile,
         profile_id=args.profile,
+        external_write_guard=guard,
     )
     result = await service.apply(
         vacancy_id=args.vacancy_id,
@@ -117,7 +163,19 @@ async def _async_main() -> None:
 
     args = _parser().parse_args()
     async with S3JsonStore(S3Settings.from_env()) as store:
-        await _run(args, store)
+        if args.command == "s3-smoke":
+            await _run(args, store)
+            return
+        connection = await connect_postgres(
+            PostgresSettings.from_env(),
+            autocommit=True,
+        )
+        async with connection:
+            await _run(
+                args,
+                store,
+                PostgresApplicationClaimStore(connection),
+            )
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from careerops_integrations.hh.apply_batch import _require_published_resume
 from careerops_integrations.hh.configuration import HHAccountConfig
 from careerops_integrations.hh.resume_sync import (
     AccountResumeInventory,
@@ -16,6 +17,25 @@ from careerops_integrations.hh.resume_sync import (
 )
 
 NOW = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("status", ["not_published", "draft", None])
+def test_apply_rejects_every_non_published_upstream_resume(
+    status: str | None,
+) -> None:
+    payload: dict[str, Any] = {"id": "resume-1"}
+    if status is not None:
+        payload["status"] = {"id": status}
+
+    with pytest.raises(ValueError, match="not currently published"):
+        _require_published_resume(payload, resume_id="resume-1")
+
+
+def test_apply_accepts_explicitly_published_upstream_resume() -> None:
+    _require_published_resume(
+        {"id": "resume-1", "status": {"id": "published"}},
+        resume_id="resume-1",
+    )
 
 
 class MemoryRegistry:

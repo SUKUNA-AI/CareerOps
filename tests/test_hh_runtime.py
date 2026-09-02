@@ -5,6 +5,10 @@ from typing import Any
 
 import pytest
 
+from careerops_integrations.hh.application_audit import HHApplicationAuditService
+from careerops_integrations.hh.application_cli import _parser as application_parser
+from careerops_integrations.hh.application_cli import _run as run_application_cli
+from careerops_integrations.hh.batch_cli import _parser, _resolve_mode
 from careerops_integrations.hh.driver import HHApplicantToolCLI
 from careerops_integrations.hh.runtime import (
     HHExternalWriteForbidden,
@@ -17,6 +21,14 @@ from careerops_integrations.hh.test_bridge import submit_vacancy_test_via_upstre
 def test_exactly_two_modes_and_default_observe() -> None:
     assert list(RuntimeMode) == [RuntimeMode.OBSERVE, RuntimeMode.APPLY]
     assert RuntimeMode.parse(None) is RuntimeMode.OBSERVE
+
+
+def test_batch_cli_defaults_to_postgres_resume_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAREEROPS_HH_RESUME_REGISTRY", raising=False)
+    args = _parser().parse_args([])
+    assert args.resume_registry == "postgres"
 
 
 def test_invalid_mode_fails_closed() -> None:
@@ -188,3 +200,67 @@ def test_driver_negotiation_evidence_is_exactly_resume_specific(
     )
     assert evidence["found"] is False
     assert evidence["matches"] == []
+
+
+@pytest.mark.asyncio
+async def test_application_service_observe_guard_fails_before_any_side_effect() -> None:
+    class Driver:
+        def fetch_vacancy(self, vacancy_id: str) -> dict[str, Any]:
+            raise AssertionError("fetch must not run")
+
+        def submit_application(self, **kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("submit must not run")
+
+        def submit_application_with_test(self, **kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("test submit must not run")
+
+    class Store:
+        async def put_json(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("audit must not run")
+
+    class Claims:
+        async def acquire(self, **kwargs: Any) -> Any:
+            raise AssertionError("claim must not run")
+
+        async def transition(self, **kwargs: Any) -> Any:
+            raise AssertionError("claim transition must not run")
+
+    service = HHApplicationAuditService(
+        driver=Driver(),
+        store=Store(),
+        claim_store=Claims(),  # type: ignore[arg-type]
+        account_key="account",
+        profile_id="profile",
+    )
+    with pytest.raises(HHExternalWriteForbidden):
+        await service.apply(vacancy_id="v", resume_id="r", message="m")
+
+
+def test_deprecated_live_maps_to_apply_but_does_not_create_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _parser().parse_args(["--live", "--resume-id", "resume"])
+    assert _resolve_mode(args, None) is RuntimeMode.APPLY
+    monkeypatch.delenv("CAREEROPS_HH_ALLOW_EXTERNAL_WRITES", raising=False)
+    guard = HHExternalWriteGuard.from_env(RuntimeMode.APPLY)
+    with pytest.raises(HHExternalWriteForbidden):
+        guard.validate_write_capable_startup()
+
+
+@pytest.mark.asyncio
+async def test_deprecated_application_live_does_not_hide_invalid_mode() -> None:
+    args = application_parser().parse_args(
+        [
+            "--mode",
+            "shadow",
+            "apply",
+            "vacancy",
+            "--resume-id",
+            "resume",
+            "--letter-file",
+            "unused.txt",
+            "--live",
+        ]
+    )
+    with pytest.raises(ValueError, match="invalid HH runtime mode"):
+        await run_application_cli(args, object())  # type: ignore[arg-type]
