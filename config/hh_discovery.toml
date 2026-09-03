@@ -6,12 +6,12 @@ period = 14
 pages = 1
 per_page = 50
 order_by = "publication_time"
-max_queries_per_run = 50
-search_query_delay_seconds = 1.0
-full_fetch_min_delay_seconds = 1.5
-full_fetch_max_delay_seconds = 3.0
-max_unique_vacancies_per_run = 250
-max_full_fetch_per_run = 100
+max_queries_per_run = 25
+search_query_delay_seconds = 2.0
+full_fetch_min_delay_seconds = 3.0
+full_fetch_max_delay_seconds = 5.0
+max_unique_vacancies_per_run = 60
+max_full_fetch_per_run = 25
 
 [query_sets.ml_core]
 version = 1

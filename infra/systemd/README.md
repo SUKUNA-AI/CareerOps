@@ -7,7 +7,7 @@ receives its own `observe_runs_per_day` slots; there is no application quota or
 shortfall carry.
 
 Each OBSERVE launch reserves the next query window in PostgreSQL by stable HH
-source profile. The default is at most 50 search queries per run; the complete
+source profile. The default is at most 25 search queries per run; the complete
 catalog rotates deterministically across runs and account-key renames do not
 reset its cursor.
 

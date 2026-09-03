@@ -36,12 +36,12 @@ def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
     assert len(junior.query_set_keys) == 15
     assert discovery.defaults.pages == 1
     assert discovery.defaults.per_page == 50
-    assert discovery.defaults.max_queries_per_run == 50
-    assert discovery.defaults.max_unique_vacancies_per_run == 250
-    assert discovery.defaults.max_full_fetch_per_run == 100
-    assert discovery.defaults.search_query_delay_seconds == 1.0
-    assert discovery.defaults.full_fetch_min_delay_seconds == 1.5
-    assert discovery.defaults.full_fetch_max_delay_seconds == 3.0
+    assert discovery.defaults.max_queries_per_run == 25
+    assert discovery.defaults.max_unique_vacancies_per_run == 60
+    assert discovery.defaults.max_full_fetch_per_run == 25
+    assert discovery.defaults.search_query_delay_seconds == 2.0
+    assert discovery.defaults.full_fetch_min_delay_seconds == 3.0
+    assert discovery.defaults.full_fetch_max_delay_seconds == 5.0
     assert junior.apply_runs_per_day * junior.max_apply_per_run >= junior.apply_daily_cap
 
 
