@@ -46,3 +46,15 @@ account-run reconciles resumes, runs every published active
 conservative employer-write-attempt budget across those resume runs. PostgreSQL
 claims prevent concurrent or ambiguous duplicate POSTs. OBSERVE state never
 receives application quota fields.
+
+
+## S3 RAW materialization
+
+Completed schema-v3 OBSERVE batches are materialized independently from
+SeaweedFS RAW into PostgreSQL by `careerops-hh-materializer.timer`.
+
+The materializer runs every ten minutes, ignores unfinished batches without
+`summary.json`, skips non-OBSERVE/legacy batches, and uses
+`careerops.observation_runs.id` as the committed checkpoint. Each pending run
+is loaded in its own PostgreSQL transaction. Failed runs remain pending and
+are retried by a later materializer invocation without blocking HH discovery.

@@ -28,14 +28,17 @@ install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-planner.service" /etc/sys
 install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-planner.timer" /etc/systemd/system/
 install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-dispatcher.service" /etc/systemd/system/
 install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-dispatcher.timer" /etc/systemd/system/
+install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-materializer.service" /etc/systemd/system/
+install -m 0644 "$REPO_ROOT/infra/systemd/careerops-hh-materializer.timer" /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable --now careerops-hh-planner.timer
-systemctl enable careerops-hh-dispatcher.timer
+systemctl disable --now careerops-hh-dispatcher.timer
+systemctl enable --now careerops-hh-materializer.timer
 systemctl start careerops-hh-planner.service
 
 echo
 echo "CareerOPS HH scheduler installed in OBSERVE mode."
 echo "Plan: /var/lib/careerops/hh/plan-$(date +%F).json"
-echo "Dispatcher is installed but NOT started yet."
-echo "Review accounts.toml and the plan before starting the dispatcher timer."
+echo "Dispatcher is installed and DISABLED by default."
+echo "Review accounts.toml and the plan, then explicitly enable the dispatcher timer."

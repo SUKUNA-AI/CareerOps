@@ -1,0 +1,11 @@
+[Unit]
+Description=Materialize pending CareerOPS HH RAW batches
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
