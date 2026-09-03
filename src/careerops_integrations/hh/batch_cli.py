@@ -1,35 +1,51 @@
+"""Two-mode HH batch CLI: broad OBSERVE by default, guarded APPLY by opt-in."""
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-import random
+import os
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
-from careerops_storage import S3JsonStore, S3Settings
-
-from .application_audit import HHApplicationAuditService, HHApplicationBlocked
-from .cover_letters import build_cover_letter
-from .driver import HHApplicantToolCLI
-from .filtering import prefilter_ml_search_item, validate_ml_vacancy
-
-DEFAULT_ML_SEARCH = (
-    'NAME:("ML Engineer" OR "ML-инженер" OR "Machine Learning" OR '
-    '"Data Scientist" OR "Data Science" OR "AI Engineer" OR "AI-инженер" OR '
-    '"AI разработчик" OR "AI-разработчик" OR "Computer Vision" OR "CV Engineer" OR '
-    '"NLP Engineer" OR "NLP-инженер" OR "LLM Engineer" OR "VLM Engineer" OR '
-    '"MLOps" OR "ML Infrastructure" OR "DL Engineer" OR "DL-инженер" OR '
-    '"DL-исследователь")'
+from careerops_storage import (
+    PostgresApplicationClaimStore,
+    PostgresObserveQueryCursorStore,
+    PostgresResumeRegistry,
+    PostgresSettings,
+    S3JsonStore,
+    S3Settings,
+    connect_postgres,
 )
 
+from .application_claims import ApplicationClaimStore
+from .apply_batch import DEFAULT_ML_SEARCH, ApplyBatchOptions, run_apply_batch
+from .configuration import (
+    DiscoveryConfig,
+    HHAccountConfig,
+    HHAccountsConfig,
+    accounts_config_path_from_env,
+    discovery_config_path_from_env,
+    load_accounts_config,
+    load_discovery_config,
+)
+from .driver import HHApplicantToolCLI
+from .observe import HHObserveRunner, ObserveQueryCursorStore
+from .resume_sync import (
+    JsonResumeRegistry,
+    ReconciledResume,
+    ResumeReconciliationResult,
+    ResumeRegistry,
+    reconcile_account_resumes,
+    resume_state_dir_from_env,
+)
+from .runtime import HHExternalWriteGuard, RuntimeMode
 
-def _now() -> datetime:
-    """Return the current UTC timestamp for producer-owned audit fields."""
-
-    return datetime.now(UTC)
+SUMMARY_PREFIX = "CAREEROPS_SUMMARY_JSON="
 
 
 async def _write_json(
@@ -39,7 +55,7 @@ async def _write_json(
     *,
     collected_at: datetime | None = None,
 ) -> str:
-    """Persist a JSON audit object and return its immutable S3 URI."""
+    """Persist JSON unchanged and return its immutable S3 URI."""
 
     return (
         await store.put_json(
@@ -50,23 +66,64 @@ async def _write_json(
     ).uri
 
 
-async def _run(store: S3JsonStore) -> None:
-    """Run the HH producer while persisting every audit object asynchronously."""
+def _parser() -> argparse.ArgumentParser:
+    """Build the preferred account CLI plus temporary manual APPLY compatibility."""
 
     parser = argparse.ArgumentParser(
-        description=(
-            "CareerOPS ML/DS/AI batch application runner with strict validation "
-            "and S3 audit"
-        )
+        description="CareerOPS HH OBSERVE/APPLY account runner with immutable S3 audit"
     )
-    parser.add_argument("--config-dir", type=Path, default=Path("hh-applicant-tool/config"))
-    parser.add_argument("--profile", default="careerops-ml")
-    parser.add_argument("--resume-id", required=True)
     parser.add_argument(
-        "--letter-file",
-        type=Path,
-        help="Optional fixed cover letter. Omit to generate a short vacancy-specific letter.",
+        "--mode",
+        help="observe (default) or apply; invalid values fail closed",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "Deprecated alias for --mode apply. It never bypasses "
+            "CAREEROPS_HH_ALLOW_EXTERNAL_WRITES."
+        ),
+    )
+    parser.add_argument("--account-key")
+    parser.add_argument(
+        "--resume-key",
+        help="Explicit configured binding key for multi-resume APPLY accounts",
+    )
+    parser.add_argument(
+        "--accounts-config",
+        type=Path,
+        default=accounts_config_path_from_env(),
+    )
+    parser.add_argument(
+        "--discovery-config",
+        type=Path,
+        default=discovery_config_path_from_env(),
+    )
+    parser.add_argument(
+        "--resume-registry",
+        choices=("postgres", "json"),
+        default=os.getenv("CAREEROPS_HH_RESUME_REGISTRY", "postgres"),
+        help=(
+            "PostgreSQL is primary; json only replaces resume inventory for "
+            "dev/bootstrap, while OBSERVE query rotation remains PostgreSQL-backed"
+        ),
+    )
+    parser.add_argument(
+        "--resume-state-dir",
+        type=Path,
+        default=resume_state_dir_from_env(),
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=Path("hh-applicant-tool/config"),
+    )
+
+    # Temporary manual/debug APPLY compatibility. Production account dispatch does
+    # not pass a static resume id or profile through scheduler arguments.
+    parser.add_argument("--profile", default="careerops-ml")
+    parser.add_argument("--resume-id")
+    parser.add_argument("--letter-file", type=Path)
     parser.add_argument("--search", default=DEFAULT_ML_SEARCH)
     parser.add_argument("--area", type=int, default=1)
     parser.add_argument("--period", type=int, default=14)
@@ -74,369 +131,492 @@ async def _run(store: S3JsonStore) -> None:
     parser.add_argument("--per-page", type=int, default=50)
     parser.add_argument("--max-responses", type=int, default=15)
     parser.add_argument(
+        "--account-quota-remaining",
+        type=int,
+        help=(
+            "Scheduler-supplied remaining APPLY quota for this account/day. "
+            "Ignored nowhere and never accepted by OBSERVE."
+        ),
+    )
+    parser.add_argument(
         "--professional-role",
         type=int,
         action="append",
         dest="professional_roles",
-        help="Repeat to add HH professional_role filters. Omit for title-only discovery.",
     )
     parser.add_argument("--min-delay", type=float, default=1.0)
     parser.add_argument("--max-delay", type=float, default=3.0)
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Actually submit accepted vacancies. Without this flag only validation/audit runs.",
+    return parser
+
+
+def _load_configs_if_available(
+    args: argparse.Namespace,
+) -> tuple[DiscoveryConfig | None, HHAccountsConfig | None]:
+    """Load account topology when present while preserving manual APPLY debug use."""
+
+    if not args.accounts_config.exists():
+        return None, None
+    discovery = load_discovery_config(args.discovery_config)
+    accounts = load_accounts_config(args.accounts_config, discovery=discovery)
+    return discovery, accounts
+
+
+def _resolve_mode(
+    args: argparse.Namespace,
+    accounts: HHAccountsConfig | None,
+) -> RuntimeMode:
+    """Resolve CLI/env/config mode with OBSERVE as the final default."""
+
+    configured: str | RuntimeMode | None = args.mode
+    if configured is None:
+        configured = os.getenv("CAREEROPS_HH_MODE")
+    if configured is None and accounts is not None:
+        configured = accounts.runtime_mode
+    mode = RuntimeMode.parse(configured)
+    if args.live:
+        if args.mode is not None and mode is not RuntimeMode.APPLY:
+            raise ValueError("--live conflicts with --mode observe")
+        mode = RuntimeMode.APPLY
+    return mode
+
+
+async def _reconcile(
+    *,
+    account: HHAccountConfig,
+    driver: HHApplicantToolCLI,
+    registry: ResumeRegistry,
+) -> ResumeReconciliationResult:
+    """Use the existing account-scoped transport for authoritative resume sync."""
+
+    return await reconcile_account_resumes(
+        driver=driver,
+        account=account,
+        registry=registry,
     )
-    args = parser.parse_args()
 
-    if args.max_responses < 1:
-        raise SystemExit("--max-responses must be >= 1")
-    if args.min_delay < 0 or args.max_delay < args.min_delay:
-        raise SystemExit("invalid delay range")
 
-    fixed_message: str | None = None
-    if args.letter_file is not None:
-        fixed_message = args.letter_file.read_text(encoding="utf-8").strip()
-        if not fixed_message:
-            raise SystemExit("Letter file is empty")
+def _select_apply_resumes(
+    *,
+    reconciliation: ResumeReconciliationResult,
+    resume_key: str | None,
+) -> tuple[ReconciledResume, ...]:
+    """Select active, assigned, explicit-auto-apply identities for an account run."""
 
-    driver = HHApplicantToolCLI(config_dir=args.config_dir, profile=args.profile)
+    candidates = reconciliation.inventory.auto_apply_resumes
+    if resume_key is not None:
+        for resume in candidates:
+            if resume.binding_key == resume_key:
+                return (resume,)
+        raise ValueError(
+            f"resume binding {resume_key!r} is not active and auto_apply-enabled"
+        )
+    return candidates
 
-    resume: dict[str, object] = {}
-    if fixed_message is None:
-        try:
-            resume = driver.fetch_resume(args.resume_id)
-        except Exception as exc:  # noqa: BLE001 - letter can degrade safely
-            print(f"WARN: could not fetch resume for dynamic cover letters: {exc}")
-    application_service = HHApplicationAuditService(
+
+def _account_run_quota(
+    *,
+    configured_daily_cap: int,
+    requested_max_responses: int,
+    scheduler_remaining: int | None,
+) -> tuple[int, int]:
+    """Return authoritative remaining daily quota and conservative run budget."""
+
+    if requested_max_responses < 1:
+        raise ValueError("max_responses must be >= 1")
+    if scheduler_remaining is not None and scheduler_remaining < 0:
+        raise ValueError("account_quota_remaining must be >= 0")
+    remaining = configured_daily_cap
+    if scheduler_remaining is not None:
+        remaining = min(remaining, scheduler_remaining)
+    return remaining, min(remaining, requested_max_responses)
+
+
+async def _run_observe(
+    *,
+    args: argparse.Namespace,
+    store: S3JsonStore,
+    accounts: HHAccountsConfig | None,
+    discovery: DiscoveryConfig | None,
+    guard: HHExternalWriteGuard,
+    registry: ResumeRegistry,
+    query_cursor_store: ObserveQueryCursorStore,
+) -> dict[str, Any]:
+    if accounts is None or discovery is None:
+        raise ValueError(
+            f"OBSERVE requires account config {args.accounts_config} and "
+            f"discovery config {args.discovery_config}"
+        )
+    if not args.account_key:
+        raise ValueError("OBSERVE requires --account-key")
+    if args.resume_id is not None or args.resume_key is not None:
+        raise ValueError("OBSERVE resolves dynamic resumes and does not accept resume selectors")
+    if args.account_quota_remaining is not None:
+        raise ValueError("OBSERVE does not accept application quota arguments")
+
+    account = accounts.resolve_account(args.account_key)
+    driver = HHApplicantToolCLI(
+        config_dir=args.config_dir,
+        profile=account.profile,
+        external_write_guard=guard,
+    )
+    reconciliation = await _reconcile(
+        account=account,
+        driver=driver,
+        registry=registry,
+    )
+    result = await HHObserveRunner(
         driver=driver,
         store=store,
-        profile_id=args.profile,
-    )
+        account=account,
+        discovery=discovery,
+        resume_reconciliation=reconciliation,
+        query_cursor_store=query_cursor_store,
+        external_write_guard=guard,
+    ).run()
+    return result.summary
 
-    run_id = uuid4()
-    started_at = _now()
-    run_prefix = f"batches/date={started_at.date().isoformat()}/run_id={run_id}"
 
-    await _write_json(
-        store,
-        f"{run_prefix}/run.json",
-        {
-            "event_type": "hh.batch.started",
-            "schema_version": 2,
-            "run_id": str(run_id),
-            "profile_id": args.profile,
-            "resume_id": args.resume_id,
-            "search": args.search,
-            "area": args.area,
-            "period": args.period,
-            "pages": args.pages,
-            "per_page": args.per_page,
-            "professional_roles": args.professional_roles or [],
-            "max_responses": args.max_responses,
-            "cover_letter_mode": (
-                "fixed_file" if fixed_message is not None else "vacancy_template_v1"
-            ),
-            "live": args.live,
-            "started_at": started_at.isoformat(),
-        },
-    )
-
-    discovered = driver.search_vacancies(
-        text=args.search,
-        area=args.area,
-        period=args.period,
-        order_by="publication_time",
-        per_page=args.per_page,
-        pages=args.pages,
-        professional_roles=args.professional_roles,
-    )
-
-    await _write_json(
-        store,
-        f"{run_prefix}/discovery.json",
-        {
-            "event_type": "hh.batch.discovery",
-            "schema_version": 2,
-            "run_id": str(run_id),
-            "count": len(discovered),
-            "items": discovered,
-            "created_at": _now().isoformat(),
-        },
-    )
-
-    reasons: Counter[str] = Counter()
-    prefiltered = 0
-    fetched = 0
-    accepted = 0
-    submitted = 0
-    confirmed = 0
-    failed = 0
-    stopped_on_captcha = False
-
-    for search_item in discovered:
-        if args.live and submitted >= args.max_responses:
-            break
-
-        vacancy_id = str(search_item.get("id") or "")
-        if not vacancy_id:
-            continue
-
-        candidate_prefix = f"{run_prefix}/candidates/vacancy_id={vacancy_id}"
-        title = str(search_item.get("name") or "")
-
-        search_item_uri = await _write_json(
-            store,
-            f"{candidate_prefix}/search_item.json",
-            search_item,
-            collected_at=_now(),
-        )
-
-        predecision = prefilter_ml_search_item(search_item)
-        if not predecision.accepted:
-            prefiltered += 1
-            reason = f"prefilter_{predecision.reason}"
-            reasons[reason] += 1
-            await _write_json(
-                store,
-                f"{candidate_prefix}/decision.json",
-                {
-                    "event_type": "hh.vacancy.decision",
-                    "schema_version": 2,
-                    "stage": "search_item_prefilter",
-                    "run_id": str(run_id),
-                    "vacancy_id": vacancy_id,
-                    "vacancy_title": title,
-                    **predecision.to_dict(),
-                    "reason": reason,
-                    "search_item_uri": search_item_uri,
-                    "created_at": _now().isoformat(),
-                },
+async def _run_apply(
+    *,
+    args: argparse.Namespace,
+    store: S3JsonStore,
+    accounts: HHAccountsConfig | None,
+    guard: HHExternalWriteGuard,
+    registry: ResumeRegistry,
+    claim_store: ApplicationClaimStore,
+) -> dict[str, Any]:
+    guard.validate_write_capable_startup()
+    resolved_driver: HHApplicantToolCLI | None = None
+    if args.account_key:
+        if args.account_quota_remaining is None:
+            raise ValueError(
+                "account APPLY requires --account-quota-remaining from the "
+                "account-scoped scheduler; use manual --resume-id only for debug"
             )
-            print(f"PREFILTER SKIP {vacancy_id}: {title} [{predecision.reason}]")
-            continue
-
-        try:
-            vacancy = driver.fetch_vacancy(vacancy_id)
-            fetched += 1
-        except Exception as exc:  # noqa: BLE001 - audit boundary
-            text = str(exc)
-            captcha = "captcha_required" in text
-            failed += 1
-            reason = "captcha_required" if captcha else "fetch_failed"
-            reasons[reason] += 1
-            await _write_json(
-                store,
-                f"{candidate_prefix}/decision.json",
-                {
-                    "event_type": "hh.vacancy.decision",
-                    "schema_version": 2,
-                    "stage": "full_fetch",
-                    "run_id": str(run_id),
-                    "vacancy_id": vacancy_id,
-                    "vacancy_title": title,
-                    "accepted": False,
-                    "reason": reason,
-                    "error_type": type(exc).__name__,
-                    "error": text,
-                    "search_item_uri": search_item_uri,
-                    "created_at": _now().isoformat(),
-                },
-            )
-            if captcha:
-                stopped_on_captcha = True
-                print(
-                    f"STOP {vacancy_id}: HH captcha_required; "
-                    "ending batch without more API calls"
-                )
-                break
-            print(f"ERROR {vacancy_id}: fetch_failed: {exc}")
-            continue
-
-        vacancy_uri = await _write_json(
-            store,
-            f"{candidate_prefix}/vacancy.json",
-            vacancy,
-            collected_at=_now(),
+        if accounts is None:
+            raise ValueError(f"APPLY account config was not found: {args.accounts_config}")
+        account = accounts.resolve_account(args.account_key)
+        resolved_driver = HHApplicantToolCLI(
+            config_dir=args.config_dir,
+            profile=account.profile,
+            external_write_guard=guard,
         )
-        decision = validate_ml_vacancy(vacancy, required_area_id=args.area)
-        submission_mode = (
-            "upstream_hh_test" if vacancy.get("has_test") else "negotiations_api"
+        reconciliation = await _reconcile(
+            account=account,
+            driver=resolved_driver,
+            registry=registry,
         )
-        reasons[decision.reason] += 1
-        decision_uri = await _write_json(
-            store,
-            f"{candidate_prefix}/decision.json",
+        resumes = _select_apply_resumes(
+            reconciliation=reconciliation,
+            resume_key=args.resume_key,
+        )
+        quota_remaining, run_quota = _account_run_quota(
+            configured_daily_cap=account.apply_daily_cap,
+            requested_max_responses=min(args.max_responses, account.max_apply_per_run),
+            scheduler_remaining=args.account_quota_remaining,
+        )
+        account_run_id = uuid4()
+        started_at = datetime.now(UTC)
+        account_run_prefix = (
+            f"account-runs/date={started_at.date().isoformat()}/"
+            f"run_id={account_run_id}"
+        )
+        selected_bindings = [
             {
-                "event_type": "hh.vacancy.decision",
-                "schema_version": 2,
-                "stage": "full_vacancy_validation",
-                "run_id": str(run_id),
-                "vacancy_id": vacancy_id,
-                "vacancy_title": vacancy.get("name"),
-                "company_name": (vacancy.get("employer") or {}).get("name"),
-                "submission_mode": submission_mode,
-                "has_test": bool(vacancy.get("has_test")),
-                **decision.to_dict(),
-                "search_item_uri": search_item_uri,
-                "vacancy_uri": vacancy_uri,
-                "created_at": _now().isoformat(),
-            },
-        )
-
-        title = str(vacancy.get("name") or "")
-        if not decision.accepted:
-            print(f"SKIP {vacancy_id}: {title} [{decision.reason}]")
-            continue
-
-        accepted += 1
-
-        if fixed_message is not None:
-            message = fixed_message
-            cover_letter_payload = {
-                "event_type": "hh.cover_letter.generated",
-                "schema_version": 1,
-                "run_id": str(run_id),
-                "vacancy_id": vacancy_id,
-                "strategy": "fixed_file",
-                "template_id": "fixed",
-                "matched_domains": list(decision.matched_domains),
-                "matched_skills": [],
-                "message": message,
-                "created_at": _now().isoformat(),
+                "source_profile": account.profile,
+                "source_resume_id": resume.source_resume_id,
+                "binding_key": resume.binding_key,
+                "target_key": resume.target_key,
+                "binding_version": resume.binding_version,
+                "query_sets": list(resume.query_sets),
+                "auto_apply": resume.auto_apply,
             }
-        else:
-            cover_letter = build_cover_letter(
-                vacancy=vacancy,
-                resume=resume,
-                matched_domains=decision.matched_domains,
-                seed=f"{run_id}:{vacancy_id}",
-            )
-            message = cover_letter.message
-            cover_letter_payload = {
-                "event_type": "hh.cover_letter.generated",
-                "schema_version": 1,
-                "run_id": str(run_id),
-                "vacancy_id": vacancy_id,
-                **cover_letter.to_dict(),
-                "created_at": _now().isoformat(),
-            }
-
-        cover_letter_uri = await _write_json(
-            store,
-            f"{candidate_prefix}/cover_letter.json",
-            cover_letter_payload,
-        )
-
-        if not args.live:
-            print(
-                f"PASS {vacancy_id}: {title} "
-                f"[{submission_mode}, letter={cover_letter_payload['template_id']}] "
-                f"-> {decision_uri}"
-            )
-            continue
-
-        if submitted:
-            await asyncio.sleep(random.uniform(args.min_delay, args.max_delay))
-
-        try:
-            result = await application_service.apply(
-                vacancy_id=vacancy_id,
-                resume_id=args.resume_id,
-                message=message,
-                before=vacancy,
-            )
-        except HHApplicationBlocked as exc:
-            reasons["blocked_after_recheck"] += 1
-            print(f"SKIP {vacancy_id}: recheck blocked: {exc}")
-            continue
-        except Exception as exc:  # noqa: BLE001 - batch should continue
-            failed += 1
-            text = str(exc)
-            captcha = "captcha_required" in text
-            reason = "captcha_required" if captcha else "application_failed"
-            reasons[reason] += 1
-            await _write_json(
-                store,
-                f"{candidate_prefix}/outcome.json",
-                {
-                    "event_type": "hh.batch.application_failed",
-                    "schema_version": 2,
-                    "run_id": str(run_id),
-                    "vacancy_id": vacancy_id,
-                    "status": "failed",
-                    "reason": reason,
-                    "error_type": type(exc).__name__,
-                    "error": text,
-                    "created_at": _now().isoformat(),
-                },
-            )
-            if captcha:
-                stopped_on_captcha = True
-                print(f"STOP {vacancy_id}: HH captcha_required during apply; ending batch")
-                break
-            print(f"ERROR {vacancy_id}: application_failed: {exc}")
-            continue
-
-        submitted += 1
-        confirmed += int(result.confirmed)
+            for resume in resumes
+        ]
         await _write_json(
             store,
-            f"{candidate_prefix}/outcome.json",
+            f"{account_run_prefix}/run.json",
             {
-                "event_type": "hh.batch.application_completed",
-                "schema_version": 2,
-                "run_id": str(run_id),
-                "vacancy_id": vacancy_id,
-                "status": result.status,
-                "confirmed": result.confirmed,
-                "submission_mode": result.submission_mode,
-                "application_run_id": str(result.run_id),
-                "application_result_uri": result.result_uri,
-                "cover_letter_uri": cover_letter_uri,
-                "created_at": _now().isoformat(),
+                "event_type": "hh.account.apply.started",
+                "schema_version": 1,
+                "run_id": str(account_run_id),
+                "runtime_mode": RuntimeMode.APPLY.value,
+                "account_key": account.key,
+                "source_profile": account.profile,
+                "apply_runs_per_day": account.apply_runs_per_day,
+                "configured_daily_cap": account.apply_daily_cap,
+                "max_apply_per_run": account.max_apply_per_run,
+                "scheduler_quota_remaining": args.account_quota_remaining,
+                "account_quota_remaining_before_run": quota_remaining,
+                "effective_run_quota": run_quota,
+                "selected_bindings": selected_bindings,
+                "started_at": started_at.isoformat(),
+                "external_writes_allowed": True,
             },
         )
-        print(
-            f"APPLY {vacancy_id}: {title} "
-            f"[{result.submission_mode}, {result.status}, confirmed={result.confirmed}]"
+        await _write_json(
+            store,
+            f"{account_run_prefix}/resume_reconciliation.json",
+            reconciliation.audit_payload(),
         )
 
-    summary = {
-        "event_type": "hh.batch.finished",
-        "schema_version": 2,
-        "run_id": str(run_id),
-        "live": args.live,
-        "discovered": len(discovered),
-        "prefiltered": prefiltered,
-        "full_fetched": fetched,
-        "accepted": accepted,
-        "submitted": submitted,
-        "confirmed": confirmed,
-        "failed": failed,
-        "stopped_on_captcha": stopped_on_captcha,
-        "reasons": dict(sorted(reasons.items())),
-        "finished_at": _now().isoformat(),
-        "s3_prefix": run_prefix,
-    }
-    summary_uri = await _write_json(store, f"{run_prefix}/summary.json", summary)
-    summary["summary_uri"] = summary_uri
+        totals: Counter[str] = Counter()
+        reasons: Counter[str] = Counter()
+        quota_consumed = 0
+        stopped_on_captcha = False
+        resume_runs: list[dict[str, Any]] = []
+        for resume in resumes:
+            if quota_consumed >= run_quota:
+                break
+            resume_quota = run_quota - quota_consumed
+            options = ApplyBatchOptions(
+                config_dir=args.config_dir,
+                profile=account.profile,
+                resume_id=resume.source_resume_id,
+                account_key=account.key,
+                claim_store=claim_store,
+                resume_key=resume.binding_key,
+                target_key=resume.target_key,
+                binding_version=resume.binding_version,
+                query_sets=resume.query_sets,
+                resume_reconciliation_audit=reconciliation.audit_payload(),
+                external_write_guard=guard,
+                letter_file=args.letter_file,
+                search=args.search,
+                area=args.area,
+                period=args.period,
+                pages=args.pages,
+                per_page=args.per_page,
+                max_responses=resume_quota,
+                professional_roles=tuple(args.professional_roles or ()),
+                min_delay=args.min_delay,
+                max_delay=args.max_delay,
+            )
+            try:
+                child_summary = await run_apply_batch(
+                    store,
+                    options,
+                    driver=resolved_driver,
+                )
+            except Exception as exc:
+                await _write_json(
+                    store,
+                    f"{account_run_prefix}/failure.json",
+                    {
+                        "event_type": "hh.account.apply.failed",
+                        "schema_version": 1,
+                        "run_id": str(account_run_id),
+                        "account_key": account.key,
+                        "source_profile": account.profile,
+                        "source_resume_id": resume.source_resume_id,
+                        "binding_key": resume.binding_key,
+                        "target_key": resume.target_key,
+                        "binding_version": resume.binding_version,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "failed_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+                raise
+
+            child_consumed = int(
+                child_summary.get(
+                    "quota_consumed",
+                    max(
+                        int(child_summary.get("submitted", 0)),
+                        int(child_summary.get("external_writes_attempted", 0)),
+                    ),
+                )
+            )
+            if not 0 <= child_consumed <= resume_quota:
+                raise RuntimeError(
+                    "APPLY child summary exceeded its account quota allocation"
+                )
+            quota_consumed += child_consumed
+            for key in (
+                "discovered",
+                "prefiltered",
+                "full_fetched",
+                "accepted",
+                "submitted",
+                "confirmed",
+                "external_writes_attempted",
+                "failed",
+            ):
+                totals[key] += int(child_summary.get(key, 0))
+            reasons.update(child_summary.get("reasons") or {})
+            stopped_on_captcha = bool(child_summary.get("stopped_on_captcha"))
+            resume_runs.append(
+                {
+                    "source_profile": account.profile,
+                    "source_resume_id": resume.source_resume_id,
+                    "binding_key": resume.binding_key,
+                    "target_key": resume.target_key,
+                    "binding_version": resume.binding_version,
+                    "allocated_quota": resume_quota,
+                    "quota_consumed": child_consumed,
+                    "submitted": int(child_summary.get("submitted", 0)),
+                    "confirmed": int(child_summary.get("confirmed", 0)),
+                    "external_writes_attempted": int(
+                        child_summary.get("external_writes_attempted", 0)
+                    ),
+                    "batch_run_id": child_summary.get("run_id"),
+                    "batch_summary_uri": child_summary.get("summary_uri"),
+                    "stopped_on_captcha": stopped_on_captcha,
+                }
+            )
+            if stopped_on_captcha:
+                break
+
+        finished_at = datetime.now(UTC)
+        summary: dict[str, Any] = {
+            "event_type": "hh.account.apply.finished",
+            "schema_version": 1,
+            "run_id": str(account_run_id),
+            "runtime_mode": RuntimeMode.APPLY.value,
+            "account_key": account.key,
+            "source_profile": account.profile,
+            "apply_runs_per_day": account.apply_runs_per_day,
+            "configured_daily_cap": account.apply_daily_cap,
+            "max_apply_per_run": account.max_apply_per_run,
+            "scheduler_quota_remaining": args.account_quota_remaining,
+            "account_quota_remaining_before_run": quota_remaining,
+            "effective_run_quota": run_quota,
+            "quota_consumed": quota_consumed,
+            "account_quota_remaining_after_run": max(
+                0,
+                quota_remaining - quota_consumed,
+            ),
+            "eligible_resume_count": len(resumes),
+            "evaluated_resume_count": len(resume_runs),
+            "resume_runs": resume_runs,
+            "discovered": totals["discovered"],
+            "prefiltered": totals["prefiltered"],
+            "full_fetched": totals["full_fetched"],
+            "accepted": totals["accepted"],
+            "submitted": totals["submitted"],
+            "confirmed": totals["confirmed"],
+            "external_writes_attempted": totals["external_writes_attempted"],
+            "failed": totals["failed"],
+            "stopped_on_captcha": stopped_on_captcha,
+            "reasons": dict(sorted(reasons.items())),
+            "status": (
+                "no_auto_apply_bindings"
+                if not resumes
+                else "quota_exhausted"
+                if run_quota == 0
+                else "completed"
+            ),
+            "finished_at": finished_at.isoformat(),
+            "s3_prefix": account_run_prefix,
+        }
+        summary_uri = await _write_json(
+            store,
+            f"{account_run_prefix}/summary.json",
+            summary,
+        )
+        summary["summary_uri"] = summary_uri
+        return summary
+    else:
+        if args.resume_key is not None:
+            raise ValueError("--resume-key requires --account-key")
+        if args.account_quota_remaining is not None:
+            raise ValueError("--account-quota-remaining requires --account-key")
+        if not args.resume_id:
+            raise ValueError(
+                "manual APPLY compatibility requires --resume-id; production should use "
+                "--account-key and reconciled bindings"
+            )
+        options = ApplyBatchOptions(
+            config_dir=args.config_dir,
+            profile=args.profile,
+            resume_id=args.resume_id,
+            external_write_guard=guard,
+            claim_store=claim_store,
+            letter_file=args.letter_file,
+            search=args.search,
+            area=args.area,
+            period=args.period,
+            pages=args.pages,
+            per_page=args.per_page,
+            max_responses=args.max_responses,
+            professional_roles=tuple(args.professional_roles or ()),
+            min_delay=args.min_delay,
+            max_delay=args.max_delay,
+        )
+    return await run_apply_batch(store, options, driver=resolved_driver)
+
+
+async def _run(
+    args: argparse.Namespace,
+    store: S3JsonStore,
+    *,
+    registry: ResumeRegistry,
+    claim_store: ApplicationClaimStore | None = None,
+    query_cursor_store: ObserveQueryCursorStore | None = None,
+) -> dict[str, Any]:
+    """Resolve the canonical mode and execute exactly one isolated pipeline."""
+
+    discovery, accounts = _load_configs_if_available(args)
+    mode = _resolve_mode(args, accounts)
+    guard = HHExternalWriteGuard.from_env(mode)
+    if mode is RuntimeMode.OBSERVE:
+        if query_cursor_store is None:
+            raise RuntimeError(
+                "OBSERVE requires persistent PostgreSQL query rotation state"
+            )
+        summary = await _run_observe(
+            args=args,
+            store=store,
+            accounts=accounts,
+            discovery=discovery,
+            guard=guard,
+            registry=registry,
+            query_cursor_store=query_cursor_store,
+        )
+    else:
+        if claim_store is None:
+            raise RuntimeError("APPLY requires persistent PostgreSQL application claims")
+        summary = await _run_apply(
+            args=args,
+            store=store,
+            accounts=accounts,
+            guard=guard,
+            registry=registry,
+            claim_store=claim_store,
+        )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    print(
-        "CAREEROPS_SUMMARY_JSON="
-        + json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
-    )
+    print(SUMMARY_PREFIX + json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+    return summary
 
 
 async def _async_main() -> None:
-    """Open one pooled async S3 client for the complete producer run."""
-
-    async with S3JsonStore(S3Settings.from_env()) as store:
-        await _run(store)
+    args = _parser().parse_args()
+    try:
+        async with S3JsonStore(S3Settings.from_env()) as store:
+            connection = await connect_postgres(
+                PostgresSettings.from_env(),
+                autocommit=True,
+            )
+            async with connection:
+                registry: ResumeRegistry = (
+                    PostgresResumeRegistry(connection)
+                    if args.resume_registry == "postgres"
+                    else JsonResumeRegistry(args.resume_state_dir)
+                )
+                await _run(
+                    args,
+                    store,
+                    registry=registry,
+                    claim_store=PostgresApplicationClaimStore(connection),
+                    query_cursor_store=PostgresObserveQueryCursorStore(connection),
+                )
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main() -> None:
-    """Run the asynchronous producer from its synchronous console entry point."""
+    """Run one account through OBSERVE or explicitly guarded APPLY."""
 
     asyncio.run(_async_main())
 

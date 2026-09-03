@@ -7,62 +7,89 @@
 ![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-blue?logo=python\&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker\&logoColor=white)
 ![SeaweedFS](https://img.shields.io/badge/S3-SeaweedFS-green)
-![Status](https://img.shields.io/badge/status-WORKING_MVP-brightgreen)
-![Tests](https://img.shields.io/badge/tests-55_passed-brightgreen)
+![Status](https://img.shields.io/badge/status-OBSERVE_DEFAULT-blue)
+![Tests](https://img.shields.io/badge/tests-offline-brightgreen)
 
-**Ищу вакансии. Фильтрую. Откликаюсь. Сохраняю всё в данные. Потом считаю, на каком именно этапе современный найм опять превратился в цирк с долбоёбами.**
+**По умолчанию только наблюдаю рынок: ищу широко, сохраняю точный RAW и не
+отправляю ни одного отклика.**
 
 </div>
 
 ---
 
 > [!IMPORTANT]
-> **ЭТА ХУЙНЯ УЖЕ РАБОТАЕТ.**
+> **Текущий production default — `OBSERVE`. Автоматические отклики остановлены.**
 >
-> Не очередной pet-project с красивой Mermaid-схемой на 17 микросервисов, Kafka, Kubernetes и AI Agents, где реально существует только `README.md`.
+> Scheduler работает по N HH accounts, синхронизирует динамический список
+> резюме через `/resumes/mine`, запускает широкие query sets и складывает
+> replayable RAW schema v3 в S3.
 >
-> CareerOPS уже умеет искать реальные вакансии на HH, фильтровать мусор, отправлять обычные отклики и отклики с HH-тестами, подтверждать `got_response`, генерировать сопроводительные, писать полный audit в S3 и автономно работать на Linux-сервере по расписанию.
+> `APPLY` оставлен как совместимый opt-in путь. Работодатель-facing write
+> возможен только при одновременных `--mode apply` и
+> `CAREEROPS_HH_ALLOW_EXTERNAL_WRITES=true`; для dynamic resume дополнительно
+> нужен активный явный binding с `auto_apply=true`. Deprecated `--live` не
+> обходит этот барьер.
+
+> [!NOTE]
+> Разделы ниже про старый filtering/application pipeline описывают только
+> совместимый `APPLY`, а не текущий `OBSERVE`. Filtering v2 намеренно не входит
+> в этот feature.
 
 
 ---
 
 ## ✨ Что уже умеет CareerOPS
 
-* 🔐 **Авторизация HeadHunter.** OAuth, refresh token, cookies и прочая HH-ебанина живут в отдельном профиле и не требуют держать основной компьютер включённым.
+* 🔐 **Profiles/auth/session принадлежат `hh-applicant-tool`.** CareerOPS выбирает
+  существующий `--profile`, но не копирует OAuth, cookies, token state и HH
+  transport.
 
-* 🔎 **Поиск вакансий.** Сейчас основной профиль заточен под ML, DS, AI, CV, NLP, LLM, VLM, DL, MLOps и ML Infrastructure.
+* 👥 **N accounts и N resumes.** Versioned account registry хранит profiles и
+  явные bindings; актуальные resume IDs каждый account-run получает через
+  все страницы `GET /resumes/mine` существующего upstream transport. Основной
+  current state хранится в PostgreSQL; JSON доступен только как явный dev
+  fallback.
 
-* 🧹 **Двухступенчатая фильтрация.** Сначала дешёвый prefilter, потом полноценная проверка full vacancy. Потому что HH однажды принёс мне iOS-разработчика по поиску ML Engineer и окончательно потерял право самостоятельно решать, куда отправлять моё резюме.
+* ♻️ **Resume lifecycle.** Стабильная identity — HH resume ID. Изменение title
+  сохраняет binding, исчезновение делает resume `deleted`, а новый ID остаётся
+  unassigned с `auto_apply=false`. Текущий HH publication status хранится
+  отдельно: APPLY допускает только `published` resume.
 
-* 🧠 **Контекстная проверка вакансии.** CareerOPS смотрит не только title, но и описание, регион, работодателя, адрес и состояние вакансии.
+* 🔎 **Broad discovery.** 18 query sets и 366 отдельных RU/EN вариантов для
+  ML/AI/DS/DE/Python Backend остаются в каталоге. Каждый account-run атомарно
+  резервирует в PostgreSQL очередное детерминированное окно максимум из 50
+  query, поэтому каталог ротируется между запусками, а не исполняется целиком.
 
-* 🚮 **Отсев профессионального мусора.** Team Lead, Product Owner, System Analyst, iOS, Unity, UX/UI и прочие случайные гости ML-выдачи автоматически отправляются нахуй.
+* 🧾 **Vacancy × resume routing audit.** Для каждой full-fetched vacancy и
+  каждого active assigned resume сохраняется отдельный routing record. Sidecar
+  несёт account provenance, а OLTP work-item канонически адресуется через
+  `run_id + resume_id + vacancy_id`. Query overlap хранится как provenance
+  evidence, но ничего не отсекает. Это ещё не Filtering v2.
 
-* ☢️ **Контекстные исключения.** БПЛА, дроны, военная тематика, нежелательные регионы, релокация и вахта не проходят дальше, даже если в заголовке красиво написано `Computer Vision Engineer`.
+* 💾 **S3 RAW v3.** Exact search pages, canonical search item, full vacancy,
+  provenance и observation sidecars позволяют replay без повторного HH search.
 
-* 🔁 **Защита от повторных откликов.** Если HH уже показывает `got_response`, CareerOPS не будет каждые два часа напоминать работодателю о моём существовании.
-
-* 📨 **Обычные отклики.** Через HH negotiations API.
-
-* 🧩 **HH tests.** Вакансии с тестами не теряются. Для них используется native web-flow из `hh-applicant-tool`.
-
-* ✅ **Проверка результата.** Успешный HTTP-запрос недостаточен. После submission вакансия загружается снова и проверяется `relations=["got_response"]`.
-
-* ✉️ **Сопроводительные под конкретную вакансию.** Не одна унылая портянка на весь интернет. CareerOPS учитывает направление вакансии и реальные совпадения навыков.
-
-* 💾 **Полный S3 audit.** Search result, full vacancy, решение, письмо, application request, состояние после отклика и итог сохраняются.
+* 🛡️ **Fail-closed writes.** OBSERVE не создаёт cover letters/applications.
+  APPLY требует одновременно mode, external-write opt-in, active binding и
+  account quota. До POST атомарно фиксируется PostgreSQL claim; resume-specific
+  precheck/confirmation не используют глобальный `vacancy.relations` как
+  duplicate proof.
 
 * 🪣 **SeaweedFS.** Self-hosted S3-compatible object storage.
 
-* 🐳 **Docker worker.** Основной HH pipeline работает внутри контейнера.
+* ⏰ **Multi-account Planner + Dispatcher.** Slots глобально разнесены и
+  interleaved; CAPTCHA/failure ставит на паузу только затронутый account.
 
-* ⏰ **Planner + Dispatcher.** Автоматические запуски распределяются по дню.
+* 🧮 **Per-account APPLY quota.** Начальный cap задаётся в account TOML (example:
+  `100/account/day`) и расходуется консервативно по employer-write attempts.
 
-* 🧮 **Hard limits.** По умолчанию до 150 submissions в сутки и не более 25 за один run.
+* 🐘 **PostgreSQL OLTP.** Resume lifecycle/bindings, OBSERVE runs, актуальные
+  vacancies, vacancy observations, evaluation work items и application claims
+  материализуются в существующий operational store.
 
-* 🛑 **Pause при CAPTCHA.** Если HH начинает подозрительно смотреть на происходящее, CareerOPS не пытается исправить ситуацию ещё четырьмя сотнями запросов.
-
-* 📊 **Данные для будущей аналитики.** Всё уже складывается так, чтобы дальше кормить PostgreSQL, ClickHouse и нормальный DWH, а не очередной Excel с названием `отклики_финал_реально_финал2.xlsx`.
+* 📊 **Данные для будущей аналитики.** S3 RAW и PostgreSQL current state уже
+  разделены так, чтобы дальше кормить ClickHouse и нормальный DWH, а не очередной
+  Excel с названием `отклики_финал_реально_финал2.xlsx`.
 
 ---
 
@@ -298,47 +325,28 @@ apply
 
 # ✅ Текущий статус
 
-На данный момент первый большой этап работает целиком:
+Текущий безопасный production flow:
 
 ```text
-HH auth
-  ↓
-vacancy discovery
-  ↓
-prefilter
-  ↓
-full validation
-  ↓
-cover letter
-  ↓
-normal / test application
-  ↓
-got_response confirmation
-  ↓
-S3 audit
-  ↓
-scheduled runs
+account registry
+  -> hh-applicant-tool profile/auth/session
+  -> paginated GET /resumes/mine
+  -> deterministic PostgreSQL resume reconciliation
+  -> broad multi-query discovery
+  -> exact query pages + full vacancy RAW
+  -> vacancy x every active-assigned-resume routing records
+  -> S3 RAW v3 + PostgreSQL OLTP materialization
 ```
 
-Проверено на реальном HH-аккаунте.
+Режимы намеренно только два:
 
-Работают оба режима отправки:
+| Mode      | Поведение |
+| --------- | --------- |
+| `OBSERVE` | Default: read-only HH discovery/reconciliation и replayable S3 RAW |
+| `APPLY`   | Совместимый старый filtering/application path, только с отдельным write opt-in |
 
-| Режим              | Назначение         | Статус |
-| ------------------ | ------------------ | :----: |
-| `negotiations_api` | обычная вакансия   |    ✅   |
-| `upstream_hh_test` | вакансия с HH test |    ✅   |
-
-Реальный test-flow уже давал:
-
-```text
-submitted
-confirmed=True
-```
-
-То есть это не пункт из roadmap.
-
-Оно уже хуярит.
+Filtering v2, scoring и новые relevance decisions в этот foundation не входят.
+Routing record со статусом `pending_filtering_v2` — это не решение о релевантности.
 
 ---
 
@@ -346,56 +354,41 @@ confirmed=True
 
 ```mermaid
 flowchart TD
-    HH["hh.ru"]
-
-    HH --> SEARCH["Vacancy Discovery"]
-    SEARCH --> PF["Cheap Prefilter"]
-
-    PF -->|"мусор"| SKIP1["S3 Decision"]
-    PF -->|"кандидат"| FULL["Full Vacancy"]
-
-    FULL --> VALID["CareerOPS Validator"]
-
-    VALID -->|"skip"| SKIP2["S3 Decision"]
-    VALID -->|"accepted"| LETTER["Cover Letter"]
-
-    LETTER --> TEST{"Есть HH test?"}
-
-    TEST -->|"нет"| API["POST /negotiations"]
-    TEST -->|"да"| UPSTREAM["hh-applicant-tool Test Flow"]
-
-    API --> VERIFY["Refetch Vacancy"]
-    UPSTREAM --> VERIFY
-
-    VERIFY --> GOT{"got_response?"}
-    GOT --> AUDIT["Application Audit"]
-
-    AUDIT --> S3["SeaweedFS / S3"]
-
+    REG["Versioned account registry"] --> PROFILE["hh-applicant-tool --profile"]
+    PROFILE --> AUTH["Upstream auth/cookies/session"]
+    AUTH --> RESUMES["GET /resumes/mine"]
+    RESUMES --> SYNC["Resume lifecycle + bindings"]
+    SYNC --> PG["PostgreSQL current state"]
+    SYNC --> QUERY["Account query-set union"]
+    QUERY --> HH["HH read-only API"]
+    HH --> RAW["Exact pages + search item + full vacancy"]
+    RAW --> MATRIX["Vacancy x resume routing sidecars"]
+    MATRIX --> S3["SeaweedFS RAW v3"]
+    MATRIX --> PG
     PLANNER["Daily Planner"] --> PLAN["Daily Plan"]
     PLAN --> DISPATCHER["Dispatcher"]
-    DISPATCHER --> WORKER["Docker Worker"]
-    WORKER --> SEARCH
-
-    S3 --> FUTURE["PostgreSQL / ClickHouse / DWH"]
+    DISPATCHER --> PROFILE
+    S3 --> ETL["Validated RAW v2/v3 ETL"]
+    ETL --> PG
+    PG --> FUTURE["Filtering v2 / analytics consumers"]
 ```
 
 Основной принцип простой:
 
-| Компонент           | За что отвечает                |
-| ------------------- | ------------------------------ |
-| `hh-applicant-tool` | вся специфическая ебанина HH   |
-| CareerOPS HH layer  | поиск, фильтры, решения, audit |
-| SeaweedFS           | RAW и история                  |
-| Scheduler           | когда и сколько запускать      |
-| PostgreSQL          | будущий operational state      |
-| ClickHouse          | будущая аналитика              |
+| Компонент           | За что отвечает |
+| ------------------- | ---------------- |
+| `hh-applicant-tool` | HH transport, profile auth, cookies, token/session state |
+| CareerOPS HH layer  | account orchestration, resume reconciliation, discovery, safety, audit |
+| SeaweedFS           | source-pure RAW, lineage и vacancy × resume routing records |
+| Scheduler           | interleaved account slots, isolation и APPLY quota state |
+| PostgreSQL OLTP/ETL | primary resume state, claims и schema v2/v3 materialization без fake resume |
 
 ---
 
 # 🔎 Поиск вакансий
 
-Сейчас основной CareerOPS profile ориентирован на:
+Discovery catalog лежит вне Python в `config/hh_discovery.toml`. Он содержит 18
+query sets для:
 
 ```text
 Machine Learning
@@ -405,31 +398,16 @@ Computer Vision
 NLP
 LLM
 VLM
-Deep Learning
 MLOps
 ML Infrastructure
+Recommendation / Ranking
+Data Engineering / ETL / DWH / Streaming
+Python Backend / FastAPI / Django / Flask
+Junior / Intern variants
 ```
 
-Базовая query примерно такая:
-
-```text
-NAME:(
-    "ML Engineer"
-    OR "ML-инженер"
-    OR "Machine Learning"
-    OR "Data Scientist"
-    OR "Data Science"
-    OR "AI Engineer"
-    OR "AI-инженер"
-    OR "Computer Vision"
-    OR "NLP Engineer"
-    OR "LLM Engineer"
-    OR "VLM Engineer"
-    OR "MLOps"
-    OR "ML Infrastructure"
-    OR "DL Engineer"
-)
-```
+Каждый вариант — отдельный stable query key. CareerOPS не склеивает каталог в
+один непрозрачный `OR` и не требует `professional_role` в OBSERVE.
 
 Discovery намеренно остаётся широким.
 
@@ -440,6 +418,29 @@ Discovery намеренно остаётся широким.
 Цель CareerOPS:
 
 > не отправить резюме в очередную ебалу, которую поиск почему-то посчитал релевантной.
+
+Broad catalog не означает unlimited runtime. Committed OBSERVE defaults:
+
+| Technical bound | Default |
+| --------------- | ------: |
+| Max search queries/account run | `50` |
+| Pages/query | `1` |
+| Items/page | `50` |
+| Max unique vacancies/account run | `250` |
+| Max full vacancy fetches/account run | `100` |
+| Delay between search queries | `1.0 s` |
+| Delay between full fetches | `1.5-3.0 s` |
+
+Каждый run продолжает с PostgreSQL cursor предыдущего окна: `1..50`, затем
+`51..100` и так далее с циклическим переходом через конец каталога. Cursor
+привязан к стабильному HH `source_profile`; `account_key` остаётся metadata и
+может быть переименован без сброса rotation state. Изменение ordered query
+catalog обнаруживается по SHA-256 signature и детерминированно начинает новую
+ротацию с offset `0`.
+
+Фактические limits, catalog signature, window start/next и selected query keys
+пишутся в schema-v3 `run.json` и PostgreSQL `observation_runs`, поэтому объём
+каждого run можно проверить постфактум.
 
 ---
 
@@ -499,7 +500,6 @@ description
 employer
 area
 address
-relations
 archived
 closed_for_applicants
 response_url
@@ -736,23 +736,38 @@ PREFILTER SKIP
 
 ## 🔁 Duplicate protection
 
-Если HH уже возвращает:
+`vacancy.relations` описывает vacancy в контексте account и не доказывает,
+каким именно resume был сделан старый отклик. Поэтому ни prefilter, ни full
+validation больше не используют непустой `relations` как глобальный duplicate
+guard.
 
-```json
-{
-  "relations": ["got_response"]
-}
+Каноническая upstream application identity не зависит от изменяемой
+CareerOPS-метки аккаунта:
+
+```text
+source_profile + source_resume_id + vacancy_id
 ```
 
-CareerOPS не отправляет повторный отклик.
+В PostgreSQL natural key разрешается в `resume_id + vacancy_id`, и именно на
+этих внутренних FK стоит unique constraint. `account_key` сохраняется в claim
+только как provenance/metadata. Поэтому rename вроде `junior -> junior_main`
+не создаёт новую identity и не разрешает повторный POST.
 
-Если `relations` доступны уже внутри search result, вакансия отбрасывается ещё до full GET.
+Перед POST CareerOPS:
 
-Иначе при 7-8 runs в сутки я бы каждые несколько часов сообщал работодателю:
+1. атомарно приобретает persistent PostgreSQL claim для exact identity;
+2. через существующий `hh-applicant-tool` transport читает `/negotiations` и
+   ищет evidence именно для этой пары resume + vacancy;
+3. переводит claim в `SUBMITTING` непосредственно перед employer-facing write;
+4. после ответа сохраняет `SUBMITTED`, а при неоднозначном write outcome —
+   `UNCERTAIN`.
 
-> Здравствуйте. Я всё ещё существую.
-
-Не надо.
+`SUBMITTING`, `SUBMITTED` и `UNCERTAIN` не допускают автоматический повтор.
+Только ошибка, доказанно произошедшая до POST, может стать
+`FAILED_SAFE_TO_RETRY`. Два worker процесса не отправят одну пару, а другое
+resume того же profile останется независимой identity. Если resume или vacancy
+ещё не материализованы в OLTP, claim acquisition завершается fail-closed до
+любого HH POST.
 
 ---
 
@@ -773,18 +788,25 @@ Pipeline:
 ```text
 validated vacancy
        ↓
+atomic PostgreSQL CLAIMED
+       ↓
+resume-specific /negotiations precheck
+       ↓
+SUBMITTING
+       ↓
 POST /negotiations
        ↓
-refetch vacancy
+resume-specific /negotiations confirmation
        ↓
-relations contains got_response
+SUBMITTED or submitted_unconfirmed
        ↓
-confirmed=true
+immutable S3 audit
 ```
 
-Почему я не доверяю просто успешному POST?
+Почему я не доверяю просто успешному POST или глобальному `relations`?
 
-Потому что API HH умеет возвращать довольно своеобразные ответы.
+Потому что API HH умеет возвращать довольно своеобразные ответы, а один account
+может откликаться разными resume.
 
 Поэтому факт действия и факт результата разделены.
 
@@ -956,7 +978,7 @@ Hard filters отлично отвечают на вопросы:
 iOS != ML
 Product Owner != MLOps Engineer
 archived == skip
-relations != [] == duplicate
+exact resume + vacancy negotiation == duplicate
 ```
 
 Для этого мне не нужен огромный вероятностный калькулятор, который иногда решит, что Product Owner "семантически близок к MLOps из-за ответственности за ML Platform".
@@ -1046,7 +1068,7 @@ _lab/
 
 ---
 
-## Batch layout
+## OBSERVE RAW v3 layout
 
 ```text
 careerops-raw/
@@ -1056,36 +1078,45 @@ careerops-raw/
             └── date=YYYY-MM-DD/
                 └── run_id=<uuid>/
                     ├── run.json
+                    ├── resume_reconciliation.json
                     ├── discovery.json
                     ├── summary.json
-                    │
+                    ├── discovery/
+                    │   └── queries/
+                    │       └── query=<stable-key>/
+                    │           └── page=000.json
                     └── candidates/
                         └── vacancy_id=<id>/
                             ├── search_item.json
+                            ├── observation.json
                             ├── vacancy.json
-                            ├── decision.json
-                            ├── cover_letter.json
-                            └── outcome.json
+                            └── evaluation_candidates.json
 ```
 
 ---
 
 ## Что там хранится
 
-| Файл                | Что внутри                       |
-| ------------------- | -------------------------------- |
-| `run.json`          | параметры конкретного batch      |
-| `discovery.json`    | результаты source search         |
-| `search_item.json`  | поисковое представление вакансии |
-| `vacancy.json`      | полный source payload            |
-| `decision.json`     | принятое решение и причина       |
-| `cover_letter.json` | фактически подготовленное письмо |
-| `outcome.json`      | результат application            |
-| `summary.json`      | итоговая статистика run          |
+| Файл | Что внутри |
+| ---- | ----------- |
+| `run.json` | account, profile, active binding snapshot и query catalog lineage |
+| `resume_reconciliation.json` | lifecycle delta и binding audit |
+| `page=NNN.json` | точный source HH search response до flatten/dedup |
+| `discovery.json` | union/dedup index и полная query provenance |
+| `search_item.json` | детерминированный первый source search item |
+| `vacancy.json` | полный source HH vacancy payload |
+| `observation.json` | CareerOPS metadata и URI lineage |
+| `evaluation_candidates.json` | отдельные `(account, profile, resume_id, vacancy_id)` routing records; relevance ещё не решена |
+| `summary.json` | итог OBSERVE, включая три гарантированных нуля для writes |
+
+Source-файлы `page`, `search_item` и `vacancy` не получают CareerOPS fields:
+`collected_at` хранится только как S3 user metadata. Исторический schema v2 APPLY
+layout не переписывается; его `decision.json`, `cover_letter.json` и
+`outcome.json` относятся только к explicit APPLY compatibility path.
 
 ---
 
-## Decision reasons
+## APPLY v2 decision reasons (legacy compatibility)
 
 Например:
 
@@ -1095,7 +1126,6 @@ title_out_of_scope
 title_contains_unrelated_role
 generic_ai_non_engineering_title
 devops_without_mlops
-already_has_hh_relation
 excluded_context
 external_response_url
 archived
@@ -1137,7 +1167,7 @@ applications/
         └── vacancy_id=<id>/
             ├── vacancy_before.json
             ├── application_request.json
-            ├── vacancy_after.json
+            ├── vacancy_after.json      # best-effort snapshot
             └── application_result.json
 ```
 
@@ -1148,8 +1178,9 @@ applications/
 что отправили
 каким способом
 что вернул upstream
-что стало после
-подтвердился ли отклик
+какой persistent claim защищает identity
+какое resume-specific negotiation evidence найдено
+что стало после, если snapshot удалось получить
 ```
 
 ---
@@ -1160,7 +1191,12 @@ applications/
 {
   "status": "submitted",
   "confirmed": true,
-  "relations": ["got_response"]
+  "claim_status": "SUBMITTED",
+  "confirmation_evidence": {
+    "source_resume_id": "resume-123",
+    "vacancy_id": "136655995",
+    "found": true
+  }
 }
 ```
 
@@ -1232,73 +1268,46 @@ RAW позволяет:
 
 # ⏰ Scheduler
 
-Вручную запускать worker весело примерно первые три раза.
-
-После этого становится очевидно, что компьютер всё-таки был придуман не для того, чтобы я семь раз в день вводил одну и ту же команду.
-
-Scheduler разделён на:
+Scheduler schema v3 строит один глобально разнесённый план сразу для всех
+enabled accounts:
 
 ```text
-Planner
-   ↓
-Daily Plan
-   ↓
-Dispatcher
-   ↓
-Docker Worker
+accounts.toml + discovery.toml
+  -> Planner: round-robin account slots
+  -> Daily Plan schema v3
+  -> Dispatcher: one due, unpaused account
+  -> shared Docker image
+  -> batch_cli --mode <observe|apply> --account-key <key>
 ```
-
----
 
 ## 🗓 Daily Planner
 
-Defaults:
+Cadence выбирается по mode: `observe_runs_per_day` для OBSERVE и отдельный
+`apply_runs_per_day` для APPLY. Все slots получают один глобальный
+`min_gap_minutes`. Scheduler никогда не передаёт `--live`, статический
+`--profile` или `--resume-id`.
 
-| Setting             |           Value |
-| ------------------- | --------------: |
-| Daily cap           |           `150` |
-| Runs/day            |           `7-8` |
-| Max submissions/run |            `25` |
-| Min planned/run     |            `14` |
-| Window              | `08:30 - 23:00` |
-| Min gap             |        `80 min` |
-| Timezone            | `Europe/Moscow` |
+| Setting | Default / source |
+| ------- | ---------------- |
+| Runtime mode | `observe` |
+| OBSERVE runs/account/day | `accounts[].observe_runs_per_day` (example: `3`) |
+| APPLY runs/account/day | `accounts[].apply_runs_per_day` (example: `7`) |
+| APPLY cap/account/day | `accounts[].apply_daily_cap` (example: `100`) |
+| APPLY max/run | `accounts[].max_apply_per_run` (example: `15`) |
+| Window | `08:30 - 23:00` |
+| Global min gap | `30 min` |
+| Timezone | account registry global setting or env override |
 
-Пример плана:
+Account config отклоняется, если
+`apply_runs_per_day * max_apply_per_run < apply_daily_cap`. Поэтому committed
+`7 × 15` способен фактически достичь daily cap `100`; старой ловушки
+`3 × 15 = 45` больше нет.
 
-```text
-08:31 -> 20
-11:21 -> 22
-13:53 -> 20
-15:51 -> 19
-18:57 -> 20
-20:25 -> 25
-22:11 -> 24
-----------------
-         150
-```
-
-На следующий день quotas и время будут другими.
-
-Hard invariants:
-
-```text
-daily <= 150
-run <= 25
-runs = 7..8
-gap >= 80 min
-```
-
----
-
-> [!NOTE]
-> Нерегулярное расписание существует не для "ха-ха я обманул антибот".
->
-> Задача намного скучнее и полезнее:
->
-> **не ебануть весь дневной workload одним огромным burst.**
-
----
+OBSERVE state принципиально не содержит application quota/carry semantics. В
+APPLY dispatcher передаёт worker оставшийся account quota и slot-level
+`max_apply_per_run`; worker распределяет общий run budget между всеми
+published active `auto_apply=true` bindings и консервативно считает
+employer-write attempts.
 
 ## 🚦 Dispatcher
 
@@ -1320,62 +1329,15 @@ nothing_due
 exit
 ```
 
-Наконец-то сервис с нормальным work-life balance.
-
 Когда подходит slot:
 
 ```text
 dispatcher
-   ↓
-Docker worker
-   ↓
-HH
+  -> account state (enabled / paused / quota when APPLY)
+  -> shared Docker worker
+  -> reconcile current resumes through account profile
+  -> run OBSERVE or every selected APPLY binding
 ```
-
----
-
-## 🧮 Carry-forward
-
-План:
-
-```text
-quota = 22
-```
-
-Фактически удалось отправить:
-
-```text
-14
-```
-
-Shortfall:
-
-```text
-8
-```
-
-может перейти дальше.
-
-Но следующий run всё равно ограничен:
-
-```text
-max_per_run = 25
-```
-
-Если сегодня есть только 80 нормальных вакансий, CareerOPS не начнёт добивать красивое число:
-
-```text
-iOS
-QA
-1C
-Product Owner
-```
-
-Будет 80.
-
-Зато не хуета.
-
----
 
 ## 🛑 CAPTCHA
 
@@ -1387,22 +1349,17 @@ captcha_required
 
 он прекращается.
 
-Scheduler получает:
+Scheduler ставит на паузу только source account, который получил CAPTCHA:
 
 ```json
 {
-  "paused": true,
+  "account_key": "ml_3y",
+  "account_paused": true,
   "pause_reason": "captcha_required"
 }
 ```
 
-Оставшиеся slots дня не выполняются.
-
-Потому что стратегия:
-
-> сервер попросил CAPTCHA, давайте ебанём ещё 400 запросов
-
-кажется мне немного долбоебской.
+Slots других accounts продолжают обслуживаться.
 
 ---
 
@@ -1534,7 +1491,7 @@ pytest -q
 Текущее состояние:
 
 ```text
-55 passed
+137 passed
 ```
 
 ---
@@ -1637,61 +1594,56 @@ docker compose build
 
 ---
 
-## 👀 Dry-run
+## 👀 OBSERVE (default)
 
-Без `--live` выполняется реальный discovery и audit, но application не отправляется.
+OBSERVE выполняет account-scoped resume reconciliation, broad discovery, full
+fetch, S3 RAW v3 и PostgreSQL current-state persistence. Filtering, cover letter
+и application service не создаются.
 
 ```bash
 docker compose run --rm careerops-hh-worker \
   python -m careerops_integrations.hh.batch_cli \
-  --resume-id "<HH_RESUME_ID>" \
-  --area 1 \
-  --period 14 \
-  --pages 1 \
-  --per-page 50 \
-  --max-responses 5
+  --mode observe \
+  --account-key junior
 ```
 
 Pipeline:
 
 ```text
-real HH search
-      ↓
-prefilter
-      ↓
-full validation
-      ↓
-cover letter
-      ↓
-S3
+hh-applicant-tool profile
+  -> GET /resumes/mine
+  -> PostgreSQL lifecycle/publication reconciliation
+  -> query-set union
+  -> exact search pages
+  -> full vacancy RAW
+  -> vacancy x every active assigned resume routing sidecars
+  -> S3 + PostgreSQL OLTP
 ```
 
-Но без POST.
+`submitted`, `confirmed` и `external_writes_attempted` всегда равны нулю.
 
 ---
 
-## 🔥 Live
+## 🔥 APPLY (explicit opt-in)
 
 ```bash
-docker compose run --rm careerops-hh-worker \
+docker compose run --rm \
+  -e CAREEROPS_HH_ALLOW_EXTERNAL_WRITES=true \
+  careerops-hh-worker \
   python -m careerops_integrations.hh.batch_cli \
-  --resume-id "<HH_RESUME_ID>" \
-  --area 1 \
-  --period 14 \
-  --pages 1 \
-  --per-page 50 \
-  --max-responses 5 \
-  --live
+  --mode apply \
+  --account-key junior \
+  --account-quota-remaining 5 \
+  --max-responses 5
 ```
 
 > [!CAUTION]
-> Сначала dry-run.
->
-> Особенно если последние двадцать минут вы правили regex словами:
->
-> > да похуй, вроде должно работать
->
-> Именно так однажды в выборке появился ебучий iOS-разработчик.
+> Команда всё равно не применит новый/неизвестный resume. Нужны active explicit
+> binding, HH status `published` и `auto_apply=true`; example config специально содержит
+> `auto_apply=false`. Deprecated `--live` — только alias режима APPLY и write
+> guard не обходит. Production это значение quota передаёт dispatcher; ручной
+> account APPLY обязан указать его явно и предназначен только для проверки.
+> Каждый POST дополнительно требует доступный PostgreSQL application claim.
 
 ---
 
@@ -1701,7 +1653,7 @@ docker compose run --rm careerops-hh-worker \
 cd /srv/careerops/app
 
 sudo ./infra/systemd/install-hh-scheduler.sh \
-  <HH_RESUME_ID>
+  /secure/path/accounts.toml
 ```
 
 После установки посмотреть план:
@@ -1741,24 +1693,26 @@ journalctl -u careerops-hh-dispatcher.service
 Основные scheduler settings:
 
 ```text
+CAREEROPS_HH_MODE
+CAREEROPS_HH_ALLOW_EXTERNAL_WRITES
+CAREEROPS_HH_ACCOUNTS_CONFIG
+CAREEROPS_HH_DISCOVERY_CONFIG
+CAREEROPS_HH_RESUME_REGISTRY
+CAREEROPS_POSTGRES_DSN
 CAREEROPS_HH_TIMEZONE
-CAREEROPS_HH_DAILY_CAP
-CAREEROPS_HH_MIN_RUNS
-CAREEROPS_HH_MAX_RUNS
-CAREEROPS_HH_MAX_PER_RUN
-CAREEROPS_HH_MIN_PER_RUN
 CAREEROPS_HH_WINDOW_START
 CAREEROPS_HH_WINDOW_END
 CAREEROPS_HH_MIN_GAP_MINUTES
 CAREEROPS_HH_LATE_GRACE_MINUTES
-CAREEROPS_HH_AREA
-CAREEROPS_HH_PERIOD
-CAREEROPS_HH_PAGES
-CAREEROPS_HH_PER_PAGE
 CAREEROPS_HH_STATE_DIR
-CAREEROPS_HH_RESUME_ID
-CAREEROPS_HH_PROFILE
 ```
+
+Profiles и resume IDs не дублируются в scheduler env: они разрешаются через
+account registry и актуальный `/resumes/mine` inventory. Search defaults и query
+variants принадлежат discovery TOML; per-account run/cap settings — accounts TOML.
+`CAREEROPS_HH_RESUME_STATE_DIR` читается только при явном
+`CAREEROPS_HH_RESUME_REGISTRY=json`/`--resume-registry json` и не является
+production current state.
 
 Defaults находятся в:
 
@@ -1795,20 +1749,38 @@ infra/systemd/scheduler.env.example
 
 ## 🐘 PostgreSQL
 
-Будущий operational слой:
+Текущий operational слой:
 
 ```text
-vacancies
-applications
-employers
-profiles
-responses
-scheduler state
+source_profiles(account_key, profile_key)
+resumes(identity, publication, lifecycle, binding, selectability)
+vacancies(current HH state)
+observe_query_cursors(profile-stable deterministic rotation)
+observation_runs + vacancy_observations
+evaluation_work_items(vacancy x resume)
+application_claims(unique resume_id x vacancy_id state machine)
+applications(proven completed audits)
 ```
 
-S3 останется RAW/history.
+Миграция `0003_add_hh_application_claims.sql` добавляет write-claim state
+machine, а `0004_add_hh_orchestration_state.sql` расширяет уже существующий
+OLTP для account/profile, resume lifecycle и OBSERVE materialization.
+Runtime reconciliation по умолчанию использует `PostgresResumeRegistry`;
+schema-v3 OBSERVE больше не skip-ается ETL и не притворяется run одного resume.
+Каждый реальный binding материализуется отдельно, а account-wide run хранится в
+`observation_runs`.
 
-PostgreSQL будет удобным актуальным состоянием.
+Граница backfill остаётся прежней и распространяется на RAW v3: один OBSERVE
+run загружается в одной PostgreSQL transaction. Все таблицы используют stable
+UPSERT keys (`run_id`, `run_id + vacancy_id`,
+`run_id + vacancy_id + resume_id`), поэтому replay того же run создаёт ноль
+дублей. Ошибка на любом шаге materialization откатывает весь run.
+
+S3 остаётся immutable RAW/history и audit lineage. PostgreSQL — основной
+актуальный operational state. `JsonResumeRegistry` разрешён только как явный
+`--resume-registry json` fallback для dev/bootstrap resume inventory, не как
+второй production source of truth. Даже при этом fallback OBSERVE query cursor
+остаётся обязательным PostgreSQL state.
 
 ---
 
@@ -1885,17 +1857,22 @@ scheduler
 
 ---
 
-## 🔜 Stage 2. PostgreSQL
+## ✅ Stage 2. PostgreSQL OLTP foundation
 
 Operational state:
 
 ```text
 vacancies
 applications
-employers
-responses
-profiles
+source_profiles
+resume lifecycle + bindings
+observation runs
+evaluation work items
+application claims
 ```
+
+Operational foundation работает; последующие domain tables и аналитические
+проекции будут добавляться отдельными features.
 
 ---
 
@@ -2079,7 +2056,7 @@ scheduler
 ```text
 git clone
    ↓
-daily_cap=150
+непроверенный accounts.toml + APPLY write opt-in
    ↓
 --live
    ↓

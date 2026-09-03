@@ -1,0 +1,112 @@
+schema_version = 1
+runtime_mode = "observe"
+
+[global]
+timezone = "Europe/Moscow"
+
+[[accounts]]
+key = "ml_3y"
+profile = "careerops-ml-3y"
+enabled = true
+observe_runs_per_day = 3
+apply_runs_per_day = 7
+apply_daily_cap = 100
+max_apply_per_run = 15
+
+[[accounts.bindings]]
+key = "ml_3y"
+source_resume_id = "REPLACE_ME_ML_3Y"
+target_key = "ml_3y"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "ml_core",
+  "data_science",
+  "ai_llm",
+  "cv_multimodal",
+  "ml_platform",
+  "ml_research",
+  "ml_backend_adjacent",
+  "recommendation_ranking",
+]
+
+[[accounts]]
+key = "ml_5y"
+profile = "careerops-ml-5y"
+enabled = true
+observe_runs_per_day = 3
+apply_runs_per_day = 7
+apply_daily_cap = 100
+max_apply_per_run = 15
+
+[[accounts.bindings]]
+key = "ml_5y"
+source_resume_id = "REPLACE_ME_ML_5Y"
+target_key = "ml_5y"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "ml_core",
+  "data_science",
+  "ai_llm",
+  "cv_multimodal",
+  "ml_platform",
+  "ml_research",
+  "ml_backend_adjacent",
+  "recommendation_ranking",
+  "ml_leadership",
+]
+
+[[accounts]]
+key = "junior"
+profile = "careerops-junior"
+enabled = true
+observe_runs_per_day = 3
+apply_runs_per_day = 7
+apply_daily_cap = 100
+max_apply_per_run = 15
+
+[[accounts.bindings]]
+key = "de_junior"
+source_resume_id = "REPLACE_ME_DE_JUNIOR"
+target_key = "data_engineer_junior"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "data_engineering_core",
+  "data_engineering_etl_dwh",
+  "data_engineering_streaming",
+  "data_engineering_adjacent",
+  "data_engineering_junior",
+]
+
+[[accounts.bindings]]
+key = "backend_junior"
+source_resume_id = "REPLACE_ME_BACKEND_JUNIOR"
+target_key = "python_backend_junior"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "python_backend_core",
+  "python_backend_frameworks",
+  "python_backend_junior",
+]
+
+[[accounts.bindings]]
+key = "ml_ds_junior"
+source_resume_id = "REPLACE_ME_ML_DS_JUNIOR"
+target_key = "ml_ds_junior"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "ml_junior",
+  "ml_core",
+  "data_science",
+  "ai_llm",
+  "cv_multimodal",
+]

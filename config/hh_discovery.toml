@@ -1,0 +1,470 @@
+schema_version = 1
+
+[defaults]
+area = 1
+period = 14
+pages = 1
+per_page = 50
+order_by = "publication_time"
+max_queries_per_run = 50
+search_query_delay_seconds = 1.0
+full_fetch_min_delay_seconds = 1.5
+full_fetch_max_delay_seconds = 3.0
+max_unique_vacancies_per_run = 250
+max_full_fetch_per_run = 100
+
+[query_sets.ml_core]
+version = 1
+queries = [
+  { key = "ml-engineer-en", text = "ML Engineer", enabled = true },
+  { key = "machine-learning-engineer-en", text = "Machine Learning Engineer", enabled = true },
+  { key = "ml-developer-en", text = "ML Developer", enabled = true },
+  { key = "machine-learning-developer-en", text = "Machine Learning Developer", enabled = true },
+  { key = "ml-engineer-ru-hyphen", text = "ML-инженер", enabled = true },
+  { key = "ml-engineer-ru-space", text = "ML инженер", enabled = true },
+  { key = "ml-developer-ru-space", text = "ML разработчик", enabled = true },
+  { key = "ml-developer-ru-hyphen", text = "ML-разработчик", enabled = true },
+  { key = "machine-learning-engineer-ru", text = "Инженер машинного обучения", enabled = true },
+  { key = "engineer-for-machine-learning-ru", text = "Инженер по машинному обучению", enabled = true },
+  { key = "machine-learning-specialist-ru", text = "Специалист по машинному обучению", enabled = true },
+  { key = "machine-learning-developer-ru", text = "Разработчик машинного обучения", enabled = true },
+  { key = "machine-learning-model-developer-ru", text = "Разработчик моделей машинного обучения", enabled = true },
+  { key = "machine-learning-en", text = "Machine Learning", enabled = true },
+  { key = "machine-learning-ru", text = "Машинное обучение", enabled = true },
+]
+
+[query_sets.data_science]
+version = 1
+queries = [
+  { key = "data-scientist-en", text = "Data Scientist", enabled = true },
+  { key = "data-scientist-en-hyphen", text = "Data-Scientist", enabled = true },
+  { key = "data-science-en", text = "Data Science", enabled = true },
+  { key = "data-science-engineer-en", text = "Data Science Engineer", enabled = true },
+  { key = "data-scientist-ru-hyphen", text = "Дата-сайентист", enabled = true },
+  { key = "data-scientist-ru-space", text = "Дата сайентист", enabled = true },
+  { key = "data-scientist-ru-variant", text = "Дата саентист", enabled = true },
+  { key = "data-science-specialist-mixed", text = "Специалист Data Science", enabled = true },
+  { key = "data-science-specialist-ru", text = "Специалист по Data Science", enabled = true },
+  { key = "data-science-engineer-mixed", text = "Инженер Data Science", enabled = true },
+  { key = "data-scientist-analyst-mixed", text = "Data Scientist / Аналитик", enabled = true },
+  { key = "data-science-analyst-mixed", text = "Аналитик Data Science", enabled = true },
+]
+
+[query_sets.ai_llm]
+version = 1
+queries = [
+  { key = "ai-engineer-en", text = "AI Engineer", enabled = true },
+  { key = "ai-developer-en", text = "AI Developer", enabled = true },
+  { key = "ai-software-engineer-en", text = "AI Software Engineer", enabled = true },
+  { key = "applied-ai-engineer-en", text = "Applied AI Engineer", enabled = true },
+  { key = "ai-engineer-ru-hyphen", text = "AI-инженер", enabled = true },
+  { key = "ai-engineer-ru-space", text = "AI инженер", enabled = true },
+  { key = "ai-developer-ru-hyphen", text = "AI-разработчик", enabled = true },
+  { key = "ai-developer-ru-space", text = "AI разработчик", enabled = true },
+  { key = "developer-ai-ru", text = "Разработчик AI", enabled = true },
+  { key = "developer-intelligence-ru", text = "Разработчик ИИ", enabled = true },
+  { key = "engineer-intelligence-ru", text = "Инженер ИИ", enabled = true },
+  { key = "llm-engineer-en", text = "LLM Engineer", enabled = true },
+  { key = "llm-developer-en", text = "LLM Developer", enabled = true },
+  { key = "llm-engineer-ru-hyphen", text = "LLM-инженер", enabled = true },
+  { key = "llm-engineer-ru-space", text = "LLM инженер", enabled = true },
+  { key = "llm-developer-ru-hyphen", text = "LLM-разработчик", enabled = true },
+  { key = "llm-developer-ru-space", text = "LLM разработчик", enabled = true },
+  { key = "genai-engineer-en", text = "GenAI Engineer", enabled = true },
+  { key = "genai-developer-en", text = "GenAI Developer", enabled = true },
+  { key = "generative-ai-engineer-en", text = "Generative AI Engineer", enabled = true },
+  { key = "generative-ai-developer-en", text = "Generative AI Developer", enabled = true },
+  { key = "nlp-engineer-en", text = "NLP Engineer", enabled = true },
+  { key = "nlp-developer-en", text = "NLP Developer", enabled = true },
+  { key = "nlp-engineer-ru-hyphen", text = "NLP-инженер", enabled = true },
+  { key = "nlp-engineer-ru-space", text = "NLP инженер", enabled = true },
+  { key = "rag-engineer-en", text = "RAG Engineer", enabled = true },
+  { key = "rag-developer-en", text = "RAG Developer", enabled = true },
+  { key = "ai-agent-engineer-en", text = "AI Agent Engineer", enabled = true },
+  { key = "ai-agents-engineer-en", text = "AI Agents Engineer", enabled = true },
+  { key = "ai-agent-developer-en", text = "AI Agent Developer", enabled = true },
+  { key = "ai-agents-developer-en", text = "AI Agents Developer", enabled = true },
+  { key = "ai-agents-en", text = "AI Agents", enabled = true },
+  { key = "ai-agents-ru-hyphen", text = "AI-агенты", enabled = true },
+  { key = "ai-agents-ru-space", text = "AI агенты", enabled = true },
+]
+
+[query_sets.cv_multimodal]
+version = 1
+queries = [
+  { key = "computer-vision-engineer-en", text = "Computer Vision Engineer", enabled = true },
+  { key = "computer-vision-developer-en", text = "Computer Vision Developer", enabled = true },
+  { key = "computer-vision-en", text = "Computer Vision", enabled = true },
+  { key = "cv-engineer-en", text = "CV Engineer", enabled = true },
+  { key = "cv-developer-en", text = "CV Developer", enabled = true },
+  { key = "cv-engineer-ru-hyphen", text = "CV-инженер", enabled = true },
+  { key = "cv-engineer-ru-space", text = "CV инженер", enabled = true },
+  { key = "computer-vision-engineer-ru", text = "Инженер компьютерного зрения", enabled = true },
+  { key = "computer-vision-developer-ru", text = "Разработчик компьютерного зрения", enabled = true },
+  { key = "computer-vision-specialist-ru", text = "Специалист компьютерного зрения", enabled = true },
+  { key = "vlm-engineer-en", text = "VLM Engineer", enabled = true },
+  { key = "vlm-developer-en", text = "VLM Developer", enabled = true },
+  { key = "vlm-engineer-ru", text = "VLM-инженер", enabled = true },
+  { key = "multimodal-engineer-en", text = "Multimodal Engineer", enabled = true },
+  { key = "multimodal-ml-engineer-en", text = "Multimodal ML Engineer", enabled = true },
+  { key = "ocr-engineer-en", text = "OCR Engineer", enabled = true },
+  { key = "ocr-developer-en", text = "OCR Developer", enabled = true },
+  { key = "document-ai-en", text = "Document AI", enabled = true },
+  { key = "document-ai-engineer-en", text = "Document AI Engineer", enabled = true },
+  { key = "vision-language-model-en", text = "Vision Language Model", enabled = true },
+]
+
+[query_sets.ml_platform]
+version = 1
+queries = [
+  { key = "mlops-en", text = "MLOps", enabled = true },
+  { key = "mlops-engineer-en", text = "MLOps Engineer", enabled = true },
+  { key = "mlops-developer-en", text = "MLOps Developer", enabled = true },
+  { key = "mlops-engineer-ru", text = "MLOps-инженер", enabled = true },
+  { key = "ml-platform-en", text = "ML Platform", enabled = true },
+  { key = "ml-platform-engineer-en", text = "ML Platform Engineer", enabled = true },
+  { key = "machine-learning-platform-engineer-en", text = "Machine Learning Platform Engineer", enabled = true },
+  { key = "ml-infrastructure-en", text = "ML Infrastructure", enabled = true },
+  { key = "ml-infrastructure-engineer-en", text = "ML Infrastructure Engineer", enabled = true },
+  { key = "ai-platform-en", text = "AI Platform", enabled = true },
+  { key = "ai-platform-engineer-en", text = "AI Platform Engineer", enabled = true },
+  { key = "ai-infrastructure-en", text = "AI Infrastructure", enabled = true },
+  { key = "ai-infrastructure-engineer-en", text = "AI Infrastructure Engineer", enabled = true },
+  { key = "llmops-en", text = "LLMOps", enabled = true },
+  { key = "llmops-engineer-en", text = "LLMOps Engineer", enabled = true },
+  { key = "llm-infrastructure-en", text = "LLM Infrastructure", enabled = true },
+  { key = "llm-infrastructure-engineer-en", text = "LLM Infrastructure Engineer", enabled = true },
+  { key = "model-serving-en", text = "Model Serving", enabled = true },
+  { key = "model-serving-engineer-en", text = "Model Serving Engineer", enabled = true },
+  { key = "inference-engineer-en", text = "Inference Engineer", enabled = true },
+  { key = "ml-inference-engineer-en", text = "ML Inference Engineer", enabled = true },
+  { key = "llm-inference-engineer-en", text = "LLM Inference Engineer", enabled = true },
+  { key = "gpu-inference-en", text = "GPU Inference", enabled = true },
+  { key = "gpu-inference-engineer-en", text = "GPU Inference Engineer", enabled = true },
+  { key = "ml-systems-engineer-en", text = "ML Systems Engineer", enabled = true },
+  { key = "machine-learning-systems-engineer-en", text = "Machine Learning Systems Engineer", enabled = true },
+  { key = "ai-systems-engineer-en", text = "AI Systems Engineer", enabled = true },
+  { key = "devops-mlops-en", text = "DevOps MLOps", enabled = true },
+  { key = "devops-ml-en", text = "DevOps ML", enabled = true },
+  { key = "devops-ai-en", text = "DevOps AI", enabled = true },
+  { key = "devops-ai-platform-en", text = "DevOps AI Platform", enabled = true },
+  { key = "devops-generative-ai-en", text = "DevOps Generative AI", enabled = true },
+]
+
+[query_sets.ml_research]
+version = 1
+queries = [
+  { key = "applied-scientist-en", text = "Applied Scientist", enabled = true },
+  { key = "applied-ml-scientist-en", text = "Applied ML Scientist", enabled = true },
+  { key = "research-engineer-en", text = "Research Engineer", enabled = true },
+  { key = "research-engineer-ml-en", text = "Research Engineer ML", enabled = true },
+  { key = "research-engineer-ai-en", text = "Research Engineer AI", enabled = true },
+  { key = "research-scientist-ml-en", text = "Research Scientist ML", enabled = true },
+  { key = "research-scientist-ai-en", text = "Research Scientist AI", enabled = true },
+  { key = "machine-learning-researcher-en", text = "Machine Learning Researcher", enabled = true },
+  { key = "ai-researcher-en", text = "AI Researcher", enabled = true },
+  { key = "ml-researcher-en", text = "ML Researcher", enabled = true },
+  { key = "ml-researcher-ru", text = "Исследователь ML", enabled = true },
+  { key = "ml-researcher-ru-hyphen", text = "ML-исследователь", enabled = true },
+  { key = "machine-learning-researcher-ru", text = "Исследователь машинного обучения", enabled = true },
+  { key = "ai-researcher-ru", text = "AI-исследователь", enabled = true },
+  { key = "research-engineer-nlp-en", text = "Research Engineer NLP", enabled = true },
+  { key = "research-engineer-cv-en", text = "Research Engineer Computer Vision", enabled = true },
+]
+
+[query_sets.recommendation_ranking]
+version = 1
+queries = [
+  { key = "recommendation-engineer-en", text = "Recommendation Engineer", enabled = true },
+  { key = "recommendation-systems-engineer-en", text = "Recommendation Systems Engineer", enabled = true },
+  { key = "recommender-systems-engineer-en", text = "Recommender Systems Engineer", enabled = true },
+  { key = "recommendation-systems-engineer-ru", text = "Инженер рекомендательных систем", enabled = true },
+  { key = "recommendation-systems-developer-ru", text = "Разработчик рекомендательных систем", enabled = true },
+  { key = "recommendation-systems-ru", text = "Рекомендательные системы", enabled = true },
+  { key = "ranking-engineer-en", text = "Ranking Engineer", enabled = true },
+  { key = "ranking-ml-engineer-en", text = "Ranking ML Engineer", enabled = true },
+  { key = "ranking-engineer-ru", text = "Инженер ранжирования", enabled = true },
+  { key = "ranking-developer-ru", text = "Разработчик ранжирования", enabled = true },
+  { key = "ranking-model-developer-ru", text = "Разработчик моделей ранжирования", enabled = true },
+  { key = "ranking-models-ru", text = "Модели ранжирования", enabled = true },
+  { key = "search-relevance-engineer-en", text = "Search Relevance Engineer", enabled = true },
+  { key = "search-ranking-engineer-en", text = "Search Ranking Engineer", enabled = true },
+  { key = "search-ranking-ru", text = "Поисковое ранжирование", enabled = true },
+  { key = "ranking-search-ru", text = "Ранжирование поиска", enabled = true },
+  { key = "personalization-engineer-en", text = "Personalization Engineer", enabled = true },
+  { key = "personalization-engineer-ru", text = "Инженер персонализации", enabled = true },
+]
+
+[query_sets.ml_backend_adjacent]
+version = 1
+queries = [
+  { key = "ml-backend-engineer-en", text = "ML Backend Engineer", enabled = true },
+  { key = "ai-backend-engineer-en", text = "AI Backend Engineer", enabled = true },
+  { key = "llm-backend-engineer-en", text = "LLM Backend Engineer", enabled = true },
+  { key = "backend-ml-en", text = "Backend ML", enabled = true },
+  { key = "backend-ai-en", text = "Backend AI", enabled = true },
+  { key = "backend-llm-en", text = "Backend LLM", enabled = true },
+  { key = "python-developer-ai-en", text = "Python Developer AI", enabled = true },
+  { key = "python-developer-ml-en", text = "Python Developer ML", enabled = true },
+  { key = "python-developer-llm-en", text = "Python Developer LLM", enabled = true },
+  { key = "python-developer-ai-ru", text = "Python-разработчик AI", enabled = true },
+  { key = "python-developer-ml-ru", text = "Python-разработчик ML", enabled = true },
+  { key = "python-developer-llm-ru", text = "Python-разработчик LLM", enabled = true },
+  { key = "backend-developer-ai-en", text = "Backend Developer AI", enabled = true },
+  { key = "backend-developer-ml-en", text = "Backend Developer ML", enabled = true },
+  { key = "fastapi-ml-en", text = "FastAPI ML", enabled = true },
+  { key = "fastapi-ai-en", text = "FastAPI AI", enabled = true },
+  { key = "fastapi-llm-en", text = "FastAPI LLM", enabled = true },
+]
+
+[query_sets.ml_leadership]
+version = 1
+queries = [
+  { key = "senior-ml-engineer-en", text = "Senior ML Engineer", enabled = true },
+  { key = "senior-machine-learning-engineer-en", text = "Senior Machine Learning Engineer", enabled = true },
+  { key = "senior-ai-engineer-en", text = "Senior AI Engineer", enabled = true },
+  { key = "senior-data-scientist-en", text = "Senior Data Scientist", enabled = true },
+  { key = "senior-llm-engineer-en", text = "Senior LLM Engineer", enabled = true },
+  { key = "senior-nlp-engineer-en", text = "Senior NLP Engineer", enabled = true },
+  { key = "senior-cv-engineer-en", text = "Senior Computer Vision Engineer", enabled = true },
+  { key = "senior-mlops-engineer-en", text = "Senior MLOps Engineer", enabled = true },
+  { key = "senior-ml-platform-engineer-en", text = "Senior ML Platform Engineer", enabled = true },
+  { key = "lead-ml-engineer-en", text = "Lead ML Engineer", enabled = true },
+  { key = "lead-machine-learning-engineer-en", text = "Lead Machine Learning Engineer", enabled = true },
+  { key = "lead-ai-engineer-en", text = "Lead AI Engineer", enabled = true },
+  { key = "lead-data-scientist-en", text = "Lead Data Scientist", enabled = true },
+  { key = "lead-llm-engineer-en", text = "Lead LLM Engineer", enabled = true },
+  { key = "lead-mlops-engineer-en", text = "Lead MLOps Engineer", enabled = true },
+  { key = "ml-tech-lead-en", text = "ML Tech Lead", enabled = true },
+  { key = "ai-tech-lead-en", text = "AI Tech Lead", enabled = true },
+  { key = "data-science-tech-lead-en", text = "Data Science Tech Lead", enabled = true },
+  { key = "tech-lead-ml-en", text = "Tech Lead ML", enabled = true },
+  { key = "tech-lead-ai-en", text = "Tech Lead AI", enabled = true },
+  { key = "team-lead-ml-en", text = "Team Lead ML", enabled = true },
+  { key = "team-lead-machine-learning-en", text = "Team Lead Machine Learning", enabled = true },
+  { key = "team-lead-data-science-en", text = "Team Lead Data Science", enabled = true },
+  { key = "team-lead-ai-en", text = "Team Lead AI", enabled = true },
+  { key = "teamlead-ml-ru", text = "Тимлид ML", enabled = true },
+  { key = "teamlead-data-science-ru", text = "Тимлид Data Science", enabled = true },
+  { key = "teamlead-ai-ru", text = "Тимлид AI", enabled = true },
+  { key = "principal-ml-engineer-ru", text = "Ведущий ML-инженер", enabled = true },
+  { key = "principal-machine-learning-engineer-ru", text = "Ведущий инженер машинного обучения", enabled = true },
+  { key = "principal-data-scientist-ru", text = "Ведущий Data Scientist", enabled = true },
+  { key = "principal-ai-engineer-ru", text = "Ведущий AI-инженер", enabled = true },
+  { key = "head-ml-team-ru", text = "Руководитель команды ML", enabled = true },
+  { key = "head-data-science-team-ru", text = "Руководитель команды Data Science", enabled = true },
+]
+
+[query_sets.data_engineering_core]
+version = 1
+queries = [
+  { key = "data-engineer-en", text = "Data Engineer", enabled = true },
+  { key = "data-engineering-en", text = "Data Engineering", enabled = true },
+  { key = "junior-data-engineer-core-en", text = "Junior Data Engineer", enabled = true },
+  { key = "data-platform-engineer-en", text = "Data Platform Engineer", enabled = true },
+  { key = "data-infrastructure-engineer-en", text = "Data Infrastructure Engineer", enabled = true },
+  { key = "data-pipeline-engineer-en", text = "Data Pipeline Engineer", enabled = true },
+  { key = "data-engineer-ru", text = "Инженер данных", enabled = true },
+  { key = "data-engineer-ru-hyphen", text = "Дата-инженер", enabled = true },
+  { key = "data-engineer-ru-space", text = "Дата инженер", enabled = true },
+  { key = "data-engineer-mixed-hyphen", text = "Data-инженер", enabled = true },
+  { key = "data-engineer-mixed-space", text = "Data инженер", enabled = true },
+  { key = "data-platform-engineer-ru", text = "Инженер платформы данных", enabled = true },
+  { key = "data-platform-developer-ru", text = "Разработчик платформы данных", enabled = true },
+  { key = "data-stream-engineer-ru", text = "Инженер потоков данных", enabled = true },
+  { key = "data-pipeline-engineer-ru", text = "Инженер пайплайнов данных", enabled = true },
+  { key = "data-developer-ru", text = "Разработчик данных", enabled = true },
+]
+
+[query_sets.data_engineering_etl_dwh]
+version = 1
+queries = [
+  { key = "etl-engineer-en", text = "ETL Engineer", enabled = true },
+  { key = "etl-developer-en", text = "ETL Developer", enabled = true },
+  { key = "etl-developer-ru-hyphen", text = "ETL-разработчик", enabled = true },
+  { key = "etl-developer-ru-space", text = "ETL разработчик", enabled = true },
+  { key = "developer-etl-ru", text = "Разработчик ETL", enabled = true },
+  { key = "elt-engineer-en", text = "ELT Engineer", enabled = true },
+  { key = "elt-developer-en", text = "ELT Developer", enabled = true },
+  { key = "dwh-engineer-en", text = "DWH Engineer", enabled = true },
+  { key = "dwh-developer-en", text = "DWH Developer", enabled = true },
+  { key = "dwh-developer-ru-hyphen", text = "DWH-разработчик", enabled = true },
+  { key = "dwh-developer-ru-space", text = "DWH разработчик", enabled = true },
+  { key = "developer-dwh-ru", text = "Разработчик DWH", enabled = true },
+  { key = "engineer-dwh-ru", text = "Инженер DWH", enabled = true },
+  { key = "data-warehouse-engineer-en", text = "Data Warehouse Engineer", enabled = true },
+  { key = "data-warehouse-developer-en", text = "Data Warehouse Developer", enabled = true },
+  { key = "data-warehouses-developer-ru", text = "Разработчик хранилищ данных", enabled = true },
+  { key = "data-warehouse-developer-ru", text = "Разработчик хранилища данных", enabled = true },
+  { key = "data-warehouses-engineer-ru", text = "Инженер хранилищ данных", enabled = true },
+  { key = "data-warehouse-engineer-ru", text = "Инженер хранилища данных", enabled = true },
+  { key = "data-mart-developer-en", text = "Data Mart Developer", enabled = true },
+  { key = "data-mart-engineer-en", text = "Data Mart Engineer", enabled = true },
+  { key = "data-marts-developer-ru", text = "Разработчик витрин данных", enabled = true },
+  { key = "data-marts-engineer-ru", text = "Инженер витрин данных", enabled = true },
+  { key = "sql-developer-dwh-en", text = "SQL Developer DWH", enabled = true },
+  { key = "sql-developer-dwh-ru", text = "SQL-разработчик DWH", enabled = true },
+]
+
+[query_sets.data_engineering_streaming]
+version = 1
+queries = [
+  { key = "big-data-engineer-en", text = "Big Data Engineer", enabled = true },
+  { key = "bigdata-engineer-en", text = "BigData Engineer", enabled = true },
+  { key = "big-data-developer-en", text = "Big Data Developer", enabled = true },
+  { key = "streaming-data-engineer-en", text = "Streaming Data Engineer", enabled = true },
+  { key = "streaming-engineer-en", text = "Streaming Engineer", enabled = true },
+  { key = "kafka-engineer-en", text = "Kafka Engineer", enabled = true },
+  { key = "kafka-developer-en", text = "Kafka Developer", enabled = true },
+  { key = "spark-engineer-en", text = "Spark Engineer", enabled = true },
+  { key = "spark-developer-en", text = "Spark Developer", enabled = true },
+  { key = "hadoop-engineer-en", text = "Hadoop Engineer", enabled = true },
+  { key = "hadoop-developer-en", text = "Hadoop Developer", enabled = true },
+  { key = "scala-data-engineer-en", text = "Scala Data Engineer", enabled = true },
+  { key = "scala-big-data-en", text = "Scala Big Data", enabled = true },
+  { key = "flink-engineer-en", text = "Flink Engineer", enabled = true },
+  { key = "flink-developer-en", text = "Flink Developer", enabled = true },
+  { key = "clickhouse-engineer-en", text = "ClickHouse Engineer", enabled = true },
+  { key = "clickhouse-developer-en", text = "ClickHouse Developer", enabled = true },
+  { key = "airflow-engineer-en", text = "Airflow Engineer", enabled = true },
+  { key = "airflow-developer-en", text = "Airflow Developer", enabled = true },
+  { key = "data-lake-engineer-en", text = "Data Lake Engineer", enabled = true },
+  { key = "lakehouse-engineer-en", text = "Lakehouse Engineer", enabled = true },
+]
+
+[query_sets.data_engineering_adjacent]
+version = 1
+queries = [
+  { key = "data-analyst-etl-en", text = "Data Analyst ETL", enabled = true },
+  { key = "data-analyst-dwh-en", text = "Data Analyst DWH", enabled = true },
+  { key = "data-analyst-clickhouse-en", text = "Data Analyst ClickHouse", enabled = true },
+  { key = "data-analyst-airflow-en", text = "Data Analyst Airflow", enabled = true },
+  { key = "data-analyst-kafka-en", text = "Data Analyst Kafka", enabled = true },
+  { key = "data-analyst-spark-en", text = "Data Analyst Spark", enabled = true },
+  { key = "data-analyst-etl-ru", text = "Аналитик данных ETL", enabled = true },
+  { key = "data-analyst-dwh-ru", text = "Аналитик данных DWH", enabled = true },
+  { key = "data-analyst-clickhouse-ru", text = "Аналитик данных ClickHouse", enabled = true },
+  { key = "data-analyst-airflow-ru", text = "Аналитик данных Airflow", enabled = true },
+  { key = "dwh-analyst-ru", text = "Аналитик DWH", enabled = true },
+  { key = "data-warehouse-analyst-ru", text = "Аналитик хранилища данных", enabled = true },
+  { key = "sql-developer-en", text = "SQL Developer", enabled = true },
+  { key = "sql-developer-ru-space", text = "SQL разработчик", enabled = true },
+  { key = "bi-developer-dwh-en", text = "BI Developer DWH", enabled = true },
+]
+
+[query_sets.data_engineering_junior]
+version = 1
+queries = [
+  { key = "junior-data-engineer-en", text = "Junior Data Engineer", enabled = true },
+  { key = "data-engineer-intern-en", text = "Data Engineer Intern", enabled = true },
+  { key = "data-engineering-intern-en", text = "Data Engineering Intern", enabled = true },
+  { key = "data-engineer-intern-ru-e", text = "Стажер Data Engineer", enabled = true },
+  { key = "data-engineer-intern-ru-yo", text = "Стажёр Data Engineer", enabled = true },
+  { key = "data-engineer-intern-full-ru-e", text = "Стажер инженер данных", enabled = true },
+  { key = "data-engineer-intern-full-ru-yo", text = "Стажёр инженер данных", enabled = true },
+  { key = "data-engineering-intern-ru-e", text = "Стажер Data Engineering", enabled = true },
+  { key = "data-engineering-intern-ru-yo", text = "Стажёр Data Engineering", enabled = true },
+  { key = "junior-data-engineer-ru", text = "Младший инженер данных", enabled = true },
+  { key = "junior-etl-developer-en", text = "Junior ETL Developer", enabled = true },
+  { key = "junior-dwh-developer-en", text = "Junior DWH Developer", enabled = true },
+]
+
+[query_sets.python_backend_core]
+version = 1
+queries = [
+  { key = "python-developer-en", text = "Python Developer", enabled = true },
+  { key = "python-developer-ru-hyphen", text = "Python-разработчик", enabled = true },
+  { key = "python-developer-ru-space", text = "Python разработчик", enabled = true },
+  { key = "python-backend-en", text = "Python Backend", enabled = true },
+  { key = "python-backend-developer-en", text = "Python Backend Developer", enabled = true },
+  { key = "python-backend-engineer-en", text = "Python Backend Engineer", enabled = true },
+  { key = "backend-developer-python-en", text = "Backend Developer Python", enabled = true },
+  { key = "backend-engineer-python-en", text = "Backend Engineer Python", enabled = true },
+  { key = "backend-python-en", text = "Backend Python", enabled = true },
+  { key = "backend-developer-python-ru-a-hyphen", text = "Бэкенд-разработчик Python", enabled = true },
+  { key = "backend-developer-python-ru-a-space", text = "Бэкенд разработчик Python", enabled = true },
+  { key = "backend-developer-python-ru-e-hyphen", text = "Бекенд-разработчик Python", enabled = true },
+  { key = "backend-developer-python-ru-e-space", text = "Бекенд разработчик Python", enabled = true },
+  { key = "server-side-developer-python-ru", text = "Разработчик серверной части Python", enabled = true },
+  { key = "software-engineer-python-en", text = "Software Engineer Python", enabled = true },
+  { key = "python-software-engineer-en", text = "Python Software Engineer", enabled = true },
+  { key = "server-side-python-developer-en", text = "Server-side Python Developer", enabled = true },
+]
+
+[query_sets.python_backend_frameworks]
+version = 1
+queries = [
+  { key = "fastapi-developer-en", text = "FastAPI Developer", enabled = true },
+  { key = "fastapi-python-en", text = "FastAPI Python", enabled = true },
+  { key = "backend-fastapi-en", text = "Backend FastAPI", enabled = true },
+  { key = "django-developer-en", text = "Django Developer", enabled = true },
+  { key = "django-python-en", text = "Django Python", enabled = true },
+  { key = "backend-django-en", text = "Backend Django", enabled = true },
+  { key = "flask-developer-en", text = "Flask Developer", enabled = true },
+  { key = "flask-python-en", text = "Flask Python", enabled = true },
+  { key = "python-asyncio-en", text = "Python asyncio", enabled = true },
+  { key = "python-async-backend-en", text = "Python async backend", enabled = true },
+  { key = "python-celery-en", text = "Python Celery", enabled = true },
+  { key = "python-rabbitmq-en", text = "Python RabbitMQ", enabled = true },
+  { key = "python-redis-en", text = "Python Redis", enabled = true },
+  { key = "python-postgresql-en", text = "Python PostgreSQL", enabled = true },
+  { key = "python-microservices-en", text = "Python microservices", enabled = true },
+  { key = "python-microservices-mixed", text = "Python микросервисы", enabled = true },
+  { key = "microservices-python-ru", text = "Микросервисы Python", enabled = true },
+  { key = "python-rest-api-en", text = "Python REST API", enabled = true },
+  { key = "python-grpc-en", text = "Python gRPC", enabled = true },
+]
+
+[query_sets.python_backend_junior]
+version = 1
+queries = [
+  { key = "junior-python-developer-en", text = "Junior Python Developer", enabled = true },
+  { key = "junior-python-backend-developer-en", text = "Junior Python Backend Developer", enabled = true },
+  { key = "junior-backend-engineer-python-en", text = "Junior Backend Engineer Python", enabled = true },
+  { key = "junior-python-developer-ru-hyphen", text = "Младший Python-разработчик", enabled = true },
+  { key = "junior-python-developer-ru-space", text = "Младший Python разработчик", enabled = true },
+  { key = "python-intern-ru-e", text = "Стажер Python", enabled = true },
+  { key = "python-intern-ru-yo", text = "Стажёр Python", enabled = true },
+  { key = "python-backend-intern-ru-e", text = "Стажер Python Backend", enabled = true },
+  { key = "python-backend-intern-ru-yo", text = "Стажёр Python Backend", enabled = true },
+  { key = "backend-python-intern-ru-e", text = "Стажер Backend Python", enabled = true },
+  { key = "backend-python-intern-ru-yo", text = "Стажёр Backend Python", enabled = true },
+  { key = "backend-developer-intern-ru-e", text = "Стажер backend-разработчик", enabled = true },
+  { key = "backend-developer-intern-ru-yo", text = "Стажёр backend-разработчик", enabled = true },
+  { key = "python-intern-en", text = "Python Intern", enabled = true },
+  { key = "backend-intern-python-en", text = "Backend Intern Python", enabled = true },
+]
+
+[query_sets.ml_junior]
+version = 1
+queries = [
+  { key = "junior-ml-engineer-en", text = "Junior ML Engineer", enabled = true },
+  { key = "junior-machine-learning-engineer-en", text = "Junior Machine Learning Engineer", enabled = true },
+  { key = "junior-data-scientist-en", text = "Junior Data Scientist", enabled = true },
+  { key = "junior-ai-engineer-en", text = "Junior AI Engineer", enabled = true },
+  { key = "ml-intern-en", text = "ML Intern", enabled = true },
+  { key = "machine-learning-intern-en", text = "Machine Learning Intern", enabled = true },
+  { key = "data-science-intern-en", text = "Data Science Intern", enabled = true },
+  { key = "ai-intern-en", text = "AI Intern", enabled = true },
+  { key = "research-intern-ml-en", text = "Research Intern ML", enabled = true },
+  { key = "research-intern-ai-en", text = "Research Intern AI", enabled = true },
+  { key = "ml-intern-ru-e", text = "Стажер ML", enabled = true },
+  { key = "ml-intern-ru-yo", text = "Стажёр ML", enabled = true },
+  { key = "machine-learning-intern-mixed-e", text = "Стажер Machine Learning", enabled = true },
+  { key = "machine-learning-intern-mixed-yo", text = "Стажёр Machine Learning", enabled = true },
+  { key = "machine-learning-intern-ru-e", text = "Стажер машинного обучения", enabled = true },
+  { key = "machine-learning-intern-ru-yo", text = "Стажёр машинного обучения", enabled = true },
+  { key = "machine-learning-specialist-intern-ru-e", text = "Стажер по машинному обучению", enabled = true },
+  { key = "machine-learning-specialist-intern-ru-yo", text = "Стажёр по машинному обучению", enabled = true },
+  { key = "data-science-intern-mixed-e", text = "Стажер Data Science", enabled = true },
+  { key = "data-science-intern-mixed-yo", text = "Стажёр Data Science", enabled = true },
+  { key = "ai-intern-mixed-e", text = "Стажер AI", enabled = true },
+  { key = "ai-intern-mixed-yo", text = "Стажёр AI", enabled = true },
+  { key = "junior-ml-engineer-ru-hyphen", text = "Младший ML-инженер", enabled = true },
+  { key = "junior-ml-engineer-ru-space", text = "Младший ML инженер", enabled = true },
+  { key = "junior-data-scientist-mixed", text = "Младший Data Scientist", enabled = true },
+  { key = "nlp-intern-ru-e", text = "Стажер NLP", enabled = true },
+  { key = "nlp-intern-ru-yo", text = "Стажёр NLP", enabled = true },
+  { key = "cv-intern-ru-e", text = "Стажер Computer Vision", enabled = true },
+  { key = "cv-intern-ru-yo", text = "Стажёр Computer Vision", enabled = true },
+]

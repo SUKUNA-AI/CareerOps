@@ -1,22 +1,48 @@
-# CareerOPS HH scheduler
+# CareerOPS HH multi-account scheduler
 
-The scheduler deliberately separates local timing from HH network activity.
-The dispatcher timer wakes locally every five minutes, but it calls HH only when
-one generated plan slot is due.
+The planner reads `/etc/careerops/hh/accounts.toml` and creates one schema-v3
+global plan. Enabled accounts are round-robin interleaved, and every worker
+launch respects the configured global minimum gap. In `observe`, each account
+receives its own `observe_runs_per_day` slots; there is no application quota or
+shortfall carry.
 
-Default invariants:
+Each OBSERVE launch reserves the next query window in PostgreSQL by stable HH
+source profile. The default is at most 50 search queries per run; the complete
+catalog rotates deterministically across runs and account-key renames do not
+reset its cursor.
 
-- 150 submitted applications maximum per local day;
-- 7-8 planned runs;
-- never more than 25 submissions per run;
-- runs spread across 08:30-23:00 Europe/Moscow with at least 80 minutes between slots;
-- unused quota may be carried forward, but a later run is still capped at 25;
-- a captcha pauses the remaining day; no automatic catch-up;
-- if there are not enough relevant vacancies, the day finishes below 150 rather than sending noise.
+In `apply`, the planner uses the separate `apply_runs_per_day` cadence and puts
+`max_apply_per_run` into every slot. Configuration validation requires
+`apply_runs_per_day * max_apply_per_run >= apply_daily_cap`; the committed
+`7 * 15` example can therefore reach a cap of `100`.
 
-`careerops_scheduler.planner` writes the daily plan locally and mirrors it to S3.
-`careerops_scheduler.dispatcher` executes at most one due slot and mirrors dispatch
-results to S3.
+The dispatcher timer wakes locally every five minutes and launches at most one
+due account slot. Its worker command passes only the explicit runtime mode and
+account key. It never adds `--live`, a profile, or a static resume ID.
 
-The HH worker generates a short vacancy-specific cover letter by default. Pass
-`--letter-file` manually only when a fixed letter is desired.
+State is account-scoped: pause reason, completed runs, timestamps, errors, and
+slot statuses live under each account. A CAPTCHA or reconciliation failure for
+one account pauses only that account; later due slots for other accounts remain
+serviceable.
+
+Safety defaults:
+
+- `CAREEROPS_HH_MODE=observe`;
+- `CAREEROPS_HH_ALLOW_EXTERNAL_WRITES=false`;
+- `CAREEROPS_HH_RESUME_REGISTRY=postgres`;
+- dynamic new resume IDs are registered as `unassigned` and cannot auto-apply;
+- non-published resumes keep their binding but cannot auto-apply;
+- missing resume IDs remain as deleted history and cannot start new runs;
+- a failed `/resumes/mine` request aborts reconciliation before state is saved;
+- OBSERVE requires PostgreSQL query-cursor state even when the resume registry
+  is explicitly switched to the JSON dev/bootstrap fallback.
+
+For a future guarded APPLY rollout, set a binding's `auto_apply=true`, choose
+`mode=apply`, and independently set the external-write environment flag. The
+dispatcher then maintains `apply_daily_cap` independently per account and passes
+the remaining daily quota plus the slot's `max_apply_per_run` to the worker. One
+account-run reconciles resumes, runs every published active
+`auto_apply=true` binding (or one explicitly selected binding), and shares a
+conservative employer-write-attempt budget across those resume runs. PostgreSQL
+claims prevent concurrent or ambiguous duplicate POSTs. OBSERVE state never
+receives application quota fields.

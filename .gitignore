@@ -30,6 +30,7 @@ Thumbs.db
 
 # CareerOPS runtime state
 .careerops/
+config/hh_accounts.toml
 
 # hh-applicant-tool runtime state
 hh-applicant-tool/config/*

@@ -7,14 +7,29 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
 
-from careerops_contracts import CanonicalVacancy
+from careerops_contracts import CanonicalVacancy, RawVacancyRef
+from careerops_integrations.hh.application_claims import (
+    ApplicationClaimAcquisition,
+    ApplicationClaimIdentityNotMaterialized,
+    ApplicationClaimRecord,
+    ApplicationClaimStatus,
+    ApplicationClaimTransitionError,
+    ApplicationIdentity,
+)
+from careerops_integrations.hh.mapper import extract_operational, map_hh_vacancy
 from careerops_integrations.hh.models import HHVacancyOperational
+from careerops_integrations.hh.observe import ObserveQueryCursorReservation
+from careerops_integrations.hh.resume_sync import (
+    AccountResumeInventory,
+    ReconciledResume,
+    ResumeLifecycle,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,10 +48,14 @@ class PostgresSettings:
         return cls(dsn=dsn)
 
 
-async def connect_postgres(settings: PostgresSettings) -> AsyncConnection[Any]:
+async def connect_postgres(
+    settings: PostgresSettings,
+    *,
+    autocommit: bool = False,
+) -> AsyncConnection[Any]:
     """Open a transactional psycopg async connection."""
 
-    return await psycopg.AsyncConnection.connect(settings.dsn, autocommit=False)
+    return await psycopg.AsyncConnection.connect(settings.dsn, autocommit=autocommit)
 
 
 def _returned_int(row: tuple[Any, ...] | None, entity: str) -> int:
@@ -52,18 +71,21 @@ async def upsert_source_profile(
     *,
     source: str,
     profile_key: str,
+    account_key: str | None = None,
 ) -> int:
     """Idempotently create or touch one external-source profile."""
 
     cursor = await conn.execute(
         """
-        INSERT INTO careerops.source_profiles AS sp (source, profile_key)
-        VALUES (%s, %s)
+        INSERT INTO careerops.source_profiles AS sp (source, profile_key, account_key)
+        VALUES (%s, %s, %s)
         ON CONFLICT (source, profile_key)
-        DO UPDATE SET updated_at = now()
+        DO UPDATE SET
+            account_key = COALESCE(EXCLUDED.account_key, sp.account_key),
+            updated_at = now()
         RETURNING sp.id
         """,
-        (source, profile_key),
+        (source, profile_key, account_key),
     )
     row = await cursor.fetchone()
     return _returned_int(row, "source profile")
@@ -127,6 +149,89 @@ async def upsert_resume(
     )
     row = await cursor.fetchone()
     return _returned_int(row, "resume")
+
+
+async def upsert_reconciled_resume(
+    conn: AsyncConnection[Any],
+    *,
+    source_profile_id: int,
+    resume: ReconciledResume,
+) -> int:
+    """Persist the complete authoritative runtime lifecycle for one HH resume."""
+
+    cursor = await conn.execute(
+        """
+        INSERT INTO careerops.resumes AS r (
+            source_profile_id,
+            source_resume_id,
+            title,
+            content_hash,
+            first_seen_at,
+            last_seen_at,
+            upstream_status,
+            lifecycle,
+            present_in_upstream,
+            inactive_at,
+            binding_key,
+            binding_version,
+            target_key,
+            binding_enabled,
+            auto_apply,
+            selectable_for_evaluation,
+            selectable_for_auto_apply,
+            query_sets,
+            source_payload
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (source_profile_id, source_resume_id)
+        DO UPDATE SET
+            title = EXCLUDED.title,
+            content_hash = EXCLUDED.content_hash,
+            first_seen_at = LEAST(r.first_seen_at, EXCLUDED.first_seen_at),
+            last_seen_at = GREATEST(r.last_seen_at, EXCLUDED.last_seen_at),
+            upstream_status = EXCLUDED.upstream_status,
+            lifecycle = EXCLUDED.lifecycle,
+            present_in_upstream = EXCLUDED.present_in_upstream,
+            inactive_at = EXCLUDED.inactive_at,
+            binding_key = EXCLUDED.binding_key,
+            binding_version = EXCLUDED.binding_version,
+            target_key = EXCLUDED.target_key,
+            binding_enabled = EXCLUDED.binding_enabled,
+            auto_apply = EXCLUDED.auto_apply,
+            selectable_for_evaluation = EXCLUDED.selectable_for_evaluation,
+            selectable_for_auto_apply = EXCLUDED.selectable_for_auto_apply,
+            query_sets = EXCLUDED.query_sets,
+            source_payload = EXCLUDED.source_payload,
+            updated_at = now()
+        RETURNING r.id
+        """,
+        (
+            source_profile_id,
+            resume.source_resume_id,
+            resume.current_title,
+            resume.content_sha256,
+            resume.first_seen_at,
+            resume.last_seen_at,
+            resume.upstream_status,
+            resume.lifecycle.value,
+            resume.lifecycle is ResumeLifecycle.ACTIVE,
+            resume.inactive_at,
+            resume.binding_key,
+            resume.binding_version,
+            resume.target_key,
+            resume.binding_enabled,
+            resume.auto_apply,
+            resume.selectable_for_evaluation,
+            resume.selectable_for_auto_apply,
+            list(resume.query_sets),
+            Jsonb(resume.source_payload),
+        ),
+    )
+    row = await cursor.fetchone()
+    return _returned_int(row, "reconciled resume")
 
 
 async def upsert_partial_vacancy(
@@ -746,6 +851,760 @@ async def upsert_application(
     return _returned_int(row, "application")
 
 
+def _claim_record(
+    row: tuple[Any, ...] | None,
+    *,
+    identity: ApplicationIdentity,
+) -> ApplicationClaimRecord:
+    if row is None:
+        raise RuntimeError("application claim operation returned no row")
+    return ApplicationClaimRecord(
+        identity=identity,
+        account_key=str(row[0]),
+        application_run_id=UUID(str(row[1])),
+        status=ApplicationClaimStatus(str(row[2])),
+        attempt_count=int(row[3]),
+        claimed_at=row[4],
+        state_changed_at=row[5],
+    )
+
+
+async def _resolve_application_identity_ids(
+    conn: AsyncConnection[Any],
+    identity: ApplicationIdentity,
+) -> tuple[int, int]:
+    """Resolve a stable HH natural key to the canonical OLTP entity ids."""
+
+    cursor = await conn.execute(
+        """
+        SELECT r.id, v.id
+        FROM careerops.source_profiles AS sp
+        JOIN careerops.resumes AS r ON r.source_profile_id = sp.id
+        JOIN careerops.vacancies AS v
+          ON v.source = 'hh'
+         AND v.source_entity_id = %s
+        WHERE sp.source = 'hh'
+          AND sp.profile_key = %s
+          AND r.source_resume_id = %s
+        """,
+        (
+            identity.vacancy_id,
+            identity.source_profile,
+            identity.source_resume_id,
+        ),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise ApplicationClaimIdentityNotMaterialized(
+            "application claim identity is not materialized in PostgreSQL: "
+            f"profile={identity.source_profile!r}, "
+            f"resume={identity.source_resume_id!r}, "
+            f"vacancy={identity.vacancy_id!r}"
+        )
+    return int(row[0]), int(row[1])
+
+
+async def prepare_application_claim_identity(
+    conn: AsyncConnection[Any],
+    *,
+    identity: ApplicationIdentity,
+    account_key: str,
+    vacancy: dict[str, Any],
+    observed_at: datetime,
+    raw_uri: str,
+    content_hash: str,
+) -> None:
+    """Materialize an APPLY vacancy while requiring an existing reconciled resume.
+
+    The caller owns the short PostgreSQL transaction. The authoritative HH
+    vacancy payload is already fetched and durably stored before this function;
+    no external network work is performed here.
+    """
+
+    normalized_account_key = account_key.strip()
+    if not normalized_account_key:
+        raise ValueError("account_key must not be empty")
+    payload_vacancy_id = str(vacancy.get("id", "")).strip()
+    if payload_vacancy_id != identity.vacancy_id:
+        raise ValueError(
+            "application vacancy payload identity mismatch: "
+            f"expected={identity.vacancy_id!r}, actual={payload_vacancy_id!r}"
+        )
+
+    cursor = await conn.execute(
+        """
+        SELECT r.id
+        FROM careerops.source_profiles AS sp
+        JOIN careerops.resumes AS r ON r.source_profile_id = sp.id
+        WHERE sp.source = 'hh'
+          AND sp.profile_key = %s
+          AND r.source_resume_id = %s
+          AND r.lifecycle = 'active'
+          AND r.present_in_upstream
+        """,
+        (identity.source_profile, identity.source_resume_id),
+    )
+    if await cursor.fetchone() is None:
+        raise ApplicationClaimIdentityNotMaterialized(
+            "application resume identity is not current in PostgreSQL: "
+            f"profile={identity.source_profile!r}, "
+            f"resume={identity.source_resume_id!r}, "
+            f"account_key={normalized_account_key!r}"
+        )
+
+    raw = RawVacancyRef(
+        source="hh",
+        source_entity_id=identity.vacancy_id,
+        raw_uri=raw_uri,
+        content_hash=content_hash,
+        collected_at=observed_at,
+    )
+    employer = vacancy.get("employer") or {}
+    employer_id = str(employer.get("id", "")).strip() or None
+    await upsert_vacancy(
+        conn,
+        vacancy=map_hh_vacancy(vacancy, raw=raw),
+        operational=extract_operational(vacancy),
+        source_employer_id=employer_id,
+    )
+
+
+async def acquire_application_claim(
+    conn: AsyncConnection[Any],
+    *,
+    identity: ApplicationIdentity,
+    account_key: str,
+    application_run_id: UUID,
+    claimed_at: datetime,
+) -> ApplicationClaimAcquisition:
+    """Atomically acquire a canonical resume/vacancy claim.
+
+    ``account_key`` is stored only as mutable provenance and is deliberately not
+    part of either identity resolution or the PostgreSQL conflict target.
+    """
+
+    normalized_account_key = account_key.strip()
+    if not normalized_account_key:
+        raise ValueError("account_key must not be empty")
+    resume_db_id, vacancy_db_id = await _resolve_application_identity_ids(
+        conn,
+        identity,
+    )
+
+    cursor = await conn.execute(
+        """
+        INSERT INTO careerops.application_claims AS ac (
+            id,
+            account_key,
+            resume_id,
+            vacancy_id,
+            application_run_id,
+            status,
+            attempt_count,
+            claimed_at,
+            state_changed_at
+        )
+        VALUES (%s, %s, %s, %s, %s, 'CLAIMED', 1, %s, %s)
+        ON CONFLICT (resume_id, vacancy_id)
+        DO UPDATE SET
+            id = EXCLUDED.id,
+            account_key = EXCLUDED.account_key,
+            application_run_id = EXCLUDED.application_run_id,
+            status = 'CLAIMED',
+            attempt_count = ac.attempt_count + 1,
+            claimed_at = EXCLUDED.claimed_at,
+            state_changed_at = EXCLUDED.state_changed_at,
+            submitted_at = NULL,
+            finished_at = NULL,
+            last_error_type = NULL,
+            last_error_message = NULL,
+            upstream_evidence = '{}'::jsonb,
+            updated_at = now()
+        WHERE ac.status = 'FAILED_SAFE_TO_RETRY'
+        RETURNING
+            ac.account_key,
+            ac.application_run_id,
+            ac.status,
+            ac.attempt_count,
+            ac.claimed_at,
+            ac.state_changed_at
+        """,
+        (
+            uuid4(),
+            normalized_account_key,
+            resume_db_id,
+            vacancy_db_id,
+            application_run_id,
+            claimed_at,
+            claimed_at,
+        ),
+    )
+    row = await cursor.fetchone()
+    if row is not None:
+        return ApplicationClaimAcquisition(
+            acquired=True,
+            record=_claim_record(row, identity=identity),
+        )
+
+    cursor = await conn.execute(
+        """
+        SELECT
+            account_key,
+            application_run_id,
+            status,
+            attempt_count,
+            claimed_at,
+            state_changed_at
+        FROM careerops.application_claims
+        WHERE resume_id = %s
+          AND vacancy_id = %s
+        """,
+        (resume_db_id, vacancy_db_id),
+    )
+    return ApplicationClaimAcquisition(
+        acquired=False,
+        record=_claim_record(await cursor.fetchone(), identity=identity),
+    )
+
+
+async def transition_application_claim(
+    conn: AsyncConnection[Any],
+    *,
+    identity: ApplicationIdentity,
+    application_run_id: UUID,
+    expected: tuple[ApplicationClaimStatus, ...],
+    status: ApplicationClaimStatus,
+    changed_at: datetime,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    upstream_evidence: dict[str, Any] | None = None,
+) -> ApplicationClaimRecord:
+    """Transition only the current owner from an explicitly allowed state."""
+
+    if not expected:
+        raise ValueError("expected claim states must not be empty")
+    resume_db_id, vacancy_db_id = await _resolve_application_identity_ids(
+        conn,
+        identity,
+    )
+    terminal = status in {
+        ApplicationClaimStatus.SUBMITTED,
+        ApplicationClaimStatus.UNCERTAIN,
+        ApplicationClaimStatus.FAILED_SAFE_TO_RETRY,
+    }
+    cursor = await conn.execute(
+        """
+        UPDATE careerops.application_claims AS ac
+        SET
+            status = %s,
+            state_changed_at = %s,
+            submitted_at = CASE
+                WHEN %s = 'SUBMITTED' THEN %s
+                ELSE ac.submitted_at
+            END,
+            finished_at = CASE
+                WHEN %s THEN %s
+                ELSE NULL
+            END,
+            last_error_type = %s,
+            last_error_message = %s,
+            upstream_evidence = %s,
+            updated_at = now()
+        WHERE ac.resume_id = %s
+          AND ac.vacancy_id = %s
+          AND ac.application_run_id = %s
+          AND ac.status = ANY(%s)
+        RETURNING
+            ac.account_key,
+            ac.application_run_id,
+            ac.status,
+            ac.attempt_count,
+            ac.claimed_at,
+            ac.state_changed_at
+        """,
+        (
+            status.value,
+            changed_at,
+            status.value,
+            changed_at,
+            terminal,
+            changed_at,
+            error_type,
+            error_message,
+            Jsonb(upstream_evidence or {}),
+            resume_db_id,
+            vacancy_db_id,
+            application_run_id,
+            [item.value for item in expected],
+        ),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise ApplicationClaimTransitionError(
+            "application claim state changed concurrently or is owned by another run"
+        )
+    return _claim_record(row, identity=identity)
+
+
+async def reserve_observe_query_window(
+    conn: AsyncConnection[Any],
+    *,
+    source_profile: str,
+    account_key: str,
+    catalog_signature: str,
+    catalog_size: int,
+    max_queries: int,
+    run_id: UUID,
+    reserved_at: datetime,
+) -> ObserveQueryCursorReservation:
+    """Atomically reserve and advance one source profile's circular query window."""
+
+    if catalog_size < 1:
+        raise ValueError("catalog_size must be >= 1")
+    if max_queries < 1:
+        raise ValueError("max_queries must be >= 1")
+    if len(catalog_signature) != 64:
+        raise ValueError("catalog_signature must be a SHA-256 hex digest")
+    window_size = min(catalog_size, max_queries)
+
+    async with conn.transaction():
+        source_profile_id = await upsert_source_profile(
+            conn,
+            source="hh",
+            profile_key=source_profile,
+            account_key=account_key,
+        )
+        cursor = await conn.execute(
+            """
+            INSERT INTO careerops.observe_query_cursors AS oqc (
+                source_profile_id,
+                account_key,
+                catalog_signature,
+                catalog_size,
+                next_query_offset,
+                last_window_start,
+                last_window_size,
+                last_run_id,
+                last_reserved_at
+            )
+            VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)
+            ON CONFLICT (source_profile_id)
+            DO UPDATE SET
+                account_key = EXCLUDED.account_key,
+                last_window_start = CASE
+                    WHEN oqc.catalog_signature = EXCLUDED.catalog_signature
+                     AND oqc.catalog_size = EXCLUDED.catalog_size
+                    THEN oqc.next_query_offset
+                    ELSE 0
+                END,
+                last_window_size = EXCLUDED.last_window_size,
+                next_query_offset = CASE
+                    WHEN oqc.catalog_signature = EXCLUDED.catalog_signature
+                     AND oqc.catalog_size = EXCLUDED.catalog_size
+                    THEN (
+                        oqc.next_query_offset + EXCLUDED.last_window_size
+                    ) % EXCLUDED.catalog_size
+                    ELSE EXCLUDED.next_query_offset
+                END,
+                catalog_signature = EXCLUDED.catalog_signature,
+                catalog_size = EXCLUDED.catalog_size,
+                last_run_id = EXCLUDED.last_run_id,
+                last_reserved_at = EXCLUDED.last_reserved_at,
+                updated_at = now()
+            RETURNING
+                oqc.catalog_signature,
+                oqc.catalog_size,
+                oqc.last_window_start,
+                oqc.last_window_size,
+                oqc.next_query_offset
+            """,
+            (
+                source_profile_id,
+                account_key,
+                catalog_signature,
+                catalog_size,
+                window_size % catalog_size,
+                window_size,
+                run_id,
+                reserved_at,
+            ),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        raise RuntimeError("OBSERVE query cursor reservation returned no row")
+    return ObserveQueryCursorReservation(
+        source_profile=source_profile,
+        account_key=account_key,
+        catalog_signature=str(row[0]),
+        catalog_size=int(row[1]),
+        window_start=int(row[2]),
+        window_size=int(row[3]),
+        next_query_offset=int(row[4]),
+    )
+
+
+async def upsert_observation_run(
+    conn: AsyncConnection[Any],
+    *,
+    run_id: UUID,
+    source_profile_id: int,
+    account_key: str,
+    status: str,
+    query_set_keys: Sequence[str],
+    query_keys: Sequence[str],
+    query_catalog_size: int,
+    query_catalog_signature: str,
+    max_queries_per_run: int,
+    query_cursor_start: int,
+    query_cursor_next: int,
+    query_rotation_wrapped: bool,
+    pages: int,
+    per_page: int,
+    max_unique_vacancies: int,
+    max_full_fetches: int,
+    search_delay_seconds: float,
+    full_fetch_min_delay_seconds: float,
+    full_fetch_max_delay_seconds: float,
+    started_at: datetime,
+    s3_prefix: str,
+    finished_at: datetime | None = None,
+    search_observation_count: int | None = None,
+    unique_vacancy_count: int | None = None,
+    candidate_count: int | None = None,
+    full_fetch_attempted: int | None = None,
+    full_fetched: int | None = None,
+    evaluation_candidate_count: int | None = None,
+    failed: int | None = None,
+    stopped_on_captcha: bool | None = None,
+) -> UUID:
+    """Persist an account-wide OBSERVE run without inventing a single resume."""
+
+    cursor = await conn.execute(
+        """
+        INSERT INTO careerops.observation_runs AS obr (
+            id, source_profile_id, account_key, status, query_set_keys, query_keys,
+            query_catalog_size, query_catalog_signature, max_queries_per_run,
+            query_cursor_start, query_cursor_next, query_rotation_wrapped,
+            pages, per_page, max_unique_vacancies, max_full_fetches,
+            search_delay_seconds, full_fetch_min_delay_seconds,
+            full_fetch_max_delay_seconds, search_observation_count,
+            unique_vacancy_count, candidate_count, full_fetch_attempted,
+            full_fetched, evaluation_candidate_count, failed, stopped_on_captcha,
+            started_at, finished_at, s3_prefix
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (id)
+        DO UPDATE SET
+            source_profile_id = EXCLUDED.source_profile_id,
+            account_key = EXCLUDED.account_key,
+            status = EXCLUDED.status,
+            query_set_keys = EXCLUDED.query_set_keys,
+            query_keys = EXCLUDED.query_keys,
+            query_catalog_size = EXCLUDED.query_catalog_size,
+            query_catalog_signature = EXCLUDED.query_catalog_signature,
+            max_queries_per_run = EXCLUDED.max_queries_per_run,
+            query_cursor_start = EXCLUDED.query_cursor_start,
+            query_cursor_next = EXCLUDED.query_cursor_next,
+            query_rotation_wrapped = EXCLUDED.query_rotation_wrapped,
+            pages = EXCLUDED.pages,
+            per_page = EXCLUDED.per_page,
+            max_unique_vacancies = EXCLUDED.max_unique_vacancies,
+            max_full_fetches = EXCLUDED.max_full_fetches,
+            search_delay_seconds = EXCLUDED.search_delay_seconds,
+            full_fetch_min_delay_seconds = EXCLUDED.full_fetch_min_delay_seconds,
+            full_fetch_max_delay_seconds = EXCLUDED.full_fetch_max_delay_seconds,
+            search_observation_count = COALESCE(
+                EXCLUDED.search_observation_count,
+                obr.search_observation_count
+            ),
+            unique_vacancy_count = COALESCE(
+                EXCLUDED.unique_vacancy_count,
+                obr.unique_vacancy_count
+            ),
+            candidate_count = COALESCE(EXCLUDED.candidate_count, obr.candidate_count),
+            full_fetch_attempted = COALESCE(
+                EXCLUDED.full_fetch_attempted,
+                obr.full_fetch_attempted
+            ),
+            full_fetched = COALESCE(EXCLUDED.full_fetched, obr.full_fetched),
+            evaluation_candidate_count = COALESCE(
+                EXCLUDED.evaluation_candidate_count,
+                obr.evaluation_candidate_count
+            ),
+            failed = COALESCE(EXCLUDED.failed, obr.failed),
+            stopped_on_captcha = COALESCE(
+                EXCLUDED.stopped_on_captcha,
+                obr.stopped_on_captcha
+            ),
+            started_at = LEAST(obr.started_at, EXCLUDED.started_at),
+            finished_at = COALESCE(EXCLUDED.finished_at, obr.finished_at),
+            s3_prefix = EXCLUDED.s3_prefix,
+            updated_at = now()
+        RETURNING obr.id
+        """,
+        (
+            run_id,
+            source_profile_id,
+            account_key,
+            status,
+            list(query_set_keys),
+            list(query_keys),
+            query_catalog_size,
+            query_catalog_signature,
+            max_queries_per_run,
+            query_cursor_start,
+            query_cursor_next,
+            query_rotation_wrapped,
+            pages,
+            per_page,
+            max_unique_vacancies,
+            max_full_fetches,
+            search_delay_seconds,
+            full_fetch_min_delay_seconds,
+            full_fetch_max_delay_seconds,
+            search_observation_count,
+            unique_vacancy_count,
+            candidate_count,
+            full_fetch_attempted,
+            full_fetched,
+            evaluation_candidate_count,
+            failed,
+            stopped_on_captcha,
+            started_at,
+            finished_at,
+            s3_prefix,
+        ),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise RuntimeError("observation run UPSERT returned no row")
+    return UUID(str(row[0]))
+
+
+async def upsert_vacancy_observation(
+    conn: AsyncConnection[Any],
+    **kwargs: Any,
+) -> None:
+    """Persist account-run provenance for one discovered vacancy."""
+
+    cursor = await conn.execute(
+        """
+        INSERT INTO careerops.vacancy_observations AS vo (
+            run_id, vacancy_id, full_fetch_status, matched_query_keys,
+            matched_query_sets, query_page_uris, search_item_uri, vacancy_uri,
+            evaluation_candidates_uri, observed_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (run_id, vacancy_id)
+        DO UPDATE SET
+            full_fetch_status = EXCLUDED.full_fetch_status,
+            matched_query_keys = EXCLUDED.matched_query_keys,
+            matched_query_sets = EXCLUDED.matched_query_sets,
+            query_page_uris = EXCLUDED.query_page_uris,
+            search_item_uri = EXCLUDED.search_item_uri,
+            vacancy_uri = EXCLUDED.vacancy_uri,
+            evaluation_candidates_uri = EXCLUDED.evaluation_candidates_uri,
+            observed_at = EXCLUDED.observed_at,
+            updated_at = now()
+        RETURNING vo.run_id
+        """,
+        (
+            kwargs["run_id"],
+            kwargs["vacancy_id"],
+            kwargs["full_fetch_status"],
+            list(kwargs["matched_query_keys"]),
+            list(kwargs["matched_query_sets"]),
+            list(kwargs["query_page_uris"]),
+            kwargs["search_item_uri"],
+            kwargs.get("vacancy_uri"),
+            kwargs["evaluation_candidates_uri"],
+            kwargs["observed_at"],
+        ),
+    )
+    if await cursor.fetchone() is None:
+        raise RuntimeError("vacancy observation UPSERT returned no row")
+
+
+async def upsert_evaluation_work_item(
+    conn: AsyncConnection[Any],
+    **kwargs: Any,
+) -> None:
+    """Persist one explicit vacancy x resume future-evaluation identity."""
+
+    cursor = await conn.execute(
+        """
+        INSERT INTO careerops.evaluation_work_items AS ewi (
+            run_id, vacancy_id, resume_id, binding_key, target_key,
+            binding_version, auto_apply, matched_query_keys, matched_query_sets,
+            resume_query_sets, overlap_query_keys, overlap_query_sets,
+            has_provenance_overlap, full_fetch_status, evaluation_status, created_at
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (run_id, vacancy_id, resume_id)
+        DO UPDATE SET
+            binding_key = EXCLUDED.binding_key,
+            target_key = EXCLUDED.target_key,
+            binding_version = EXCLUDED.binding_version,
+            auto_apply = EXCLUDED.auto_apply,
+            matched_query_keys = EXCLUDED.matched_query_keys,
+            matched_query_sets = EXCLUDED.matched_query_sets,
+            resume_query_sets = EXCLUDED.resume_query_sets,
+            overlap_query_keys = EXCLUDED.overlap_query_keys,
+            overlap_query_sets = EXCLUDED.overlap_query_sets,
+            has_provenance_overlap = EXCLUDED.has_provenance_overlap,
+            full_fetch_status = EXCLUDED.full_fetch_status,
+            evaluation_status = EXCLUDED.evaluation_status,
+            created_at = EXCLUDED.created_at,
+            updated_at = now()
+        RETURNING ewi.run_id
+        """,
+        (
+            kwargs["run_id"],
+            kwargs["vacancy_id"],
+            kwargs["resume_id"],
+            kwargs["binding_key"],
+            kwargs["target_key"],
+            kwargs["binding_version"],
+            kwargs["auto_apply"],
+            list(kwargs["matched_query_keys"]),
+            list(kwargs["matched_query_sets"]),
+            list(kwargs["resume_query_sets"]),
+            list(kwargs["overlap_query_keys"]),
+            list(kwargs["overlap_query_sets"]),
+            kwargs["has_provenance_overlap"],
+            kwargs["full_fetch_status"],
+            kwargs["evaluation_status"],
+            kwargs["created_at"],
+        ),
+    )
+    if await cursor.fetchone() is None:
+        raise RuntimeError("evaluation work item UPSERT returned no row")
+
+
+class PostgresApplicationClaimStore:
+    """PostgreSQL-backed atomic application claim state machine."""
+
+    def __init__(self, conn: AsyncConnection[Any]) -> None:
+        self.conn = conn
+
+    async def prepare_identity(self, **kwargs: Any) -> None:
+        async with self.conn.transaction():
+            await prepare_application_claim_identity(self.conn, **kwargs)
+
+    async def acquire(self, **kwargs: Any) -> ApplicationClaimAcquisition:
+        async with self.conn.transaction():
+            return await acquire_application_claim(self.conn, **kwargs)
+
+    async def transition(self, **kwargs: Any) -> ApplicationClaimRecord:
+        async with self.conn.transaction():
+            return await transition_application_claim(self.conn, **kwargs)
+
+
+class PostgresObserveQueryCursorStore:
+    """PostgreSQL-backed, profile-stable OBSERVE query rotation state."""
+
+    def __init__(self, conn: AsyncConnection[Any]) -> None:
+        self.conn = conn
+
+    async def reserve(self, **kwargs: Any) -> ObserveQueryCursorReservation:
+        return await reserve_observe_query_window(self.conn, **kwargs)
+
+
+class PostgresResumeRegistry:
+    """Primary runtime persistence for authoritative HH resume reconciliation."""
+
+    def __init__(self, conn: AsyncConnection[Any]) -> None:
+        self.conn = conn
+
+    async def load(
+        self,
+        *,
+        account_key: str,
+        source_profile: str,
+    ) -> AccountResumeInventory | None:
+        cursor = await self.conn.execute(
+            """
+            SELECT
+                r.source_resume_id,
+                r.title,
+                r.upstream_status,
+                r.lifecycle,
+                r.first_seen_at,
+                r.last_seen_at,
+                r.inactive_at,
+                r.binding_key,
+                r.binding_enabled,
+                r.target_key,
+                r.query_sets,
+                r.auto_apply,
+                r.binding_version,
+                r.content_hash,
+                r.source_payload
+            FROM careerops.resumes AS r
+            JOIN careerops.source_profiles AS sp ON sp.id = r.source_profile_id
+            WHERE sp.source = 'hh'
+              AND sp.profile_key = %s
+              AND sp.account_key = %s
+            ORDER BY r.source_resume_id
+            """,
+            (source_profile, account_key),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        resumes = tuple(
+            ReconciledResume(
+                source_profile=source_profile,
+                source_resume_id=str(row[0]),
+                current_title=row[1],
+                upstream_status=row[2],
+                lifecycle=ResumeLifecycle(str(row[3])),
+                first_seen_at=row[4],
+                last_seen_at=row[5],
+                inactive_at=row[6],
+                binding_key=row[7],
+                binding_enabled=bool(row[8]),
+                target_key=row[9],
+                query_sets=tuple(row[10] or ()),
+                auto_apply=bool(row[11]),
+                binding_version=row[12],
+                content_sha256=str(row[13]),
+                source_payload=dict(row[14] or {}),
+            )
+            for row in rows
+        )
+        return AccountResumeInventory(
+            account_key=account_key,
+            source_profile=source_profile,
+            reconciled_at=max(
+                resume.inactive_at or resume.last_seen_at for resume in resumes
+            ),
+            resumes=resumes,
+        )
+
+    async def save(self, inventory: AccountResumeInventory) -> None:
+        async with self.conn.transaction():
+            source_profile_id = await upsert_source_profile(
+                self.conn,
+                source="hh",
+                profile_key=inventory.source_profile,
+                account_key=inventory.account_key,
+            )
+            for resume in inventory.resumes:
+                await upsert_reconciled_resume(
+                    self.conn,
+                    source_profile_id=source_profile_id,
+                    resume=resume,
+                )
+
+
 class PostgresOLTPStore:
     """Async object-oriented facade over CareerOPS PostgreSQL UPSERT functions."""
 
@@ -788,3 +1647,18 @@ class PostgresOLTPStore:
         """Persist one completed and provable application audit."""
 
         return await upsert_application(self.conn, **kwargs)
+
+    async def upsert_observation_run(self, **kwargs: Any) -> UUID:
+        """Persist one account-wide observation run."""
+
+        return await upsert_observation_run(self.conn, **kwargs)
+
+    async def upsert_vacancy_observation(self, **kwargs: Any) -> None:
+        """Persist one vacancy provenance record for an observation run."""
+
+        await upsert_vacancy_observation(self.conn, **kwargs)
+
+    async def upsert_evaluation_work_item(self, **kwargs: Any) -> None:
+        """Persist one vacancy x resume evaluation work item."""
+
+        await upsert_evaluation_work_item(self.conn, **kwargs)

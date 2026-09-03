@@ -196,14 +196,6 @@ def prefilter_ml_search_item(search_item: dict[str, Any]) -> VacancyDecision:
     if not title_decision.accepted:
         return title_decision
 
-    relations = tuple(str(value) for value in (search_item.get("relations") or []))
-    if relations:
-        return VacancyDecision(
-            False,
-            "already_has_hh_relation",
-            matched_domains=title_decision.matched_domains,
-        )
-
     if search_item.get("archived"):
         return VacancyDecision(
             False,
@@ -264,14 +256,6 @@ def validate_ml_vacancy(
             "excluded_context",
             matched_domains=title_decision.matched_domains,
             blocked_terms=excluded_context,
-        )
-
-    relations = tuple(str(value) for value in (vacancy.get("relations") or []))
-    if relations:
-        return VacancyDecision(
-            False,
-            "already_has_hh_relation",
-            matched_domains=title_decision.matched_domains,
         )
 
     if vacancy.get("archived"):

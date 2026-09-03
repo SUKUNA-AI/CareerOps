@@ -42,6 +42,18 @@ class BackfillReport:
     failures: tuple[BackfillFailure, ...]
 
 
+async def load_hh_run_transactionally(
+    store: Any,
+    sink: Any,
+    conn: Any,
+    location: Any,
+) -> LoadedBatchResult:
+    """Materialize exactly one RAW run inside exactly one database transaction."""
+
+    async with conn.transaction():
+        return await load_hh_batch(store, sink, location)
+
+
 async def run_backfill(
     store: Any,
     conn: Any,
@@ -71,8 +83,12 @@ async def run_backfill(
 
     for location in selected:
         try:
-            async with conn.transaction():
-                result = await load_hh_batch(store, sink, location)
+            result = await load_hh_run_transactionally(
+                store,
+                sink,
+                conn,
+                location,
+            )
         except Exception as exc:  # noqa: BLE001 - isolate and report one failed batch
             failure = BackfillFailure(
                 run_id=location.run_id,

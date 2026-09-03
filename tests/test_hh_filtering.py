@@ -212,8 +212,15 @@ def test_external_response_still_blocks_after_full_fetch():
     assert d.accepted is False and d.reason == "external_response_url"
 
 
-def test_prefilter_rejects_existing_relation_without_full_fetch():
+def test_prefilter_treats_global_relations_as_non_resume_specific():
     d = prefilter_ml_search_item(
         {"id": "1", "name": "ML Engineer", "relations": ["got_response"]}
     )
-    assert d.accepted is False and d.reason == "already_has_hh_relation"
+    assert d.accepted is True and d.reason == "accepted"
+
+
+def test_full_validation_treats_global_relations_as_non_resume_specific():
+    d = validate_ml_vacancy(
+        vacancy("ML Engineer", relations=["got_response"])
+    )
+    assert d.accepted is True and d.reason == "accepted"
