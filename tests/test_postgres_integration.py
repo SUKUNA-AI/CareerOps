@@ -32,6 +32,7 @@ from careerops_integrations.hh.resume_sync import ReconciledResume, ResumeLifecy
 from careerops_integrations.hh.runtime import HHExternalWriteGuard, RuntimeMode
 from careerops_storage.postgres import (
     PostgresApplicationClaimStore,
+    reserve_observe_query_window,
     upsert_evaluation_work_item,
     upsert_observation_run,
     upsert_reconciled_resume,
@@ -74,8 +75,8 @@ async def _drop_database(admin_dsn: str) -> None:
 
 async def _apply_migrations(dsn: str) -> None:
     migration_root = Path(__file__).parents[1] / "sql" / "migrations"
-    migrations = sorted(migration_root.glob("000[1-4]_*.sql"))
-    assert [path.name[:4] for path in migrations] == ["0001", "0002", "0003", "0004"]
+    migrations = sorted(migration_root.glob("000[1-5]_*.sql"))
+    assert [path.name[:4] for path in migrations] == ["0001", "0002", "0003", "0004", "0005"]
 
     conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
     async with conn:
@@ -643,3 +644,43 @@ async def test_observe_replay_and_complete_transaction_rollback(
             "SELECT count(*) FROM careerops.evaluation_work_items WHERE run_id = %s",
             (failed_run_id,),
         ) == 0
+
+
+@pytest.mark.asyncio
+async def test_observe_query_cursor_reservation_uses_real_psycopg(
+    clean_postgres_dsn: str,
+) -> None:
+    conn = await psycopg.AsyncConnection.connect(
+        clean_postgres_dsn,
+        autocommit=True,
+    )
+    async with conn:
+        first = await reserve_observe_query_window(
+            conn,
+            source_profile="profile-cursor",
+            account_key="cursor",
+            catalog_signature="a" * 64,
+            catalog_size=272,
+            max_queries=50,
+            run_id=uuid4(),
+            reserved_at=NOW,
+        )
+
+        assert first.window_start == 0
+        assert first.window_size == 50
+        assert first.next_query_offset == 50
+
+        second = await reserve_observe_query_window(
+            conn,
+            source_profile="profile-cursor",
+            account_key="cursor",
+            catalog_signature="a" * 64,
+            catalog_size=272,
+            max_queries=50,
+            run_id=uuid4(),
+            reserved_at=NOW,
+        )
+
+        assert second.window_start == 50
+        assert second.window_size == 50
+        assert second.next_query_offset == 100

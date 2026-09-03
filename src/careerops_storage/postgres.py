@@ -1203,7 +1203,7 @@ async def reserve_observe_query_window(
                      AND oqc.catalog_size = EXCLUDED.catalog_size
                     THEN (
                         oqc.next_query_offset + EXCLUDED.last_window_size
-                    ) % EXCLUDED.catalog_size
+                    ) %% EXCLUDED.catalog_size
                     ELSE EXCLUDED.next_query_offset
                 END,
                 catalog_signature = EXCLUDED.catalog_signature,
