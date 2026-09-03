@@ -18,8 +18,8 @@ def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
     discovery = load_discovery_config(DISCOVERY_PATH)
     accounts = load_accounts_config(ACCOUNTS_PATH, discovery=discovery)
 
-    assert len(discovery.query_sets) == 18
-    assert sum(discovery.enabled_query_count_by_set.values()) == 366
+    assert len(discovery.query_sets) == 20
+    assert sum(discovery.enabled_query_count_by_set.values()) == 388
     assert [account.key for account in accounts.enabled_accounts] == [
         "ml_3y",
         "ml_5y",
@@ -27,11 +27,13 @@ def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
     ]
     junior = accounts.resolve_account("junior")
     assert [binding.key for binding in junior.enabled_bindings] == [
-        "de_junior",
-        "backend_junior",
-        "ml_ds_junior",
+    "de_junior",
+    "backend_junior",
+    "ml_ds_junior",
+    "cpp_junior",
     ]
-    assert len(junior.query_set_keys) == 13
+
+    assert len(junior.query_set_keys) == 15
     assert discovery.defaults.pages == 1
     assert discovery.defaults.per_page == 50
     assert discovery.defaults.max_queries_per_run == 50
@@ -82,6 +84,10 @@ def test_catalog_contains_required_broad_ru_en_families() -> None:
         "Flask Developer",
         "Junior Python Developer",
         "Стажёр машинного обучения",
+        "C++ Developer",
+        "C++ разработчик",
+        "Junior C++ Developer",
+        "Стажёр C++",
     }
     assert required <= texts
 

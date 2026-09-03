@@ -55,7 +55,7 @@
   unassigned с `auto_apply=false`. Текущий HH publication status хранится
   отдельно: APPLY допускает только `published` resume.
 
-* 🔎 **Broad discovery.** 18 query sets и 366 отдельных RU/EN вариантов для
+* 🔎 **Broad discovery.** 20 query sets и 388 отдельных RU/EN вариантов для
   ML/AI/DS/DE/Python Backend остаются в каталоге. Каждый account-run атомарно
   резервирует в PostgreSQL очередное детерминированное окно максимум из 50
   query, поэтому каталог ротируется между запусками, а не исполняется целиком.

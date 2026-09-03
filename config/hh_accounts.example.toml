@@ -110,3 +110,15 @@ query_sets = [
   "ai_llm",
   "cv_multimodal",
 ]
+
+[[accounts.bindings]]
+key = "cpp_junior"
+source_resume_id = "REPLACE_ME_CPP_JUNIOR"
+target_key = "cpp_developer_junior"
+enabled = true
+auto_apply = false
+binding_version = 1
+query_sets = [
+  "cpp_core",
+  "cpp_junior",
+]

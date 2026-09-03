@@ -468,3 +468,36 @@ queries = [
   { key = "cv-intern-ru-e", text = "Стажер Computer Vision", enabled = true },
   { key = "cv-intern-ru-yo", text = "Стажёр Computer Vision", enabled = true },
 ]
+
+
+[query_sets.cpp_core]
+version = 1
+queries = [
+  { key = "cpp-developer-en", text = "C++ Developer", enabled = true },
+  { key = "cpp-engineer-en", text = "C++ Engineer", enabled = true },
+  { key = "cpp-software-engineer-en", text = "C++ Software Engineer", enabled = true },
+  { key = "cpp-programmer-en", text = "C++ Programmer", enabled = true },
+  { key = "c-cpp-developer-en", text = "C/C++ Developer", enabled = true },
+  { key = "c-cpp-engineer-en", text = "C/C++ Engineer", enabled = true },
+  { key = "cpp-backend-developer-en", text = "C++ Backend Developer", enabled = true },
+  { key = "cpp-developer-ru", text = "C++ разработчик", enabled = true },
+  { key = "developer-cpp-ru", text = "Разработчик C++", enabled = true },
+  { key = "cpp-programmer-ru", text = "C++ программист", enabled = true },
+  { key = "programmer-cpp-ru", text = "Программист C++", enabled = true },
+  { key = "cpp-engineer-ru", text = "Инженер C++", enabled = true },
+]
+
+[query_sets.cpp_junior]
+version = 1
+queries = [
+  { key = "junior-cpp-developer-en", text = "Junior C++ Developer", enabled = true },
+  { key = "junior-cpp-engineer-en", text = "Junior C++ Engineer", enabled = true },
+  { key = "junior-cpp-programmer-en", text = "Junior C++ Programmer", enabled = true },
+  { key = "cpp-junior-developer-en", text = "C++ Junior Developer", enabled = true },
+  { key = "cpp-intern-en", text = "C++ Intern", enabled = true },
+  { key = "cpp-trainee-en", text = "C++ Trainee", enabled = true },
+  { key = "cpp-intern-ru", text = "Стажер C++", enabled = true },
+  { key = "cpp-intern-ru-yo", text = "Стажёр C++", enabled = true },
+  { key = "junior-cpp-developer-ru", text = "Junior C++ разработчик", enabled = true },
+  { key = "cpp-junior-ru", text = "Младший разработчик C++", enabled = true },
+]
