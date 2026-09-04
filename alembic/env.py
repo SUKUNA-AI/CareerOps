@@ -19,7 +19,10 @@ if config.config_file_name is not None:
 
 def _database_url() -> str:
     configured_url = config.get_main_option("sqlalchemy.url", "").strip()
-    raw_url = os.getenv("CAREEROPS_POSTGRES_DSN", "").strip() or configured_url
+    # A programmatic caller may have already validated and pinned an explicit
+    # database URL.  Keep that URL authoritative so an unrelated runtime DSN
+    # cannot redirect migration validation to another PostgreSQL instance.
+    raw_url = configured_url or os.getenv("CAREEROPS_POSTGRES_DSN", "").strip()
     if not raw_url:
         raise RuntimeError("Set CAREEROPS_POSTGRES_DSN or provide sqlalchemy.url to run Alembic")
 
