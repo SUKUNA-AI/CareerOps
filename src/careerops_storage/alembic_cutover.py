@@ -12,10 +12,20 @@ from pathlib import Path
 from typing import Any, Final
 
 import psycopg
+from alembic.autogenerate import compare_metadata
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from psycopg.conninfo import conninfo_to_dict
-from sqlalchemy import CheckConstraint, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    MetaData,
+    UniqueConstraint,
+    create_engine,
+    inspect,
+)
 from sqlalchemy.engine import URL
+from sqlalchemy.pool import NullPool
 
 from alembic import command
 from careerops_storage.schema import CAREEROPS_SCHEMA, metadata
@@ -176,6 +186,16 @@ class CatalogFingerprint:
 
 
 @dataclass(frozen=True)
+class PrimaryKeyDrift:
+    """A PK difference Alembic autogenerate does not report itself."""
+
+    schema: str
+    table: str
+    metadata_columns: tuple[str, ...]
+    database_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class LiveSchemaSummary:
     tables: tuple[str, ...]
     column_count: int
@@ -315,6 +335,27 @@ def build_alembic_config(
     return config
 
 
+def get_single_alembic_head(config: Config) -> str:
+    """Return the graph-derived head, rejecting a branched migration graph."""
+
+    heads = ScriptDirectory.from_config(config).get_heads()
+    if len(heads) != 1:
+        raise CutoverValidationError(f"expected exactly one Alembic head, found {heads!r}")
+    return heads[0]
+
+
+def get_revisions_after(
+    config: Config,
+    revision: str,
+) -> tuple[str, ...]:
+    """Return descendants after ``revision`` in upgrade execution order."""
+
+    script = ScriptDirectory.from_config(config)
+    head = get_single_alembic_head(config)
+    descending = tuple(script.iterate_revisions(head, revision))
+    return tuple(item.revision for item in reversed(descending))
+
+
 def _rows(connection: psycopg.Connection[Any], query: str) -> list[tuple[object, ...]]:
     return [tuple(row) for row in connection.execute(query).fetchall()]
 
@@ -328,7 +369,7 @@ def _scalar(connection: psycopg.Connection[Any], query: str) -> object:
 
 
 def reset_disposable_state(target: DisposablePostgresTarget) -> None:
-    """Drop only CAR-45-managed objects inside the guarded test database."""
+    """Drop only migration-test-managed objects in the guarded test database."""
 
     with psycopg.connect(target.dsn, autocommit=True) as connection:
         if str(_scalar(connection, "SELECT current_database()")) != target.database:
@@ -415,8 +456,78 @@ def capture_catalog_fingerprint(target: DisposablePostgresTarget) -> CatalogFing
     )
 
 
+def _include_careerops_name(
+    name: str | None,
+    type_: str,
+    parent_names: dict[str, str | None],
+) -> bool:
+    if type_ == "schema":
+        return name == CAREEROPS_SCHEMA
+    if type_ == "table":
+        return parent_names.get("schema_name") == CAREEROPS_SCHEMA
+    return True
+
+
+def compare_live_schema_to_metadata(
+    target: DisposablePostgresTarget,
+    *,
+    target_metadata: MetaData = metadata,
+) -> tuple[Any, ...]:
+    """Return unfiltered Alembic diffs plus semantic PK differences.
+
+    Reflection is limited to ``careerops``, which also excludes Alembic's
+    intentionally public version table. No diff categories are suppressed:
+    a clean PostgreSQL schema must compare as an actual empty result.
+    """
+
+    engine = create_engine(target.sqlalchemy_url, poolclass=NullPool)
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(
+                connection=connection,
+                opts={
+                    "include_schemas": True,
+                    "include_name": _include_careerops_name,
+                    "compare_type": True,
+                    "compare_server_default": True,
+                },
+            )
+            differences: list[Any] = list(compare_metadata(context, target_metadata))
+
+            # Alembic autogenerate does not compare primary keys. Derive the
+            # expected columns from MetaData instead of maintaining a whitelist.
+            inspector = inspect(connection)
+            for table in target_metadata.sorted_tables:
+                if table.schema != CAREEROPS_SCHEMA:
+                    continue
+                if not inspector.has_table(table.name, schema=CAREEROPS_SCHEMA):
+                    # Alembic already reports the missing table itself.
+                    continue
+                reflected = inspector.get_pk_constraint(
+                    table.name,
+                    schema=CAREEROPS_SCHEMA,
+                )
+                database_columns = tuple(
+                    str(column)
+                    for column in reflected.get("constrained_columns", ())
+                )
+                metadata_columns = tuple(table.primary_key.columns.keys())
+                if database_columns != metadata_columns:
+                    differences.append(
+                        PrimaryKeyDrift(
+                            schema=CAREEROPS_SCHEMA,
+                            table=table.name,
+                            metadata_columns=metadata_columns,
+                            database_columns=database_columns,
+                        )
+                    )
+            return tuple(differences)
+    finally:
+        engine.dispose()
+
+
 def validate_live_schema(fingerprint: CatalogFingerprint) -> LiveSchemaSummary:
-    """Check critical live constructs without implementing CAR-46 drift logic."""
+    """Check the focused live catalog contract established by CAR-45."""
 
     errors: list[str] = []
     table_set = set(fingerprint.tables)
@@ -493,7 +604,7 @@ def validate_live_schema(fingerprint: CatalogFingerprint) -> LiveSchemaSummary:
     )
 
 
-def _read_revision(target: DisposablePostgresTarget) -> str | None:
+def read_alembic_revision(target: DisposablePostgresTarget) -> str | None:
     with psycopg.connect(target.dsn) as connection:
         if _scalar(connection, "SELECT to_regclass('public.alembic_version')::text") is None:
             return None
@@ -501,13 +612,15 @@ def _read_revision(target: DisposablePostgresTarget) -> str | None:
             connection,
             "SELECT version_num FROM public.alembic_version ORDER BY version_num",
         )
+    if not rows:
+        return None
     if len(rows) != 1:
         raise CutoverValidationError(f"expected one Alembic head row, found {len(rows)}")
     return str(rows[0][0])
 
 
 def _assert_revision(target: DisposablePostgresTarget) -> str:
-    revision = _read_revision(target)
+    revision = read_alembic_revision(target)
     if revision != BASELINE_REVISION:
         raise CutoverValidationError(
             f"expected Alembic revision {BASELINE_REVISION!r}, found {revision!r}"
@@ -551,7 +664,7 @@ def apply_legacy_migrations(
 
 def _legacy_path(target: DisposablePostgresTarget, root: Path) -> LegacyPathReport:
     migrations = apply_legacy_migrations(target, project_root=root)
-    if _read_revision(target) is not None:
+    if read_alembic_revision(target) is not None:
         raise CutoverValidationError("legacy schema has Alembic state before stamp")
     before_stamp = capture_catalog_fingerprint(target)
     schema = validate_live_schema(before_stamp)

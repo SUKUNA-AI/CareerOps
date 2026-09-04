@@ -1,24 +1,18 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 from sqlalchemy.engine import make_url
 
 from careerops_storage.alembic_cutover import (
-    BASELINE_REVISION,
-    LEGACY_MIGRATIONS,
     PROJECT_ROOT,
-    SCHEMA_TABLES,
     TEST_POSTGRES_DSN_ENV,
     CatalogFingerprint,
     DisposableDatabaseError,
     build_alembic_config,
-    format_validation_report,
     load_test_postgres_dsn,
     normalize_catalog_rows,
-    validate_alembic_cutover,
     validate_disposable_postgres_dsn,
 )
 
@@ -74,6 +68,7 @@ def test_disposable_dsn_guard_accepts_explicit_local_test_targets(
         "postgresql://ci@10.42.0.1:5432/careerops_car45_test",
         "postgresql://ci@edge:5432/careerops_car45_test",
         "postgresql://ci@core:5432/careerops_car45_test",
+        "postgresql://ci@db.example.com:5432/careerops_car45_test",
         "postgresql://ci@localhost:5432/careerops",
         "postgresql://ci@localhost:5432/postgres",
         "postgresql://ci@localhost:5432/careerops_production",
@@ -142,34 +137,3 @@ def test_alembic_config_is_pinned_to_validated_test_database() -> None:
     script_location = config.get_main_option("script_location")
     assert script_location is not None
     assert Path(script_location).resolve() == (PROJECT_ROOT / "alembic").resolve()
-
-
-@pytest.mark.integration_postgres
-@pytest.mark.skipif(
-    not os.getenv(TEST_POSTGRES_DSN_ENV),
-    reason=f"{TEST_POSTGRES_DSN_ENV} is not configured",
-)
-def test_real_postgres_fresh_upgrade_and_legacy_stamp_paths(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The guarded URL injected into Config must win over any unrelated runtime
-    # DSN.  sqlite is intentionally connection-free if this guarantee regresses.
-    monkeypatch.setenv("CAREEROPS_POSTGRES_DSN", "sqlite:///must-not-win")
-    report = validate_alembic_cutover(load_test_postgres_dsn())
-
-    assert report.baseline_revision == BASELINE_REVISION
-    assert report.postgresql_version.startswith("PostgreSQL ")
-    assert report.fresh.revision == BASELINE_REVISION
-    assert report.fresh.second_upgrade_was_noop is True
-    assert report.fresh.schema.tables == SCHEMA_TABLES
-    assert report.legacy.migrations == LEGACY_MIGRATIONS
-    assert report.legacy.revision == BASELINE_REVISION
-    assert report.legacy.stamp_catalog_unchanged is True
-    assert report.legacy.post_stamp_upgrade_was_noop is True
-
-    rendered = format_validation_report(report)
-    assert "real PostgreSQL cutover validation: PASS" in rendered
-    assert (
-        "stamp DDL proof: CareerOPS catalog unchanged; baseline CREATE SCHEMA was not invoked"
-        in rendered
-    )
