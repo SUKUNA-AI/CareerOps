@@ -24,6 +24,7 @@ from sqlalchemy import (
     create_engine,
     inspect,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.engine import URL
 from sqlalchemy.pool import NullPool
 
@@ -46,70 +47,6 @@ PRODUCTION_NAME = re.compile(
     re.IGNORECASE,
 )
 
-SCHEMA_TABLES = tuple(
-    sorted(
-        table.name
-        for table in metadata.tables.values()
-        if table.schema == CAREEROPS_SCHEMA
-    )
-)
-EXPECTED_COLUMN_COUNT = sum(
-    len(table.columns)
-    for table in metadata.tables.values()
-    if table.schema == CAREEROPS_SCHEMA
-)
-EXPECTED_IDENTITIES = frozenset(
-    (table.name, column.name)
-    for table in metadata.tables.values()
-    for column in table.columns
-    if column.identity is not None
-)
-EXPECTED_FK_TABLES = frozenset(
-    table.name for table in metadata.tables.values() if table.foreign_keys
-)
-EXPECTED_UNIQUES = frozenset(
-    str(constraint.name)
-    for table in metadata.tables.values()
-    for constraint in table.constraints
-    if isinstance(constraint, UniqueConstraint) and constraint.name is not None
-)
-EXPECTED_CHECKS = frozenset(
-    str(constraint.name)
-    for table in metadata.tables.values()
-    for constraint in table.constraints
-    if isinstance(constraint, CheckConstraint) and constraint.name is not None
-)
-EXPECTED_INDEXES = frozenset(
-    str(index.name)
-    for table in metadata.tables.values()
-    for index in table.indexes
-    if index.name is not None
-)
-EXPECTED_PARTIAL_INDEXES = frozenset(
-    str(index.name)
-    for table in metadata.tables.values()
-    for index in table.indexes
-    if index.name is not None
-    and index.dialect_options["postgresql"].get("where") is not None
-)
-
-FORBIDDEN_V2_TABLES = frozenset(
-    {
-        "search_query_states",
-        "search_page_tasks",
-        "vacancy_processing",
-        "vacancy_filter_results",
-        "resume_snapshots",
-        "resume_evidence",
-        "model_runs",
-        "vacancy_extractions",
-        "vacancy_requirements",
-        "rerank_runs",
-        "rerank_evidence_matches",
-        "vacancy_resume_matches",
-        "application_candidates",
-    }
-)
 TYPE_PROBES: Final = {
     ("batch_runs", "id"): "uuid",
     ("vacancy_decisions", "metadata"): "jsonb",
@@ -533,12 +470,86 @@ def compare_live_schema_to_metadata(
         engine.dispose()
 
 
-def validate_live_schema(fingerprint: CatalogFingerprint) -> LiveSchemaSummary:
-    """Check the focused live catalog contract established by CAR-45."""
+def _assert_live_schema_matches_metadata(target: DisposablePostgresTarget) -> None:
+    differences = compare_live_schema_to_metadata(target)
+    if differences:
+        raise CutoverValidationError(
+            "live CareerOPS schema differs from canonical MetaData: "
+            f"{differences!r}"
+        )
+
+
+def _metadata_retains_type_probe(column_type: Any, data_type: str) -> bool:
+    if data_type == "uuid":
+        return isinstance(column_type, UUID)
+    if data_type == "jsonb":
+        return isinstance(column_type, JSONB)
+    if data_type == "ARRAY":
+        return isinstance(column_type, ARRAY)
+    if data_type == "timestamp with time zone":
+        return isinstance(column_type, TIMESTAMP) and bool(column_type.timezone)
+    raise AssertionError(f"unsupported focused PostgreSQL type probe: {data_type}")
+
+
+def validate_live_schema(
+    fingerprint: CatalogFingerprint,
+    *,
+    target_metadata: MetaData = metadata,
+) -> LiveSchemaSummary:
+    """Check metadata-derived shape plus focused surviving legacy invariants."""
 
     errors: list[str] = []
+    schema_tables = tuple(
+        table
+        for table in target_metadata.tables.values()
+        if table.schema == CAREEROPS_SCHEMA
+    )
+    expected_tables = {table.name for table in schema_tables}
+    expected_column_count = sum(len(table.columns) for table in schema_tables)
+    metadata_columns = {
+        (table.name, column.name): column
+        for table in schema_tables
+        for column in table.columns
+    }
+    expected_identities = {
+        (table.name, column.name)
+        for table in schema_tables
+        for column in table.columns
+        if column.identity is not None
+    }
+    expected_pk_tables = {
+        table.name for table in schema_tables if len(table.primary_key.columns) > 0
+    }
+    expected_fk_tables = {
+        table.name for table in schema_tables if table.foreign_keys
+    }
+    expected_uniques = {
+        str(constraint.name)
+        for table in schema_tables
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name is not None
+    }
+    expected_checks = {
+        str(constraint.name)
+        for table in schema_tables
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint) and constraint.name is not None
+    }
+    expected_indexes = {
+        str(index.name)
+        for table in schema_tables
+        for index in table.indexes
+        if index.name is not None
+    }
+    expected_partial_indexes = {
+        str(index.name)
+        for table in schema_tables
+        for index in table.indexes
+        if index.name is not None
+        and index.dialect_options["postgresql"].get("where") is not None
+    }
+
     table_set = set(fingerprint.tables)
-    expected_tables = set(SCHEMA_TABLES)
     if not fingerprint.schema_exists:
         errors.append("schema careerops is absent")
     if table_set != expected_tables:
@@ -546,27 +557,39 @@ def validate_live_schema(fingerprint: CatalogFingerprint) -> LiveSchemaSummary:
             f"tables: missing={sorted(expected_tables - table_set)!r}, "
             f"unexpected={sorted(table_set - expected_tables)!r}"
         )
-    if table_set & FORBIDDEN_V2_TABLES:
-        errors.append(f"v2 tables exist: {sorted(table_set & FORBIDDEN_V2_TABLES)!r}")
-    if len(fingerprint.columns) != EXPECTED_COLUMN_COUNT:
-        errors.append(f"expected {EXPECTED_COLUMN_COUNT} columns, got {len(fingerprint.columns)}")
+    if len(fingerprint.columns) != expected_column_count:
+        errors.append(
+            f"expected {expected_column_count} columns, got {len(fingerprint.columns)}"
+        )
 
     columns = {(str(row[0]), str(row[2])): row for row in fingerprint.columns}
     identities = {key for key, row in columns.items() if row[8] == "YES"}
-    if identities != EXPECTED_IDENTITIES:
+    if identities != expected_identities:
         errors.append(
-            f"identity columns: expected={sorted(EXPECTED_IDENTITIES)!r}, "
+            f"identity columns: expected={sorted(expected_identities)!r}, "
             f"actual={sorted(identities)!r}"
         )
     if any(columns[key][9] != "BY DEFAULT" for key in identities):
         errors.append("an identity column is not GENERATED BY DEFAULT")
     for key, data_type in TYPE_PROBES.items():
+        metadata_column = metadata_columns.get(key)
+        if metadata_column is None or not _metadata_retains_type_probe(
+            metadata_column.type,
+            data_type,
+        ):
+            continue
         if key not in columns or columns[key][3] != data_type:
             errors.append(f"{key[0]}.{key[1]} is not {data_type}")
     for key in REPAIRED_NULLABLE:
+        metadata_column = metadata_columns.get(key)
+        if metadata_column is None or metadata_column.nullable is not True:
+            continue
         if key not in columns or columns[key][6] != "YES":
             errors.append(f"0005 nullable repair missing for {key[0]}.{key[1]}")
     for key in REPAIRED_AUDIT_NOT_NULL:
+        metadata_column = metadata_columns.get(key)
+        if metadata_column is None or metadata_column.nullable is not False:
+            continue
         if key not in columns or columns[key][6] != "NO":
             errors.append(f"0005 audit column is nullable: {key[0]}.{key[1]}")
 
@@ -576,26 +599,34 @@ def validate_live_schema(fingerprint: CatalogFingerprint) -> LiveSchemaSummary:
     }
     pk_tables = {str(row[0]) for row in fingerprint.constraints if row[2] == "p"}
     fk_tables = {str(row[0]) for row in fingerprint.constraints if row[2] == "f"}
-    if pk_tables != expected_tables:
-        errors.append(f"tables without primary keys: {sorted(expected_tables - pk_tables)!r}")
-    if not EXPECTED_FK_TABLES.issubset(fk_tables):
-        errors.append(f"tables without foreign keys: {sorted(EXPECTED_FK_TABLES - fk_tables)!r}")
-    if not EXPECTED_UNIQUES.issubset(constraints_by_type["u"]):
-        missing_uniques = sorted(EXPECTED_UNIQUES - constraints_by_type["u"])
+    if pk_tables != expected_pk_tables:
+        errors.append(
+            f"primary-key tables: expected={sorted(expected_pk_tables)!r}, "
+            f"actual={sorted(pk_tables)!r}"
+        )
+    if not expected_fk_tables.issubset(fk_tables):
+        errors.append(
+            f"tables without foreign keys: "
+            f"{sorted(expected_fk_tables - fk_tables)!r}"
+        )
+    if not expected_uniques.issubset(constraints_by_type["u"]):
+        missing_uniques = sorted(expected_uniques - constraints_by_type["u"])
         errors.append(f"unique constraints missing: {missing_uniques!r}")
-    if not EXPECTED_CHECKS.issubset(constraints_by_type["c"]):
-        missing_checks = sorted(EXPECTED_CHECKS - constraints_by_type["c"])
+    if not expected_checks.issubset(constraints_by_type["c"]):
+        missing_checks = sorted(expected_checks - constraints_by_type["c"])
         errors.append(f"check constraints missing: {missing_checks!r}")
 
     index_definitions = {str(row[1]): str(row[2]) for row in fingerprint.indexes}
-    if not EXPECTED_INDEXES.issubset(index_definitions):
-        errors.append(f"indexes missing: {sorted(EXPECTED_INDEXES - index_definitions.keys())!r}")
+    if not expected_indexes.issubset(index_definitions):
+        errors.append(
+            f"indexes missing: {sorted(expected_indexes - index_definitions.keys())!r}"
+        )
     partial_indexes = {
         name for name, definition in index_definitions.items() if " WHERE " in definition.upper()
     }
-    if partial_indexes != EXPECTED_PARTIAL_INDEXES:
+    if partial_indexes != expected_partial_indexes:
         errors.append(
-            f"partial indexes: expected={sorted(EXPECTED_PARTIAL_INDEXES)!r}, "
+            f"partial indexes: expected={sorted(expected_partial_indexes)!r}, "
             f"actual={sorted(partial_indexes)!r}"
         )
     if errors:
@@ -645,6 +676,7 @@ def _fresh_path(target: DisposablePostgresTarget, root: Path) -> FreshPathReport
     _assert_revision(target, head_revision)
     first = capture_catalog_fingerprint(target)
     schema = validate_live_schema(first)
+    _assert_live_schema_matches_metadata(target)
 
     command.upgrade(config, "head")
     second = capture_catalog_fingerprint(target)
@@ -706,6 +738,7 @@ def _legacy_path(target: DisposablePostgresTarget, root: Path) -> LegacyPathRepo
             "having no revisions after the baseline"
         )
     schema = validate_live_schema(after_upgrade)
+    _assert_live_schema_matches_metadata(target)
     return LegacyPathReport(
         baseline_revision=BASELINE_REVISION,
         head_revision=head_revision,

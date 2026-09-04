@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.engine import make_url
 
 import careerops_storage.alembic_cutover as cutover
@@ -162,6 +163,51 @@ def _schema_summary() -> cutover.LiveSchemaSummary:
     )
 
 
+def test_live_schema_accepts_future_v2_table_declared_by_metadata() -> None:
+    future_metadata = sa.MetaData()
+    sa.Table(
+        "search_query_states",
+        future_metadata,
+        sa.Column("id", sa.BigInteger, primary_key=True),
+        schema=cutover.CAREEROPS_SCHEMA,
+    )
+    fingerprint = CatalogFingerprint(
+        schema_exists=True,
+        tables=("search_query_states",),
+        columns=(
+            (
+                "search_query_states",
+                "1",
+                "id",
+                "bigint",
+                "pg_catalog",
+                "int8",
+                "NO",
+                None,
+                "NO",
+                None,
+            ),
+        ),
+        constraints=(
+            (
+                "search_query_states",
+                "search_query_states_pkey",
+                "p",
+                "PRIMARY KEY (id)",
+            ),
+        ),
+        indexes=(),
+    )
+
+    summary = cutover.validate_live_schema(
+        fingerprint,
+        target_metadata=future_metadata,
+    )
+
+    assert summary.tables == ("search_query_states",)
+    assert summary.column_count == 1
+
+
 def test_manual_fresh_path_uses_dynamic_graph_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -170,6 +216,7 @@ def test_manual_fresh_path_uses_dynamic_graph_head(
     catalog = _catalog("fresh_head")
     schema = _schema_summary()
     upgrades: list[str] = []
+    metadata_comparisons: list[cutover.DisposablePostgresTarget] = []
 
     monkeypatch.setattr(cutover, "get_single_alembic_head", lambda config: future_head)
     monkeypatch.setattr(
@@ -192,12 +239,18 @@ def test_manual_fresh_path_uses_dynamic_graph_head(
         "validate_live_schema",
         lambda actual_catalog: schema,
     )
+    monkeypatch.setattr(
+        cutover,
+        "compare_live_schema_to_metadata",
+        lambda actual_target: metadata_comparisons.append(actual_target) or (),
+    )
 
     report = cutover._fresh_path(target, PROJECT_ROOT)
 
     assert report.head_revision == future_head
     assert report.second_upgrade_was_noop is True
     assert upgrades == ["head", "head"]
+    assert metadata_comparisons == [target]
 
 
 def test_manual_legacy_path_stamps_baseline_then_upgrades_to_dynamic_head(
@@ -214,6 +267,7 @@ def test_manual_legacy_path_stamps_baseline_then_upgrades_to_dynamic_head(
     stamps: list[str] = []
     upgrades: list[str] = []
     validated_catalogs: list[CatalogFingerprint] = []
+    metadata_comparisons: list[cutover.DisposablePostgresTarget] = []
 
     monkeypatch.setattr(cutover, "get_single_alembic_head", lambda config: future_head)
     monkeypatch.setattr(
@@ -252,6 +306,11 @@ def test_manual_legacy_path_stamps_baseline_then_upgrades_to_dynamic_head(
         return schema
 
     monkeypatch.setattr(cutover, "validate_live_schema", validate_head_catalog)
+    monkeypatch.setattr(
+        cutover,
+        "compare_live_schema_to_metadata",
+        lambda actual_target: metadata_comparisons.append(actual_target) or (),
+    )
 
     report = cutover._legacy_path(target, PROJECT_ROOT)
 
@@ -263,6 +322,7 @@ def test_manual_legacy_path_stamps_baseline_then_upgrades_to_dynamic_head(
     assert stamps == [BASELINE_REVISION]
     assert upgrades == ["head"]
     assert validated_catalogs == [head_catalog]
+    assert metadata_comparisons == [target]
 
     validation_report = cutover.CutoverValidationReport(
         postgresql_version="PostgreSQL test",
