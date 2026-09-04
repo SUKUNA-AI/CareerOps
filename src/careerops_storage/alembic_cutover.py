@@ -207,7 +207,7 @@ class LiveSchemaSummary:
 
 @dataclass(frozen=True)
 class FreshPathReport:
-    revision: str
+    head_revision: str
     schema: LiveSchemaSummary
     catalog_sha256: str
     second_upgrade_was_noop: bool
@@ -215,12 +215,18 @@ class FreshPathReport:
 
 @dataclass(frozen=True)
 class LegacyPathReport:
-    revision: str
+    baseline_revision: str
+    head_revision: str
+    revisions_after_baseline: tuple[str, ...]
     schema: LiveSchemaSummary
     migrations: tuple[str, ...]
     pre_stamp_catalog_sha256: str
+    post_upgrade_catalog_sha256: str
     stamp_catalog_unchanged: bool
-    post_stamp_upgrade_was_noop: bool
+
+    @property
+    def post_stamp_upgrade_was_noop(self) -> bool:
+        return not self.revisions_after_baseline
 
 
 @dataclass(frozen=True)
@@ -229,6 +235,7 @@ class CutoverValidationReport:
     database: str
     host: str
     baseline_revision: str
+    head_revision: str
     fresh: FreshPathReport
     legacy: LegacyPathReport
 
@@ -619,27 +626,37 @@ def read_alembic_revision(target: DisposablePostgresTarget) -> str | None:
     return str(rows[0][0])
 
 
-def _assert_revision(target: DisposablePostgresTarget) -> str:
+def _assert_revision(
+    target: DisposablePostgresTarget,
+    expected_revision: str,
+) -> str:
     revision = read_alembic_revision(target)
-    if revision != BASELINE_REVISION:
+    if revision != expected_revision:
         raise CutoverValidationError(
-            f"expected Alembic revision {BASELINE_REVISION!r}, found {revision!r}"
+            f"expected Alembic revision {expected_revision!r}, found {revision!r}"
         )
     return revision
 
 
 def _fresh_path(target: DisposablePostgresTarget, root: Path) -> FreshPathReport:
     config = build_alembic_config(target, project_root=root)
+    head_revision = get_single_alembic_head(config)
     command.upgrade(config, "head")
-    revision = _assert_revision(target)
+    _assert_revision(target, head_revision)
     first = capture_catalog_fingerprint(target)
     schema = validate_live_schema(first)
 
     command.upgrade(config, "head")
     second = capture_catalog_fingerprint(target)
-    if second != first or _assert_revision(target) != revision:
+    if second != first:
         raise CutoverValidationError("second fresh-path upgrade head was not a no-op")
-    return FreshPathReport(revision, schema, first.sha256, True)
+    _assert_revision(target, head_revision)
+    return FreshPathReport(
+        head_revision=head_revision,
+        schema=schema,
+        catalog_sha256=first.sha256,
+        second_upgrade_was_noop=True,
+    )
 
 
 def _migration_paths(root: Path) -> tuple[Path, ...]:
@@ -663,15 +680,16 @@ def apply_legacy_migrations(
 
 
 def _legacy_path(target: DisposablePostgresTarget, root: Path) -> LegacyPathReport:
+    config = build_alembic_config(target, project_root=root)
+    head_revision = get_single_alembic_head(config)
+    revisions_after_baseline = get_revisions_after(config, BASELINE_REVISION)
     migrations = apply_legacy_migrations(target, project_root=root)
     if read_alembic_revision(target) is not None:
         raise CutoverValidationError("legacy schema has Alembic state before stamp")
     before_stamp = capture_catalog_fingerprint(target)
-    schema = validate_live_schema(before_stamp)
 
-    config = build_alembic_config(target, project_root=root)
     command.stamp(config, BASELINE_REVISION)
-    revision = _assert_revision(target)
+    _assert_revision(target, BASELINE_REVISION)
     after_stamp = capture_catalog_fingerprint(target)
     if after_stamp != before_stamp:
         raise CutoverValidationError(
@@ -680,9 +698,24 @@ def _legacy_path(target: DisposablePostgresTarget, root: Path) -> LegacyPathRepo
         )
 
     command.upgrade(config, "head")
-    if capture_catalog_fingerprint(target) != after_stamp or _assert_revision(target) != revision:
-        raise CutoverValidationError("upgrade head after stamp was not a no-op")
-    return LegacyPathReport(revision, schema, migrations, before_stamp.sha256, True, True)
+    _assert_revision(target, head_revision)
+    after_upgrade = capture_catalog_fingerprint(target)
+    if not revisions_after_baseline and after_upgrade != after_stamp:
+        raise CutoverValidationError(
+            "upgrade head after stamp changed the CareerOPS catalog despite "
+            "having no revisions after the baseline"
+        )
+    schema = validate_live_schema(after_upgrade)
+    return LegacyPathReport(
+        baseline_revision=BASELINE_REVISION,
+        head_revision=head_revision,
+        revisions_after_baseline=revisions_after_baseline,
+        schema=schema,
+        migrations=migrations,
+        pre_stamp_catalog_sha256=before_stamp.sha256,
+        post_upgrade_catalog_sha256=after_upgrade.sha256,
+        stamp_catalog_unchanged=True,
+    )
 
 
 def validate_alembic_cutover(
@@ -707,13 +740,18 @@ def validate_alembic_cutover(
         reset_disposable_state(target)
         assert_disposable_state_is_empty(target)
         legacy = _legacy_path(target, root)
+        if legacy.head_revision != fresh.head_revision:
+            raise CutoverValidationError(
+                "Alembic graph head changed while cutover validation was running"
+            )
         return CutoverValidationReport(
-            postgresql_version,
-            database,
-            target.host,
-            BASELINE_REVISION,
-            fresh,
-            legacy,
+            postgresql_version=postgresql_version,
+            database=database,
+            host=target.host,
+            baseline_revision=BASELINE_REVISION,
+            head_revision=fresh.head_revision,
+            fresh=fresh,
+            legacy=legacy,
         )
     finally:
         reset_disposable_state(target)
@@ -722,14 +760,32 @@ def validate_alembic_cutover(
 def format_validation_report(report: CutoverValidationReport) -> str:
     tables = ", ".join(report.fresh.schema.tables)
     migrations = ", ".join(report.legacy.migrations)
+    if report.legacy.post_stamp_upgrade_was_noop:
+        legacy_upgrade_result = (
+            "  alembic upgrade head after stamp: PASS "
+            f"(no-op; baseline is graph head {report.legacy.head_revision}; "
+            "catalog unchanged)"
+        )
+        revisions_after_baseline = "none"
+    else:
+        revisions_after_baseline = ", ".join(
+            report.legacy.revisions_after_baseline
+        )
+        legacy_upgrade_result = (
+            "  alembic upgrade head after stamp: PASS "
+            f"(applied {len(report.legacy.revisions_after_baseline)} revision(s); "
+            f"reached graph head {report.legacy.head_revision})"
+        )
     return "\n".join(
         (
             "CAR-45 real PostgreSQL cutover validation: PASS",
             f"PostgreSQL: {report.postgresql_version}",
             f"Disposable target: {report.database} on {report.host}",
             f"Baseline revision: {report.baseline_revision}",
+            f"Current graph head: {report.head_revision}",
             "Fresh path:",
-            "  first alembic upgrade head: PASS",
+            "  first alembic upgrade head: PASS "
+            f"(revision {report.fresh.head_revision})",
             f"  CareerOPS tables ({len(report.fresh.schema.tables)}): {tables}",
             f"  live catalog: {report.fresh.schema.column_count} columns, "
             f"{report.fresh.schema.constraint_count} constraints, "
@@ -739,9 +795,12 @@ def format_validation_report(report: CutoverValidationReport) -> str:
             "Legacy path:",
             f"  migrations applied: {migrations}",
             f"  pre-stamp catalog fingerprint: {report.legacy.pre_stamp_catalog_sha256}",
-            f"  alembic stamp {report.legacy.revision}: PASS",
+            f"  alembic stamp {report.legacy.baseline_revision}: PASS",
             "  stamp DDL proof: CareerOPS catalog unchanged; baseline CREATE SCHEMA "
             "was not invoked",
-            "  alembic upgrade head after stamp: PASS (no-op; catalog unchanged)",
+            f"  revisions after baseline: {revisions_after_baseline}",
+            f"  post-upgrade catalog fingerprint: "
+            f"{report.legacy.post_upgrade_catalog_sha256}",
+            legacy_upgrade_result,
         )
     )

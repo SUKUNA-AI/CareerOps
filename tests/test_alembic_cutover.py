@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy.engine import make_url
 
+import careerops_storage.alembic_cutover as cutover
 from careerops_storage.alembic_cutover import (
+    BASELINE_REVISION,
     PROJECT_ROOT,
     TEST_POSTGRES_DSN_ENV,
     CatalogFingerprint,
@@ -137,3 +139,180 @@ def test_alembic_config_is_pinned_to_validated_test_database() -> None:
     script_location = config.get_main_option("script_location")
     assert script_location is not None
     assert Path(script_location).resolve() == (PROJECT_ROOT / "alembic").resolve()
+
+
+def _catalog(table_name: str) -> CatalogFingerprint:
+    return CatalogFingerprint(
+        schema_exists=True,
+        tables=(table_name,),
+        columns=(),
+        constraints=(),
+        indexes=(),
+    )
+
+
+def _schema_summary() -> cutover.LiveSchemaSummary:
+    return cutover.LiveSchemaSummary(
+        tables=("source_profiles",),
+        column_count=1,
+        constraint_count=1,
+        index_count=1,
+        identity_columns=(),
+        partial_indexes=(),
+    )
+
+
+def test_manual_fresh_path_uses_dynamic_graph_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = validate_disposable_postgres_dsn(LOCAL_TEST_DSN)
+    future_head = "20261001_future_head"
+    catalog = _catalog("fresh_head")
+    schema = _schema_summary()
+    upgrades: list[str] = []
+
+    monkeypatch.setattr(cutover, "get_single_alembic_head", lambda config: future_head)
+    monkeypatch.setattr(
+        cutover.command,
+        "upgrade",
+        lambda config, revision: upgrades.append(revision),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_alembic_revision",
+        lambda actual_target: future_head,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "capture_catalog_fingerprint",
+        lambda actual_target: catalog,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "validate_live_schema",
+        lambda actual_catalog: schema,
+    )
+
+    report = cutover._fresh_path(target, PROJECT_ROOT)
+
+    assert report.head_revision == future_head
+    assert report.second_upgrade_was_noop is True
+    assert upgrades == ["head", "head"]
+
+
+def test_manual_legacy_path_stamps_baseline_then_upgrades_to_dynamic_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = validate_disposable_postgres_dsn(LOCAL_TEST_DSN)
+    future_revisions = ("20261001_first", "20261002_future_head")
+    future_head = future_revisions[-1]
+    legacy_catalog = _catalog("legacy_baseline")
+    head_catalog = _catalog("future_head")
+    schema = _schema_summary()
+    revision_states = iter((None, BASELINE_REVISION, future_head))
+    catalog_states = iter((legacy_catalog, legacy_catalog, head_catalog))
+    stamps: list[str] = []
+    upgrades: list[str] = []
+    validated_catalogs: list[CatalogFingerprint] = []
+
+    monkeypatch.setattr(cutover, "get_single_alembic_head", lambda config: future_head)
+    monkeypatch.setattr(
+        cutover,
+        "get_revisions_after",
+        lambda config, revision: future_revisions,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "apply_legacy_migrations",
+        lambda actual_target, *, project_root: cutover.LEGACY_MIGRATIONS,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_alembic_revision",
+        lambda actual_target: next(revision_states),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "capture_catalog_fingerprint",
+        lambda actual_target: next(catalog_states),
+    )
+    monkeypatch.setattr(
+        cutover.command,
+        "stamp",
+        lambda config, revision: stamps.append(revision),
+    )
+    monkeypatch.setattr(
+        cutover.command,
+        "upgrade",
+        lambda config, revision: upgrades.append(revision),
+    )
+
+    def validate_head_catalog(actual_catalog: CatalogFingerprint) -> cutover.LiveSchemaSummary:
+        validated_catalogs.append(actual_catalog)
+        return schema
+
+    monkeypatch.setattr(cutover, "validate_live_schema", validate_head_catalog)
+
+    report = cutover._legacy_path(target, PROJECT_ROOT)
+
+    assert report.baseline_revision == BASELINE_REVISION
+    assert report.head_revision == future_head
+    assert report.revisions_after_baseline == future_revisions
+    assert report.stamp_catalog_unchanged is True
+    assert report.post_stamp_upgrade_was_noop is False
+    assert stamps == [BASELINE_REVISION]
+    assert upgrades == ["head"]
+    assert validated_catalogs == [head_catalog]
+
+    validation_report = cutover.CutoverValidationReport(
+        postgresql_version="PostgreSQL test",
+        database="careerops_test",
+        host="127.0.0.1",
+        baseline_revision=BASELINE_REVISION,
+        head_revision=future_head,
+        fresh=cutover.FreshPathReport(
+            head_revision=future_head,
+            schema=schema,
+            catalog_sha256=head_catalog.sha256,
+            second_upgrade_was_noop=True,
+        ),
+        legacy=report,
+    )
+    formatted = cutover.format_validation_report(validation_report)
+    assert "revisions after baseline: 20261001_first, 20261002_future_head" in formatted
+    assert "applied 2 revision(s); reached graph head 20261002_future_head" in formatted
+    assert "upgrade head after stamp: PASS (no-op" not in formatted
+
+
+def test_manual_report_marks_post_stamp_upgrade_noop_without_descendants() -> None:
+    schema = _schema_summary()
+    catalog = _catalog("baseline_head")
+    legacy = cutover.LegacyPathReport(
+        baseline_revision=BASELINE_REVISION,
+        head_revision=BASELINE_REVISION,
+        revisions_after_baseline=(),
+        schema=schema,
+        migrations=cutover.LEGACY_MIGRATIONS,
+        pre_stamp_catalog_sha256=catalog.sha256,
+        post_upgrade_catalog_sha256=catalog.sha256,
+        stamp_catalog_unchanged=True,
+    )
+    report = cutover.CutoverValidationReport(
+        postgresql_version="PostgreSQL test",
+        database="careerops_test",
+        host="localhost",
+        baseline_revision=BASELINE_REVISION,
+        head_revision=BASELINE_REVISION,
+        fresh=cutover.FreshPathReport(
+            head_revision=BASELINE_REVISION,
+            schema=schema,
+            catalog_sha256=catalog.sha256,
+            second_upgrade_was_noop=True,
+        ),
+        legacy=legacy,
+    )
+
+    assert legacy.post_stamp_upgrade_was_noop is True
+    formatted = cutover.format_validation_report(report)
+    assert "revisions after baseline: none" in formatted
+    assert "no-op; baseline is graph head 20260904_0005" in formatted
