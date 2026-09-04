@@ -22,6 +22,7 @@ from .postgres import (
     upsert_vacancy_observation,
 )
 from .s3 import S3JsonStore, S3ObjectRef, S3Settings
+from .schema import metadata
 
 __all__ = [
     "PostgresApplicationClaimStore",
@@ -34,6 +35,7 @@ __all__ = [
     "S3Settings",
     "acquire_application_claim",
     "connect_postgres",
+    "metadata",
     "prepare_application_claim_identity",
     "reserve_observe_query_window",
     "transition_application_claim",
