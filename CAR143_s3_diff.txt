@@ -1,0 +1,420 @@
+﻿diff --git a/tests/test_hh_s3_to_postgres.py b/tests/test_hh_s3_to_postgres.py
+index 345c1ce..d6f0f25 100644
+--- a/tests/test_hh_s3_to_postgres.py
++++ b/tests/test_hh_s3_to_postgres.py
+@@ -1,9 +1,11 @@
+ from __future__ import annotations
+ 
++import json
+ from contextlib import AbstractAsyncContextManager
+ from copy import deepcopy
+ from dataclasses import replace
+ from datetime import UTC, datetime
++from pathlib import Path
+ from types import TracebackType
+ from typing import Any
+ from uuid import UUID
+@@ -256,160 +258,29 @@ class SnapshotConnection:
+         return SnapshotTransaction(self)
+ 
+ 
+-def _run_payload() -> dict[str, Any]:
+-    return {
+-        "event_type": "hh.batch.started",
+-        "schema_version": 2,
+-        "run_id": str(RUN_ID),
+-        "profile_id": "careerops-ml",
+-        "resume_id": "resume-123",
+-        "search": "ML Engineer",
+-        "area": 1,
+-        "period": 14,
+-        "pages": 1,
+-        "per_page": 50,
+-        "professional_roles": [96, 165],
+-        "max_responses": 25,
+-        "cover_letter_mode": "vacancy_template_v1",
+-        "live": True,
+-        "started_at": "2026-08-30T10:00:00+03:00",
+-    }
+-
+-
+-def _search_item() -> dict[str, Any]:
+-    return {
+-        "id": VACANCY_ID,
+-        "name": "Junior ML Engineer",
+-        "employer": {"id": "4233", "name": "Example"},
+-        "area": {"id": "1", "name": "╨Ь╨╛╤Б╨║╨▓╨░"},
+-        "alternate_url": f"https://hh.ru/vacancy/{VACANCY_ID}",
+-        "published_at": "2026-08-29T12:30:00+0300",
+-    }
+-
+-
+-def _vacancy() -> dict[str, Any]:
+-    return {
+-        **_search_item(),
+-        "description": "<p>Python and SQL</p>",
+-        "salary": {"from": 100000, "to": 150000, "currency": "RUR"},
+-        "experience": {"id": "between1And3"},
+-        "schedule": {"id": "remote"},
+-        "employment": {"id": "full"},
+-        "relations": [],
+-        "has_test": False,
+-        "response_url": None,
+-        "response_letter_required": False,
+-        "archived": False,
+-        "closed_for_applicants": False,
+-    }
+-
+-
+-def _summary() -> dict[str, Any]:
+-    return {
+-        "event_type": "hh.batch.finished",
+-        "schema_version": 2,
+-        "run_id": str(RUN_ID),
+-        "live": True,
+-        "discovered": 1,
+-        "prefiltered": 0,
+-        "full_fetched": 1,
+-        "accepted": 1,
+-        "submitted": 1,
+-        "confirmed": 1,
+-        "failed": 0,
+-        "stopped_on_captcha": False,
+-        "reasons": {"accepted": 1},
+-        "finished_at": "2026-08-30T10:05:00+03:00",
+-        "s3_prefix": RUN_PREFIX,
+-    }
++def _wire_payloads(relative_path: str) -> dict[str, Any]:
++    """Load fresh, unchanged synthetic wire objects from a versioned fixture."""
++    path = Path(__file__).parent / "fixtures" / "hh" / relative_path
++    return json.loads(path.read_text(encoding="utf-8"))
+ 
+ 
+ def _complete_store() -> FakeStore:
++    payloads = _wire_payloads("raw_v2/audited_apply.json")
+     store = FakeStore()
+-    store.add(f"{RUN_PREFIX}/run.json", _run_payload())
+-    store.add(f"{RUN_PREFIX}/summary.json", _summary())
+-    store.add(f"{CANDIDATE_PREFIX}/search_item.json", _search_item())
++    store.add(f"{RUN_PREFIX}/run.json", payloads["run"])
++    store.add(f"{RUN_PREFIX}/summary.json", payloads["summary"])
++    store.add(f"{CANDIDATE_PREFIX}/search_item.json", payloads["search_item"])
+     store.add(
+         f"{CANDIDATE_PREFIX}/vacancy.json",
+-        _vacancy(),
++        payloads["vacancy"],
+         last_modified=datetime(2026, 8, 30, 7, 2, tzinfo=UTC),
+     )
+-    store.add(
+-        f"{CANDIDATE_PREFIX}/decision.json",
+-        {
+-            "event_type": "hh.vacancy.decision",
+-            "schema_version": 2,
+-            "stage": "full_vacancy_validation",
+-            "run_id": str(RUN_ID),
+-            "vacancy_id": VACANCY_ID,
+-            "vacancy_title": "Junior ML Engineer",
+-            "company_name": "Example",
+-            "submission_mode": "negotiations_api",
+-            "has_test": False,
+-            "accepted": True,
+-            "reason": "accepted",
+-            "matched_domains": ["ml"],
+-            "blocked_terms": [],
+-            "search_item_uri": store.uri(f"{CANDIDATE_PREFIX}/search_item.json"),
+-            "vacancy_uri": store.uri(f"{CANDIDATE_PREFIX}/vacancy.json"),
+-            "created_at": "2026-08-30T10:02:01+03:00",
+-        },
+-    )
+-    result_key = f"{APPLICATION_PREFIX}/application_result.json"
+-    store.add(
+-        f"{CANDIDATE_PREFIX}/outcome.json",
+-        {
+-            "event_type": "hh.batch.application_completed",
+-            "schema_version": 2,
+-            "run_id": str(RUN_ID),
+-            "vacancy_id": VACANCY_ID,
+-            "status": "submitted",
+-            "confirmed": True,
+-            "submission_mode": "negotiations_api",
+-            "application_run_id": str(APPLICATION_RUN_ID),
+-            "application_result_uri": store.uri(result_key),
+-            "cover_letter_uri": store.uri(f"{CANDIDATE_PREFIX}/cover_letter.json"),
+-            "created_at": "2026-08-30T10:04:00+03:00",
+-        },
+-    )
+-    store.add(
+-        f"{APPLICATION_PREFIX}/application_request.json",
+-        {
+-            "event_type": "hh.application.requested",
+-            "schema_version": 2,
+-            "run_id": str(APPLICATION_RUN_ID),
+-            "profile_id": "careerops-ml",
+-            "resume_id": "resume-123",
+-            "vacancy_id": VACANCY_ID,
+-            "vacancy_title": "Junior ML Engineer",
+-            "company_name": "Example",
+-            "message": "hello",
+-            "submission_mode": "negotiations_api",
+-            "has_test": False,
+-            "requested_at": "2026-08-30T10:03:00+03:00",
+-        },
+-    )
+-    store.add(
+-        result_key,
+-        {
+-            "event_type": "hh.application.submitted",
+-            "schema_version": 2,
+-            "run_id": str(APPLICATION_RUN_ID),
+-            "profile_id": "careerops-ml",
+-            "resume_id": "resume-123",
+-            "vacancy_id": VACANCY_ID,
+-            "submission_mode": "negotiations_api",
+-            "status": "submitted",
+-            "confirmed": True,
+-            "relations": ["got_response"],
+-            "upstream_response": {"ignored_raw": True},
+-            "finished_at": "2026-08-30T10:03:05+03:00",
+-        },
+-    )
+-    store.add(f"{APPLICATION_PREFIX}/vacancy_before.json", _vacancy())
+-    after = _vacancy()
+-    after["relations"] = ["got_response"]
+-    store.add(f"{APPLICATION_PREFIX}/vacancy_after.json", after)
++    store.add(f"{CANDIDATE_PREFIX}/decision.json", payloads["decision"])
++    store.add(f"{CANDIDATE_PREFIX}/outcome.json", payloads["outcome"])
++    store.add(f"{APPLICATION_PREFIX}/application_request.json", payloads["application_request"])
++    store.add(f"{APPLICATION_PREFIX}/application_result.json", payloads["application_result"])
++    store.add(f"{APPLICATION_PREFIX}/vacancy_before.json", payloads["vacancy_before"])
++    store.add(f"{APPLICATION_PREFIX}/vacancy_after.json", payloads["vacancy_after"])
+     return store
+ 
+ 
+@@ -629,218 +500,24 @@ async def test_rejects_malformed_batch_path() -> None:
+ 
+ 
+ def _v3_run_payload() -> dict[str, Any]:
+-    return {
+-        "event_type": "hh.batch.started",
+-        "schema_version": 3,
+-        "run_id": str(RUN_ID),
+-        "runtime_mode": "observe",
+-        "account_key": "junior",
+-        "profile_id": "careerops-junior",
+-        "enabled_resume_keys": ["de_junior", "backend_junior"],
+-        "source_resume_ids": ["resume-de", "resume-backend"],
+-        "target_keys": ["de", "backend"],
+-        "active_bindings": [
+-            {
+-                "source_resume_id": "resume-de",
+-                "binding_key": "de_junior",
+-                "target_key": "de",
+-                "binding_version": 1,
+-                "query_sets": ["data_engineering_core"],
+-                "auto_apply": False,
+-            },
+-            {
+-                "source_resume_id": "resume-backend",
+-                "binding_key": "backend_junior",
+-                "target_key": "backend",
+-                "binding_version": 2,
+-                "query_sets": ["python_backend_core"],
+-                "auto_apply": False,
+-            },
+-        ],
+-        "query_set_keys": ["data_engineering_core", "python_backend_core"],
+-        "query_keys": ["data-engineer-en", "python-backend-en"],
+-        "query_catalog_size": 2,
+-        "query_catalog_signature": "c" * 64,
+-        "max_queries_per_run": 50,
+-        "query_cursor_start": 0,
+-        "query_cursor_next": 0,
+-        "query_rotation_wrapped": True,
+-        "discovery_config_version": 1,
+-        "area": 1,
+-        "period": 14,
+-        "pages": 3,
+-        "per_page": 100,
+-        "max_unique_vacancies_per_run": 250,
+-        "max_full_fetch_per_run": 100,
+-        "search_query_delay_seconds": 1.0,
+-        "full_fetch_min_delay_seconds": 1.5,
+-        "full_fetch_max_delay_seconds": 3.0,
+-        "started_at": "2026-08-30T08:00:00+00:00",
+-        "external_writes_allowed": False,
+-    }
++    return _wire_payloads("raw_v3/observe.json")["run"]
+ 
+ 
+ def _v3_summary() -> dict[str, Any]:
+-    return {
+-        "event_type": "hh.batch.finished",
+-        "schema_version": 3,
+-        "run_id": str(RUN_ID),
+-        "runtime_mode": "observe",
+-        "account_key": "junior",
+-        "profile_id": "careerops-junior",
+-        "queries_executed": 1,
+-        "queries_selected": 2,
+-        "query_catalog_size": 2,
+-        "query_catalog_signature": "c" * 64,
+-        "query_cursor_start": 0,
+-        "query_cursor_next": 0,
+-        "query_rotation_wrapped": True,
+-        "search_observation_count": 1,
+-        "unique_vacancy_count": 1,
+-        "candidate_count": 1,
+-        "full_fetch_attempted": 1,
+-        "full_fetched": 1,
+-        "evaluation_candidate_count": 2,
+-        "submitted": 0,
+-        "confirmed": 0,
+-        "external_writes_attempted": 0,
+-        "failed": 0,
+-        "stopped_on_captcha": False,
+-        "reasons": {"fetched": 1},
+-        "finished_at": "2026-08-30T08:05:00+00:00",
+-        "s3_prefix": RUN_PREFIX,
+-    }
+-
+-
+-def _v3_observation(store: FakeStore) -> dict[str, Any]:
+-    return {
+-        "event_type": "hh.vacancy.observed",
+-        "schema_version": 3,
+-        "run_id": str(RUN_ID),
+-        "runtime_mode": "observe",
+-        "account_key": "junior",
+-        "profile_id": "careerops-junior",
+-        "vacancy_id": VACANCY_ID,
+-        "candidate_resume_keys": ["de_junior", "backend_junior"],
+-        "candidate_source_resume_ids": ["resume-de", "resume-backend"],
+-        "candidate_target_keys": ["de", "backend"],
+-        "candidate_bindings": [
+-            {
+-                "source_resume_id": "resume-de",
+-                "binding_key": "de_junior",
+-                "target_key": "de",
+-                "binding_version": 1,
+-                "auto_apply": False,
+-            },
+-            {
+-                "source_resume_id": "resume-backend",
+-                "binding_key": "backend_junior",
+-                "target_key": "backend",
+-                "binding_version": 2,
+-                "auto_apply": False,
+-            },
+-        ],
+-        "evaluation_candidate_count": 2,
+-        "evaluation_candidates_uri": store.uri(
+-            f"{CANDIDATE_PREFIX}/evaluation_candidates.json"
+-        ),
+-        "matched_query_keys": ["data-engineer-en"],
+-        "matched_query_sets": ["data_engineering_core"],
+-        "query_page_uris": [
+-            store.uri(
+-                f"{RUN_PREFIX}/discovery/queries/"
+-                "query=data-engineer-en/page=000.json"
+-            )
+-        ],
+-        "search_item_uri": store.uri(f"{CANDIDATE_PREFIX}/search_item.json"),
+-        "vacancy_uri": store.uri(f"{CANDIDATE_PREFIX}/vacancy.json"),
+-        "full_fetch_status": "fetched",
+-        "observed_at": "2026-08-30T08:04:00+00:00",
+-    }
+-
+-
+-def _v3_evaluations() -> dict[str, Any]:
+-    def item(
+-        source_resume_id: str,
+-        binding_key: str,
+-        target_key: str,
+-        binding_version: int,
+-        resume_query_sets: list[str],
+-        *,
+-        has_overlap: bool,
+-    ) -> dict[str, Any]:
+-        return {
+-            "event_type": "hh.vacancy_resume.evaluation_candidate",
+-            "schema_version": 1,
+-            "account_key": "junior",
+-            "source_profile": "careerops-junior",
+-            "source_resume_id": source_resume_id,
+-            "vacancy_id": VACANCY_ID,
+-            "duplicate_key": {
+-                "account_key": "junior",
+-                "source_profile": "careerops-junior",
+-                "source_resume_id": source_resume_id,
+-                "vacancy_id": VACANCY_ID,
+-            },
+-            "binding_key": binding_key,
+-            "target_key": target_key,
+-            "binding_version": binding_version,
+-            "auto_apply": False,
+-            "matched_query_keys": ["data-engineer-en"],
+-            "matched_query_sets": ["data_engineering_core"],
+-            "resume_query_sets": resume_query_sets,
+-            "provenance_overlap": {
+-                "has_overlap": has_overlap,
+-                "matched_query_keys": ["data-engineer-en"] if has_overlap else [],
+-                "matched_query_sets": ["data_engineering_core"]
+-                if has_overlap
+-                else [],
+-            },
+-            "full_fetch_status": "fetched",
+-            "evaluation_status": "pending_filtering_v2",
+-        }
+-
+-    return {
+-        "event_type": "hh.vacancy_resume.evaluation_candidates",
+-        "schema_version": 1,
+-        "run_id": str(RUN_ID),
+-        "runtime_mode": "observe",
+-        "account_key": "junior",
+-        "source_profile": "careerops-junior",
+-        "vacancy_id": VACANCY_ID,
+-        "evaluation_semantics": "routing_only_no_relevance_decision",
+-        "evaluations": [
+-            item(
+-                "resume-de",
+-                "de_junior",
+-                "de",
+-                1,
+-                ["data_engineering_core"],
+-                has_overlap=True,
+-            ),
+-            item(
+-                "resume-backend",
+-                "backend_junior",
+-                "backend",
+-                2,
+-                ["python_backend_core"],
+-                has_overlap=False,
+-            ),
+-        ],
+-        "created_at": "2026-08-30T08:04:00+00:00",
+-    }
++    return _wire_payloads("raw_v3/observe.json")["summary"]
+ 
+ 
+ def _complete_v3_store() -> FakeStore:
++    payloads = _wire_payloads("raw_v3/observe.json")
+     store = FakeStore()
+-    store.add(f"{RUN_PREFIX}/run.json", _v3_run_payload())
+-    store.add(f"{RUN_PREFIX}/summary.json", _v3_summary())
+-    store.add(f"{CANDIDATE_PREFIX}/search_item.json", _search_item())
+-    store.add(f"{CANDIDATE_PREFIX}/vacancy.json", _vacancy())
+-    store.add(f"{CANDIDATE_PREFIX}/observation.json", _v3_observation(store))
++    store.add(f"{RUN_PREFIX}/run.json", payloads["run"])
++    store.add(f"{RUN_PREFIX}/summary.json", payloads["summary"])
++    store.add(f"{CANDIDATE_PREFIX}/search_item.json", payloads["search_item"])
++    store.add(f"{CANDIDATE_PREFIX}/vacancy.json", payloads["vacancy"])
++    store.add(f"{CANDIDATE_PREFIX}/observation.json", payloads["observation"])
+     store.add(
+         f"{CANDIDATE_PREFIX}/evaluation_candidates.json",
+-        _v3_evaluations(),
++        payloads["evaluation_candidates"],
+     )
+     return store
+ 

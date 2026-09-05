@@ -134,8 +134,6 @@ def _discovery() -> DiscoveryConfig:
         {
             "schema_version": 1,
             "defaults": {
-                "area": 1,
-                "period": 14,
                 "pages": 2,
                 "per_page": 100,
                 "search_query_delay_seconds": 0,
@@ -146,7 +144,7 @@ def _discovery() -> DiscoveryConfig:
                 "ml_core": {
                     "version": 1,
                     "queries": [
-                        {"key": "ml-query", "text": "ML", "enabled": True}
+                        {"key": "ml-query", "text": "ML"}
                     ],
                 },
                 "python_backend_core": {
@@ -155,7 +153,6 @@ def _discovery() -> DiscoveryConfig:
                         {
                             "key": "backend-query",
                             "text": "Backend",
-                            "enabled": True,
                         }
                     ],
                 },
@@ -169,15 +166,11 @@ def _account(key: str = "junior") -> HHAccountConfig:
         {
             "key": key,
             "profile": f"profile-{key}",
-            "enabled": True,
-            "observe_runs_per_day": 3,
-            "apply_daily_cap": 100,
             "bindings": [
                 {
                     "key": "ml",
                     "source_resume_id": f"resume-{key}",
                     "target_key": "ml-target",
-                    "enabled": True,
                     "auto_apply": False,
                     "binding_version": 4,
                     "query_sets": ["ml_core", "python_backend_core"],
@@ -424,9 +417,6 @@ async def test_observe_persists_independent_vacancy_resume_evaluation_pairs() ->
         {
             "key": "junior",
             "profile": "profile-junior",
-            "enabled": True,
-            "observe_runs_per_day": 3,
-            "apply_daily_cap": 100,
             "bindings": [
                 {
                     "key": "ml",
@@ -615,8 +605,6 @@ async def test_observe_rotates_a_bounded_query_window_across_runs() -> None:
         {
             "schema_version": 1,
             "defaults": {
-                "pages": 1,
-                "per_page": 50,
                 "max_queries_per_run": 2,
                 "search_query_delay_seconds": 0,
                 "full_fetch_min_delay_seconds": 0,

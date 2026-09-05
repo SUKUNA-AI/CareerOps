@@ -1,0 +1,287 @@
+{
+  "run": {
+    "event_type": "hh.batch.started",
+    "schema_version": 3,
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "runtime_mode": "observe",
+    "account_key": "junior",
+    "profile_id": "careerops-junior",
+    "enabled_resume_keys": [
+      "de_junior",
+      "backend_junior"
+    ],
+    "source_resume_ids": [
+      "resume-de",
+      "resume-backend"
+    ],
+    "target_keys": [
+      "de",
+      "backend"
+    ],
+    "active_bindings": [
+      {
+        "source_resume_id": "resume-de",
+        "binding_key": "de_junior",
+        "target_key": "de",
+        "binding_version": 1,
+        "query_sets": [
+          "data_engineering_core"
+        ],
+        "auto_apply": false
+      },
+      {
+        "source_resume_id": "resume-backend",
+        "binding_key": "backend_junior",
+        "target_key": "backend",
+        "binding_version": 2,
+        "query_sets": [
+          "python_backend_core"
+        ],
+        "auto_apply": false
+      }
+    ],
+    "query_set_keys": [
+      "data_engineering_core",
+      "python_backend_core"
+    ],
+    "query_keys": [
+      "data-engineer-en",
+      "python-backend-en"
+    ],
+    "query_catalog_size": 2,
+    "query_catalog_signature": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "max_queries_per_run": 50,
+    "query_cursor_start": 0,
+    "query_cursor_next": 0,
+    "query_rotation_wrapped": true,
+    "discovery_config_version": 1,
+    "area": 1,
+    "period": 14,
+    "pages": 3,
+    "per_page": 100,
+    "max_unique_vacancies_per_run": 250,
+    "max_full_fetch_per_run": 100,
+    "search_query_delay_seconds": 1.0,
+    "full_fetch_min_delay_seconds": 1.5,
+    "full_fetch_max_delay_seconds": 3.0,
+    "started_at": "2026-08-30T08:00:00+00:00",
+    "external_writes_allowed": false
+  },
+  "summary": {
+    "event_type": "hh.batch.finished",
+    "schema_version": 3,
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "runtime_mode": "observe",
+    "account_key": "junior",
+    "profile_id": "careerops-junior",
+    "queries_executed": 1,
+    "queries_selected": 2,
+    "query_catalog_size": 2,
+    "query_catalog_signature": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "query_cursor_start": 0,
+    "query_cursor_next": 0,
+    "query_rotation_wrapped": true,
+    "search_observation_count": 1,
+    "unique_vacancy_count": 1,
+    "candidate_count": 1,
+    "full_fetch_attempted": 1,
+    "full_fetched": 1,
+    "evaluation_candidate_count": 2,
+    "submitted": 0,
+    "confirmed": 0,
+    "external_writes_attempted": 0,
+    "failed": 0,
+    "stopped_on_captcha": false,
+    "reasons": {
+      "fetched": 1
+    },
+    "finished_at": "2026-08-30T08:05:00+00:00",
+    "s3_prefix": "batches/date=2026-08-30/run_id=11111111-1111-4111-8111-111111111111"
+  },
+  "search_item": {
+    "id": "136655995",
+    "name": "Junior ML Engineer",
+    "employer": {
+      "id": "4233",
+      "name": "Example"
+    },
+    "area": {
+      "id": "1",
+      "name": "Москва"
+    },
+    "alternate_url": "https://hh.ru/vacancy/136655995",
+    "published_at": "2026-08-29T12:30:00+0300"
+  },
+  "vacancy": {
+    "id": "136655995",
+    "name": "Junior ML Engineer",
+    "employer": {
+      "id": "4233",
+      "name": "Example"
+    },
+    "area": {
+      "id": "1",
+      "name": "Москва"
+    },
+    "alternate_url": "https://hh.ru/vacancy/136655995",
+    "published_at": "2026-08-29T12:30:00+0300",
+    "description": "<p>Python and SQL</p>",
+    "salary": {
+      "from": 100000,
+      "to": 150000,
+      "currency": "RUR"
+    },
+    "experience": {
+      "id": "between1And3"
+    },
+    "schedule": {
+      "id": "remote"
+    },
+    "employment": {
+      "id": "full"
+    },
+    "relations": [],
+    "has_test": false,
+    "response_url": null,
+    "response_letter_required": false,
+    "archived": false,
+    "closed_for_applicants": false
+  },
+  "observation": {
+    "event_type": "hh.vacancy.observed",
+    "schema_version": 3,
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "runtime_mode": "observe",
+    "account_key": "junior",
+    "profile_id": "careerops-junior",
+    "vacancy_id": "136655995",
+    "candidate_resume_keys": [
+      "de_junior",
+      "backend_junior"
+    ],
+    "candidate_source_resume_ids": [
+      "resume-de",
+      "resume-backend"
+    ],
+    "candidate_target_keys": [
+      "de",
+      "backend"
+    ],
+    "candidate_bindings": [
+      {
+        "source_resume_id": "resume-de",
+        "binding_key": "de_junior",
+        "target_key": "de",
+        "binding_version": 1,
+        "auto_apply": false
+      },
+      {
+        "source_resume_id": "resume-backend",
+        "binding_key": "backend_junior",
+        "target_key": "backend",
+        "binding_version": 2,
+        "auto_apply": false
+      }
+    ],
+    "evaluation_candidate_count": 2,
+    "evaluation_candidates_uri": "s3://careerops-raw/_lab/hh/batches/date=2026-08-30/run_id=11111111-1111-4111-8111-111111111111/candidates/vacancy_id=136655995/evaluation_candidates.json",
+    "matched_query_keys": [
+      "data-engineer-en"
+    ],
+    "matched_query_sets": [
+      "data_engineering_core"
+    ],
+    "query_page_uris": [
+      "s3://careerops-raw/_lab/hh/batches/date=2026-08-30/run_id=11111111-1111-4111-8111-111111111111/discovery/queries/query=data-engineer-en/page=000.json"
+    ],
+    "search_item_uri": "s3://careerops-raw/_lab/hh/batches/date=2026-08-30/run_id=11111111-1111-4111-8111-111111111111/candidates/vacancy_id=136655995/search_item.json",
+    "vacancy_uri": "s3://careerops-raw/_lab/hh/batches/date=2026-08-30/run_id=11111111-1111-4111-8111-111111111111/candidates/vacancy_id=136655995/vacancy.json",
+    "full_fetch_status": "fetched",
+    "observed_at": "2026-08-30T08:04:00+00:00"
+  },
+  "evaluation_candidates": {
+    "event_type": "hh.vacancy_resume.evaluation_candidates",
+    "schema_version": 1,
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "runtime_mode": "observe",
+    "account_key": "junior",
+    "source_profile": "careerops-junior",
+    "vacancy_id": "136655995",
+    "evaluation_semantics": "routing_only_no_relevance_decision",
+    "evaluations": [
+      {
+        "event_type": "hh.vacancy_resume.evaluation_candidate",
+        "schema_version": 1,
+        "account_key": "junior",
+        "source_profile": "careerops-junior",
+        "source_resume_id": "resume-de",
+        "vacancy_id": "136655995",
+        "duplicate_key": {
+          "account_key": "junior",
+          "source_profile": "careerops-junior",
+          "source_resume_id": "resume-de",
+          "vacancy_id": "136655995"
+        },
+        "binding_key": "de_junior",
+        "target_key": "de",
+        "binding_version": 1,
+        "auto_apply": false,
+        "matched_query_keys": [
+          "data-engineer-en"
+        ],
+        "matched_query_sets": [
+          "data_engineering_core"
+        ],
+        "resume_query_sets": [
+          "data_engineering_core"
+        ],
+        "provenance_overlap": {
+          "has_overlap": true,
+          "matched_query_keys": [
+            "data-engineer-en"
+          ],
+          "matched_query_sets": [
+            "data_engineering_core"
+          ]
+        },
+        "full_fetch_status": "fetched",
+        "evaluation_status": "pending_filtering_v2"
+      },
+      {
+        "event_type": "hh.vacancy_resume.evaluation_candidate",
+        "schema_version": 1,
+        "account_key": "junior",
+        "source_profile": "careerops-junior",
+        "source_resume_id": "resume-backend",
+        "vacancy_id": "136655995",
+        "duplicate_key": {
+          "account_key": "junior",
+          "source_profile": "careerops-junior",
+          "source_resume_id": "resume-backend",
+          "vacancy_id": "136655995"
+        },
+        "binding_key": "backend_junior",
+        "target_key": "backend",
+        "binding_version": 2,
+        "auto_apply": false,
+        "matched_query_keys": [
+          "data-engineer-en"
+        ],
+        "matched_query_sets": [
+          "data_engineering_core"
+        ],
+        "resume_query_sets": [
+          "python_backend_core"
+        ],
+        "provenance_overlap": {
+          "has_overlap": false,
+          "matched_query_keys": [],
+          "matched_query_sets": []
+        },
+        "full_fetch_status": "fetched",
+        "evaluation_status": "pending_filtering_v2"
+      }
+    ],
+    "created_at": "2026-08-30T08:04:00+00:00"
+  }
+}
