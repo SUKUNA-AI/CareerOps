@@ -58,7 +58,9 @@ def _reject_secret_keys(value: Any, path: str = "parameters") -> None:
         for key, nested in value.items():
             normalized = str(key).casefold()
             if any(fragment in normalized for fragment in _FORBIDDEN_PARAMETER_KEYS):
-                raise ValueError(f"secret-like source task parameter is forbidden: {path}.{key}")
+                raise ValueError(
+                    f"secret-like source task parameter is forbidden: {path}.{key}"
+                )
             _reject_secret_keys(nested, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, nested in enumerate(value):
@@ -117,7 +119,7 @@ class SourceTaskSpec:
 
 @dataclass(frozen=True, slots=True)
 class SourceTaskRecord:
-    """One claimed or persisted source task resolved with its account registry key."""
+    """One claimed source task resolved with its stable HH account registry key."""
 
     id: UUID
     account_id: int
@@ -143,10 +145,15 @@ def search_page_task(
     order_by: str = "publication_time",
     per_page: int = 50,
     professional_roles: tuple[int, ...] = (),
+    max_pages: int = 2,
     parent_task_id: UUID | None = None,
 ) -> SourceTaskSpec:
     """Build one idempotent query-page task within an observation generation."""
 
+    if max_pages < 1:
+        raise ValueError("max_pages must be >= 1")
+    if page < 0 or page >= max_pages:
+        raise ValueError("page must be inside the configured search page window")
     return SourceTaskSpec.build(
         SourceTaskKind.SEARCH_PAGE,
         {
@@ -160,6 +167,7 @@ def search_page_task(
             "order_by": order_by,
             "per_page": per_page,
             "professional_roles": list(professional_roles),
+            "max_pages": max_pages,
         },
         parent_task_id=parent_task_id,
     )
@@ -194,6 +202,8 @@ def resume_sync_task(
 ) -> SourceTaskSpec:
     """Build one exact /resumes/mine page task for a sync generation."""
 
+    if page < 0:
+        raise ValueError("page must be >= 0")
     return SourceTaskSpec.build(
         SourceTaskKind.RESUME_SYNC,
         {
@@ -233,47 +243,41 @@ class SourceTaskRepository:
         self._conn = conn
 
     async def enqueue(self, *, account_id: int, spec: SourceTaskSpec) -> UUID:
-        """Insert once by natural task key without resetting an existing task."""
+        """Insert once for an HH account without resetting an existing task."""
 
         if account_id <= 0:
             raise ValueError("account_id must be positive")
         task_id = uuid4()
         cursor = await self._conn.execute(
             """
-            WITH inserted AS (
-                INSERT INTO careerops_v2.source_tasks (
-                    id,
-                    account_id,
-                    task_key,
-                    task_kind,
-                    parent_task_id,
-                    parameters
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (account_id, task_key) DO NOTHING
-                RETURNING id
+            INSERT INTO careerops_v2.source_tasks (
+                id,
+                account_id,
+                task_key,
+                task_kind,
+                parent_task_id,
+                parameters
             )
-            SELECT id FROM inserted
-            UNION ALL
-            SELECT id
-            FROM careerops_v2.source_tasks
-            WHERE account_id = %s AND task_key = %s
-            LIMIT 1
+            SELECT %s, a.id, %s, %s, %s, %s
+            FROM careerops_v2.accounts AS a
+            JOIN careerops_v2.sources AS s ON s.id = a.source_id
+            WHERE a.id = %s AND s.source_key = 'hh'
+            ON CONFLICT (account_id, task_key)
+            DO UPDATE SET task_key = EXCLUDED.task_key
+            RETURNING id
             """,
             (
                 task_id,
-                account_id,
                 spec.task_key,
                 spec.kind.value,
                 spec.parent_task_id,
                 Jsonb(spec.parameters),
                 account_id,
-                spec.task_key,
             ),
         )
         row = await cursor.fetchone()
         if row is None:
-            raise RuntimeError("source task enqueue returned no task id")
+            raise ValueError(f"account_id {account_id} is not a registered HH account")
         return UUID(str(row[0]))
 
     async def claim_next(
@@ -283,7 +287,7 @@ class SourceTaskRepository:
         lease_seconds: int = 300,
         account_id: int | None = None,
     ) -> SourceTaskRecord | None:
-        """Atomically claim one due task using SKIP LOCKED and a fencing token."""
+        """Atomically claim one executable HH task using SKIP LOCKED and fencing."""
 
         normalized_worker = worker_id.strip()
         if not normalized_worker:
@@ -299,11 +303,17 @@ class SourceTaskRepository:
             WITH candidate AS (
                 SELECT st.id
                 FROM careerops_v2.source_tasks AS st
-                WHERE st.status IN ('pending', 'deferred', 'retryable_failure')
+                JOIN careerops_v2.accounts AS a ON a.id = st.account_id
+                JOIN careerops_v2.sources AS s ON s.id = a.source_id
+                WHERE s.source_key = 'hh'
+                  AND st.task_kind IN (
+                      'search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch'
+                  )
+                  AND st.status IN ('pending', 'deferred', 'retryable_failure')
                   AND st.next_attempt_at <= now()
                   AND (%s IS NULL OR st.account_id = %s)
                 ORDER BY st.next_attempt_at, st.id
-                FOR UPDATE SKIP LOCKED
+                FOR UPDATE OF st SKIP LOCKED
                 LIMIT 1
             )
             UPDATE careerops_v2.source_tasks AS st

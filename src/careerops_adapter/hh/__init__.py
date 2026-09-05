@@ -32,6 +32,12 @@ from .transport import (
     HHResumeListPageRequest,
     HHSearchPageRequest,
 )
+from .worker import (
+    HHSourceFailurePolicy,
+    HHSourceTaskExecutor,
+    SourceTaskRunOutcome,
+    SourceTaskRunResult,
+)
 
 __all__ = [
     "HHApplicantToolTransport",
@@ -44,6 +50,8 @@ __all__ = [
     "HHReadTransport",
     "HHResumeListPageRequest",
     "HHSearchPageRequest",
+    "HHSourceFailurePolicy",
+    "HHSourceTaskExecutor",
     "HHTransportError",
     "RawObjectCollisionError",
     "RawWriteVerificationError",
@@ -51,6 +59,8 @@ __all__ = [
     "SourceTaskLeaseLost",
     "SourceTaskRecord",
     "SourceTaskRepository",
+    "SourceTaskRunOutcome",
+    "SourceTaskRunResult",
     "SourceTaskSpec",
     "SourceTaskStatus",
     "default_failure_disposition",
