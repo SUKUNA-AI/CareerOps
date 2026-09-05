@@ -426,6 +426,86 @@ observe_query_cursors = Table(
     ),
 )
 
+search_query_states = Table(
+    "search_query_states",
+    metadata,
+    Column(
+        "id",
+        BigInteger,
+        Identity(always=False),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "source_profile_id",
+        BigInteger,
+        ForeignKey("careerops.source_profiles.id"),
+        nullable=False,
+    ),
+    Column("account_key", Text, nullable=False),
+    Column("query_key", Text, nullable=False),
+    Column("query_set_key", Text, nullable=False),
+    Column("query_signature", Text, nullable=False),
+    Column("request_params", JSONB, nullable=False),
+    Column(
+        "is_active",
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    ),
+    Column("retired_at", TIMESTAMP(timezone=True)),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    Column(
+        "updated_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    ),
+    UniqueConstraint(
+        "source_profile_id",
+        "query_key",
+        "query_signature",
+        name="search_query_states_profile_query_signature_uk",
+    ),
+    CheckConstraint(
+        "query_signature ~ '^[0-9a-f]{64}$'",
+        name="search_query_states_signature_ck",
+    ),
+    CheckConstraint(
+        """
+        jsonb_typeof(request_params) = 'object'
+        """,
+        name="search_query_states_request_params_ck",
+    ),
+    CheckConstraint(
+        """
+        btrim(account_key) <> ''
+        AND btrim(query_key) <> ''
+        AND btrim(query_set_key) <> ''
+        """,
+        name="search_query_states_keys_ck",
+    ),
+    CheckConstraint(
+        """
+        (
+            is_active
+            AND retired_at IS NULL
+        )
+        OR (
+            NOT is_active
+            AND retired_at IS NOT NULL
+        )
+        """,
+        name="search_query_states_lifecycle_ck",
+    ),
+)
+
+
 observation_runs = Table(
     "observation_runs",
     metadata,
@@ -647,6 +727,13 @@ Index(
     source_profiles.c.account_key,
     unique=True,
     postgresql_where=source_profiles.c.account_key.is_not(None),
+)
+Index(
+    "search_query_states_active_profile_query_uk",
+    search_query_states.c.source_profile_id,
+    search_query_states.c.query_key,
+    unique=True,
+    postgresql_where=search_query_states.c.is_active.is_(True),
 )
 Index(
     "observation_runs_account_started_idx",

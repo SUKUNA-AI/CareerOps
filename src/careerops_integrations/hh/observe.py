@@ -22,6 +22,7 @@ from .resume_sync import (
     resume_vacancy_dedup_key,
 )
 from .runtime import HHExternalWriteGuard, RuntimeMode
+from .search_queries import build_search_query_definition
 
 
 class ObserveObjectRef(Protocol):
@@ -199,16 +200,11 @@ def _query_params(
     query: DiscoveryQuery,
     discovery: DiscoveryConfig,
 ) -> dict[str, Any]:
-    defaults = discovery.defaults
-    spec = query.spec
+    definition = build_search_query_definition(query, discovery)
+
     return {
-        "text": spec.text,
-        "area": spec.area or defaults.area,
-        "period": spec.period or defaults.period,
-        "order_by": defaults.order_by,
-        "per_page": spec.per_page or defaults.per_page,
-        "pages": spec.pages or defaults.pages,
-        "professional_roles": None,
+        **definition.request_params,
+        "pages": query.spec.pages or discovery.defaults.pages,
     }
 
 

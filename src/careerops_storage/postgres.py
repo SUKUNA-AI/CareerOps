@@ -30,6 +30,7 @@ from careerops_integrations.hh.resume_sync import (
     ReconciledResume,
     ResumeLifecycle,
 )
+from careerops_integrations.hh.search_queries import SearchQueryDefinition
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,207 @@ async def upsert_source_profile(
     )
     row = await cursor.fetchone()
     return _returned_int(row, "source profile")
+
+async def activate_search_query_state(
+    conn: AsyncConnection[Any],
+    *,
+    source_profile: str,
+    account_key: str,
+    definition: SearchQueryDefinition,
+    activated_at: datetime,
+) -> int:
+    """Return the active durable version of one logical HH search query."""
+
+    normalized_account_key = account_key.strip()
+    if not normalized_account_key:
+        raise ValueError("account_key must not be empty")
+
+    if not definition.query_key.strip():
+        raise ValueError("query_key must not be empty")
+
+    signature = definition.query_signature
+    if len(signature) != 64 or any(
+        char not in "0123456789abcdef"
+        for char in signature
+    ):
+        raise ValueError(
+            "query_signature must be a lowercase SHA-256 hex digest"
+        )
+
+    async with conn.transaction():
+        source_profile_id = await upsert_source_profile(
+            conn,
+            source="hh",
+            profile_key=source_profile,
+            account_key=normalized_account_key,
+        )
+
+        # Serialize query-version changes for one HH source profile.
+        lock_cursor = await conn.execute(
+            """
+            SELECT id
+            FROM careerops.source_profiles
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (source_profile_id,),
+        )
+
+        if await lock_cursor.fetchone() is None:
+            raise RuntimeError(
+                "source profile disappeared while activating search query state"
+            )
+
+        existing_cursor = await conn.execute(
+            """
+            SELECT
+                id,
+                query_set_key,
+                request_params
+            FROM careerops.search_query_states
+            WHERE source_profile_id = %s
+              AND query_key = %s
+              AND query_signature = %s
+            FOR UPDATE
+            """,
+            (
+                source_profile_id,
+                definition.query_key,
+                signature,
+            ),
+        )
+
+        existing = await existing_cursor.fetchone()
+
+        if existing is not None:
+            existing_query_set = str(existing[1])
+            existing_request_params = existing[2]
+
+            if (
+                existing_query_set != definition.query_set_key
+                or existing_request_params != definition.request_params
+            ):
+                raise RuntimeError(
+                    "search query signature collision or "
+                    "canonicalization mismatch"
+                )
+
+        # A different active version becomes historical.
+        await conn.execute(
+            """
+            UPDATE careerops.search_query_states
+            SET
+                is_active = false,
+                retired_at = %s,
+                updated_at = now()
+            WHERE source_profile_id = %s
+              AND query_key = %s
+              AND is_active
+              AND query_signature <> %s
+            """,
+            (
+                activated_at,
+                source_profile_id,
+                definition.query_key,
+                signature,
+            ),
+        )
+
+        if existing is not None:
+            state_id = int(existing[0])
+
+            cursor = await conn.execute(
+                """
+                UPDATE careerops.search_query_states
+                SET
+                    account_key = %s,
+                    is_active = true,
+                    retired_at = NULL,
+                    updated_at = now()
+                WHERE id = %s
+                RETURNING id
+                """,
+                (
+                    normalized_account_key,
+                    state_id,
+                ),
+            )
+
+            row = await cursor.fetchone()
+
+            if row is None:
+                raise RuntimeError(
+                    "search query state reactivation returned no row"
+                )
+
+            return int(row[0])
+
+        cursor = await conn.execute(
+            """
+            INSERT INTO careerops.search_query_states (
+                source_profile_id,
+                account_key,
+                query_key,
+                query_set_key,
+                query_signature,
+                request_params,
+                is_active,
+                retired_at
+            )
+            VALUES (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                true,
+                NULL
+            )
+            RETURNING id
+            """,
+            (
+                source_profile_id,
+                normalized_account_key,
+                definition.query_key,
+                definition.query_set_key,
+                signature,
+                Jsonb(definition.request_params),
+            ),
+        )
+
+        row = await cursor.fetchone()
+
+        if row is None:
+            raise RuntimeError(
+                "search query state INSERT returned no row"
+            )
+
+        return int(row[0])
+
+class PostgresSearchQueryStateStore:
+    """PostgreSQL persistence for versioned lossless HH search queries."""
+
+    def __init__(self, conn: AsyncConnection[Any]) -> None:
+        self._conn = conn
+
+    async def activate(
+        self,
+        *,
+        source_profile: str,
+        account_key: str,
+        definition: SearchQueryDefinition,
+        activated_at: datetime,
+    ) -> int:
+        """Return the durable active state id for one query definition."""
+
+        return await activate_search_query_state(
+            self._conn,
+            source_profile=source_profile,
+            account_key=account_key,
+            definition=definition,
+            activated_at=activated_at,
+        )
 
 
 async def upsert_resume(
