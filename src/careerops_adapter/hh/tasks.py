@@ -38,7 +38,7 @@ class SourceTaskStatus(StrEnum):
 
 
 class SourceTaskLeaseLost(RuntimeError):
-    """Report a stale worker that no longer owns the source-task lease."""
+    """Report a stale worker that no longer owns a live source-task lease."""
 
 
 _FORBIDDEN_PARAMETER_KEYS = (
@@ -50,6 +50,13 @@ _FORBIDDEN_PARAMETER_KEYS = (
     "xsrf",
     "refresh_token",
     "access_token",
+)
+
+_EXECUTABLE_KINDS = (
+    SourceTaskKind.SEARCH_PAGE,
+    SourceTaskKind.VACANCY_FETCH,
+    SourceTaskKind.RESUME_SYNC,
+    SourceTaskKind.RESUME_FETCH,
 )
 
 
@@ -89,6 +96,13 @@ def _task_key(kind: SourceTaskKind, parameters: dict[str, Any]) -> str:
     return f"{kind.value}:v1:{digest}"
 
 
+def _profile_key(parameters: dict[str, Any]) -> str:
+    value = parameters.get("profile_key")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("HH source task parameters require a non-empty profile_key")
+    return value.strip()
+
+
 @dataclass(frozen=True, slots=True)
 class SourceTaskSpec:
     """Immutable task identity and parameters before PostgreSQL enqueue."""
@@ -109,6 +123,7 @@ class SourceTaskSpec:
         normalized = json.loads(_canonical_parameters(parameters).decode("utf-8"))
         if not isinstance(normalized, dict):
             raise ValueError("source task parameters must be a JSON object")
+        _profile_key(normalized)
         return cls(
             kind=kind,
             parameters=normalized,
@@ -237,16 +252,24 @@ def resume_fetch_task(
 
 
 class SourceTaskRepository:
-    """Explicit SQL owner for careerops_v2.source_tasks queue mechanics."""
+    """Explicit SQL owner for careerops_v2.source_tasks queue mechanics.
+
+    Queue transitions are independent transactional facts. The repository therefore
+    requires a dedicated autocommit connection; the one operation that must persist
+    children and parent success together opens its own explicit transaction.
+    """
 
     def __init__(self, conn: AsyncConnection[Any]) -> None:
+        if not conn.autocommit:
+            raise ValueError("SourceTaskRepository requires an autocommit PostgreSQL connection")
         self._conn = conn
 
     async def enqueue(self, *, account_id: int, spec: SourceTaskSpec) -> UUID:
-        """Insert once for an HH account without resetting an existing task."""
+        """Insert once for a registered HH account/profile without resetting state."""
 
         if account_id <= 0:
             raise ValueError("account_id must be positive")
+        profile_key = _profile_key(spec.parameters)
         task_id = uuid4()
         cursor = await self._conn.execute(
             """
@@ -261,7 +284,11 @@ class SourceTaskRepository:
             SELECT %s, a.id, %s, %s, %s, %s
             FROM careerops_v2.accounts AS a
             JOIN careerops_v2.sources AS s ON s.id = a.source_id
-            WHERE a.id = %s AND s.source_key = 'hh'
+            JOIN careerops_v2.profiles AS p
+              ON p.account_id = a.id AND p.source_id = a.source_id
+            WHERE a.id = %s
+              AND s.source_key = 'hh'
+              AND p.profile_key = %s
             ON CONFLICT (account_id, task_key)
             DO UPDATE SET task_key = EXCLUDED.task_key
             RETURNING id
@@ -273,11 +300,14 @@ class SourceTaskRepository:
                 spec.parent_task_id,
                 Jsonb(spec.parameters),
                 account_id,
+                profile_key,
             ),
         )
         row = await cursor.fetchone()
         if row is None:
-            raise ValueError(f"account_id {account_id} is not a registered HH account")
+            raise ValueError(
+                f"account_id {account_id} / profile_key {profile_key!r} is not a registered HH profile"
+            )
         return UUID(str(row[0]))
 
     async def claim_next(
@@ -287,7 +317,7 @@ class SourceTaskRepository:
         lease_seconds: int = 300,
         account_id: int | None = None,
     ) -> SourceTaskRecord | None:
-        """Atomically claim one executable HH task using SKIP LOCKED and fencing."""
+        """Claim one due task or reclaim an expired lease using SKIP LOCKED fencing."""
 
         normalized_worker = worker_id.strip()
         if not normalized_worker:
@@ -309,10 +339,23 @@ class SourceTaskRepository:
                   AND st.task_kind IN (
                       'search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch'
                   )
-                  AND st.status IN ('pending', 'deferred', 'retryable_failure')
-                  AND st.next_attempt_at <= now()
+                  AND (
+                      (
+                          st.status IN ('pending', 'deferred', 'retryable_failure')
+                          AND st.next_attempt_at <= now()
+                      )
+                      OR (
+                          st.status IN ('claimed', 'running')
+                          AND st.lease_expires_at <= now()
+                      )
+                  )
                   AND (%s IS NULL OR st.account_id = %s)
-                ORDER BY st.next_attempt_at, st.id
+                ORDER BY
+                    CASE
+                        WHEN st.status IN ('claimed', 'running') THEN st.lease_expires_at
+                        ELSE st.next_attempt_at
+                    END,
+                    st.id
                 FOR UPDATE OF st SKIP LOCKED
                 LIMIT 1
             )
@@ -324,6 +367,7 @@ class SourceTaskRepository:
                 lease_token = %s,
                 leased_at = now(),
                 lease_expires_at = now() + make_interval(secs => %s),
+                finished_at = NULL,
                 error_category = NULL,
                 result_artifact_uri = NULL,
                 updated_at = now()
@@ -363,14 +407,17 @@ class SourceTaskRepository:
         )
 
     async def mark_running(self, task: SourceTaskRecord) -> None:
-        """Move a freshly claimed task to running under the same fencing token."""
+        """Move a freshly claimed task to running while its lease is still live."""
 
         token = self._required_token(task)
         cursor = await self._conn.execute(
             """
             UPDATE careerops_v2.source_tasks
             SET status = 'running', updated_at = now()
-            WHERE id = %s AND lease_token = %s AND status = 'claimed'
+            WHERE id = %s
+              AND lease_token = %s
+              AND status = 'claimed'
+              AND lease_expires_at > now()
             """,
             (task.id, token),
         )
@@ -405,6 +452,7 @@ class SourceTaskRepository:
                 WHERE id = %s
                   AND lease_token = %s
                   AND status IN ('claimed', 'running')
+                  AND lease_expires_at > now()
                 """,
                 (result_artifact_uri, task.id, token),
             )
@@ -448,7 +496,7 @@ class SourceTaskRepository:
         *,
         error_category: str,
     ) -> None:
-        """Record an explicit unrecoverable source error under the current lease."""
+        """Record an explicit unrecoverable source error under a live lease."""
 
         normalized_error = error_category.strip()
         if not normalized_error:
@@ -470,6 +518,7 @@ class SourceTaskRepository:
             WHERE id = %s
               AND lease_token = %s
               AND status IN ('claimed', 'running')
+              AND lease_expires_at > now()
             """,
             (normalized_error, task.id, token),
         )
@@ -507,6 +556,7 @@ class SourceTaskRepository:
             WHERE id = %s
               AND lease_token = %s
               AND status IN ('claimed', 'running')
+              AND lease_expires_at > now()
             """,
             (status.value, next_attempt_at, normalized_error, task.id, token),
         )
