@@ -1,3 +1,5 @@
+"""Legacy runtime persistence and shared S3 exports; canonical schema is in v2."""
+
 from .postgres import (
     PostgresApplicationClaimStore,
     PostgresObserveQueryCursorStore,

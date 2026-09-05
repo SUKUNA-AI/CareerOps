@@ -44,3 +44,10 @@ hh-applicant-tool/.venv/
 dist/
 build/
 *.egg-info/
+
+# Private production inventory and recovery material
+careerops-reset-inventory-*
+careerops-recovery-*
+careerops-application-audit*
+backups/
+*.dump
