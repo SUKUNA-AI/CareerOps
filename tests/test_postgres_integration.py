@@ -17,6 +17,7 @@ import pytest_asyncio
 from psycopg import AsyncConnection
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.pq import TransactionStatus
+from support.hh import make_hh_vacancy
 
 from careerops_contracts import RawVacancyRef
 from careerops_integrations.hh.application_audit import (
@@ -109,21 +110,13 @@ async def clean_postgres_dsn() -> AsyncIterator[str]:
 
 
 def _vacancy(vacancy_id: str) -> dict[str, Any]:
-    return {
-        "id": vacancy_id,
-        "name": f"ML Engineer {vacancy_id}",
-        "description": "<p>Python and PostgreSQL</p>",
-        "alternate_url": f"https://hh.ru/vacancy/{vacancy_id}",
-        "employer": {"id": "10", "name": "Example"},
-        "area": {"id": "1", "name": "Москва"},
-        "relations": [],
-        "archived": False,
-        "closed_for_applicants": False,
-        "has_test": False,
-        "response_letter_required": False,
-        "response_url": None,
-        "published_at": "2026-09-02T10:00:00+0300",
-    }
+    return make_hh_vacancy(
+        vacancy_id=vacancy_id,
+        title=f"ML Engineer {vacancy_id}",
+        description="<p>Python and PostgreSQL</p>",
+        area={"id": "1", "name": "Москва"},
+        published_at="2026-09-02T10:00:00+0300",
+    )
 
 
 def _resume(profile: str, resume_id: str) -> ReconciledResume:

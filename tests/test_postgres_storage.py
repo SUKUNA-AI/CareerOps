@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import re
-from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from pathlib import Path
-from types import TracebackType
 from typing import Any
 from uuid import UUID
 
 import pytest
+from support.hh import make_hh_vacancy
+from support.postgres import TransactionRecorder
 
 from careerops_contracts import CanonicalVacancy
 from careerops_integrations.hh.application_claims import (
@@ -84,31 +84,13 @@ class SequencedFakeConnection(FakeConnection):
         return FakeCursor(next(self.rows))
 
 
-class FakeTransaction(AbstractAsyncContextManager[None]):
-    def __init__(self, connection: TransactionalSequencedFakeConnection) -> None:
-        self.connection = connection
-
-    async def __aenter__(self) -> None:
-        self.connection.events.append("begin")
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool:
-        del exc_value, traceback
-        self.connection.events.append("rollback" if exc_type else "commit")
-        return False
-
-
 class TransactionalSequencedFakeConnection(SequencedFakeConnection):
     def __init__(self, rows: list[tuple[Any, ...] | None]) -> None:
         super().__init__(rows)
         self.events: list[str] = []
 
-    def transaction(self) -> FakeTransaction:
-        return FakeTransaction(self)
+    def transaction(self) -> TransactionRecorder:
+        return TransactionRecorder(self.events)
 
 
 def _assert_sql_call(conn: FakeConnection, table: str) -> tuple[str, tuple[Any, ...]]:
@@ -144,23 +126,6 @@ def _operational(vacancy_id: str = "123") -> HHVacancyOperational:
         has_test=False,
         response_letter_required=True,
     )
-
-
-def _hh_vacancy() -> dict[str, Any]:
-    return {
-        "id": "123",
-        "name": "ML Engineer",
-        "description": "<p>Python</p>",
-        "alternate_url": "https://hh.ru/vacancy/123",
-        "employer": {"id": "10", "name": "Example"},
-        "area": {"name": "Москва"},
-        "relations": [],
-        "archived": False,
-        "closed_for_applicants": False,
-        "has_test": False,
-        "response_letter_required": False,
-        "response_url": None,
-    }
 
 
 @pytest.mark.asyncio
@@ -487,7 +452,7 @@ async def test_application_preparation_requires_resume_then_upserts_vacancy() ->
         conn,  # type: ignore[arg-type]
         identity=identity,
         account_key="account",
-        vacancy=_hh_vacancy(),
+        vacancy=make_hh_vacancy(),
         observed_at=NOW,
         raw_uri="s3://bucket/vacancy-before.json",
         content_hash="b" * 64,
@@ -521,7 +486,7 @@ async def test_application_preparation_does_not_invent_missing_resume() -> None:
             conn,  # type: ignore[arg-type]
             identity=identity,
             account_key="account",
-            vacancy=_hh_vacancy(),
+            vacancy=make_hh_vacancy(),
             observed_at=NOW,
             raw_uri="s3://bucket/vacancy-before.json",
             content_hash="b" * 64,
