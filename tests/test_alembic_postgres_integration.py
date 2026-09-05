@@ -28,6 +28,17 @@ from careerops_storage.alembic_cutover import (
 
 pytestmark = pytest.mark.integration_postgres
 
+ORCHESTRATION_RELATIONS = (
+    "careerops.source_profiles",
+    "careerops.resumes",
+    "careerops.vacancies",
+    "careerops.application_claims",
+    "careerops.observe_query_cursors",
+    "careerops.observation_runs",
+    "careerops.vacancy_observations",
+    "careerops.evaluation_work_items",
+)
+
 
 @pytest.fixture
 def disposable_postgres_target(
@@ -88,6 +99,21 @@ def test_legacy_stamp_preserves_schema_then_applies_only_descendants(
         assert head == BASELINE_REVISION
 
     assert apply_legacy_migrations(target, project_root=PROJECT_ROOT) == LEGACY_MIGRATIONS
+    with psycopg.connect(target.dsn, autocommit=True) as connection:
+        for relation in ORCHESTRATION_RELATIONS:
+            row = connection.execute(
+                "SELECT to_regclass(%s)::text",
+                (relation,),
+            ).fetchone()
+            assert row == (relation,)
+        identity = connection.execute(
+            "SELECT pg_get_constraintdef(oid) "
+            "FROM pg_constraint "
+            "WHERE conrelid = 'careerops.application_claims'::regclass "
+            "AND conname = 'application_claims_identity_uk'"
+        ).fetchone()
+        assert identity == ("UNIQUE (resume_id, vacancy_id)",)
+
     before_stamp = capture_catalog_fingerprint(target)
     assert read_alembic_revision(target) is None
 
@@ -101,15 +127,6 @@ def test_legacy_stamp_preserves_schema_then_applies_only_descendants(
     assert compare_live_schema_to_metadata(target) == ()
     if not revisions_after_baseline:
         assert capture_catalog_fingerprint(target) == after_stamp
-
-
-def test_metadata_drift_detector_reports_no_diff_at_head(
-    disposable_postgres_target: DisposablePostgresTarget,
-) -> None:
-    target = disposable_postgres_target
-    _upgrade_to_graph_head(target)
-
-    assert compare_live_schema_to_metadata(target) == ()
 
 
 def test_metadata_drift_detector_reports_controlled_extra_column(
