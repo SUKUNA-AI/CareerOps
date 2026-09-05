@@ -5,8 +5,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from support.s3 import JsonWriteRef
-
 from careerops_integrations.hh.configuration import DiscoveryConfig, HHAccountConfig
 from careerops_integrations.hh.driver import HHVacancySearchPage
 from careerops_integrations.hh.observe import ObserveQueryCursorReservation
@@ -16,6 +14,7 @@ from careerops_integrations.hh.resume_sync import (
     ResumeLifecycle,
     ResumeReconciliationResult,
 )
+from support.s3 import JsonWriteRef
 
 NOW = datetime(2026, 9, 2, 9, 0, tzinfo=UTC)
 
