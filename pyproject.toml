@@ -30,8 +30,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = ["--strict-markers"]
 markers = [
-    "integration_postgres: requires an explicitly configured disposable local PostgreSQL",
+    "integration_postgres: uses real PostgreSQL DDL/DML, constraints, transactions, locking or concurrency; requires an explicitly configured disposable local test target via CAREEROPS_TEST_POSTGRES_DSN; no runtime/production DSN fallback",
 ]
 
 [tool.ruff]
