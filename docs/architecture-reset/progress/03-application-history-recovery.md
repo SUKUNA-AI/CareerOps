@@ -47,7 +47,7 @@ a538b82e2793619e10595a6270baef7ad74797d48fbc6169a64957e851d4a1b2
 | `SUBMITTED_UNCONFIRMED` | 4 | Fail closed: не повторять автоматически до явной reconciliation с HH |
 | `FAILED_ONLY` | 4 | Историческая попытка не доказала submit; будущий retry допустим только через новый guarded application owner и fresh upstream precheck |
 
-Из 17 failed attempts часть была повторена позже после снятия лимита. Восемь уникальных vacancy identities после одного или нескольких `limit_exceeded` attempts в итоге получили подтверждённый `submitted`. Поэтому raw attempt count нельзя использовать как application identity count.
+Из 17 failed attempts часть была повторена позже после снятия лимита. Семь уникальных vacancy identities после одного или нескольких `limit_exceeded` attempts в итоге получили подтверждённый `submitted`. Поэтому raw attempt count нельзя использовать как application identity count.
 
 Распределение количества attempts на одну vacancy identity:
 
