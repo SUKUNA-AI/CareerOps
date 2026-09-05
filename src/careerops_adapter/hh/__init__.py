@@ -14,6 +14,18 @@ from .raw import (
     RawObjectCollisionError,
     RawWriteVerificationError,
 )
+from .tasks import (
+    SourceTaskKind,
+    SourceTaskLeaseLost,
+    SourceTaskRecord,
+    SourceTaskRepository,
+    SourceTaskSpec,
+    SourceTaskStatus,
+    resume_fetch_task,
+    resume_sync_task,
+    search_page_task,
+    vacancy_fetch_task,
+)
 from .transport import (
     HHApplicantToolTransport,
     HHReadTransport,
@@ -35,5 +47,15 @@ __all__ = [
     "HHTransportError",
     "RawObjectCollisionError",
     "RawWriteVerificationError",
+    "SourceTaskKind",
+    "SourceTaskLeaseLost",
+    "SourceTaskRecord",
+    "SourceTaskRepository",
+    "SourceTaskSpec",
+    "SourceTaskStatus",
     "default_failure_disposition",
+    "resume_fetch_task",
+    "resume_sync_task",
+    "search_page_task",
+    "vacancy_fetch_task",
 ]
