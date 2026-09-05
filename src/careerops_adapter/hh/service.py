@@ -51,7 +51,9 @@ class V2PostgresSettings:
     def from_env(cls) -> V2PostgresSettings:
         value = os.getenv("CAREEROPS_V2_POSTGRES_DSN", "").strip()
         if not value:
-            raise RuntimeError("CAREEROPS_V2_POSTGRES_DSN is required by the HH v2 worker")
+            raise RuntimeError(
+                "CAREEROPS_V2_POSTGRES_DSN is required by the HH v2 worker"
+            )
         legacy = os.getenv("CAREEROPS_POSTGRES_DSN", "").strip()
         if legacy and legacy == value:
             raise RuntimeError(
@@ -92,7 +94,10 @@ def default_accounts_config_path() -> Path:
     return accounts_config_path_from_env()
 
 
-def _resolve_source_account(accounts: HHAccountsConfig, account_key: str) -> HHAccountConfig:
+def _resolve_source_account(
+    accounts: HHAccountsConfig,
+    account_key: str,
+) -> HHAccountConfig:
     """Resolve an enabled source account without depending on resume policy bindings."""
 
     normalized = account_key.strip()
@@ -140,20 +145,42 @@ def _advisory_lock_key(account_key: str) -> int:
     return int.from_bytes(digest, byteorder="big", signed=True)
 
 
-async def _try_lock_account(conn: AsyncConnection[Any], account_key: str) -> tuple[int, bool]:
+async def _try_lock_account(conn: AsyncConnection[Any], account_key: str) -> bool:
     key = _advisory_lock_key(account_key)
     cursor = await conn.execute("SELECT pg_try_advisory_lock(%s)", (key,))
     row = await cursor.fetchone()
     if row is None:
         raise RuntimeError("PostgreSQL advisory lock query returned no row")
-    return key, bool(row[0])
+    return bool(row[0])
 
 
-async def _unlock_account(conn: AsyncConnection[Any], key: int) -> None:
-    cursor = await conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+async def _active_account_block(
+    conn: AsyncConnection[Any],
+    *,
+    account_id: int,
+) -> datetime | None:
+    """Return the latest active account-wide source pause encoded in task state."""
+
+    cursor = await conn.execute(
+        """
+        SELECT max(next_attempt_at)
+        FROM careerops_v2.source_tasks
+        WHERE account_id = %s
+          AND status = 'deferred'
+          AND error_category LIKE 'account_block:%'
+          AND next_attempt_at > now()
+        """,
+        (account_id,),
+    )
     row = await cursor.fetchone()
-    if row is None or row[0] is not True:
-        raise RuntimeError("HH source worker lost its account advisory lock")
+    if row is None or row[0] is None:
+        return None
+    value = row[0]
+    if not isinstance(value, datetime):
+        raise TypeError("PostgreSQL returned a non-datetime account block boundary")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("PostgreSQL returned a timezone-naive account block boundary")
+    return value.astimezone(UTC)
 
 
 async def _defer_account_after_block(
@@ -165,9 +192,9 @@ async def _defer_account_after_block(
 ) -> int:
     """Persist an account-wide auth/session pause using existing source-task state.
 
-    We intentionally avoid adding scheduler state to the accounts table. Ready work
-    and expired leases are deferred to the same boundary. A currently live lease is
-    never stolen.
+    Ready work and expired leases are deferred to the same boundary. A currently
+    live lease is never stolen. Future worker invocations detect the persisted
+    account-block marker before claiming any newly enqueued work.
     """
 
     cursor = await conn.execute(
@@ -214,6 +241,15 @@ async def _run_locked_account_worker(
     worker_id: str,
 ) -> HHAccountWorkerSummary:
     repository = SourceTaskRepository(conn)
+    if await _active_account_block(conn, account_id=account_id) is not None:
+        return HHAccountWorkerSummary(
+            account_key=account.key,
+            profile_key=account.profile,
+            worker_id=worker_id,
+            lock_acquired=True,
+            account_blocked=True,
+        )
+
     failure_policy = HHSourceFailurePolicy()
     guard = HHExternalWriteGuard(
         runtime_mode=RuntimeMode.OBSERVE,
@@ -331,15 +367,13 @@ async def run_account_worker(
 
     settings = V2PostgresSettings.from_env()
     conn = await psycopg.AsyncConnection.connect(settings.dsn, autocommit=True)
-    lock_key: int | None = None
-    lock_acquired = False
     try:
         account_id = await _resolve_v2_account_id(
             conn,
             account_key=account.key,
             profile_key=account.profile,
         )
-        lock_key, lock_acquired = await _try_lock_account(conn, account.key)
+        lock_acquired = await _try_lock_account(conn, account.key)
         if not lock_acquired:
             return HHAccountWorkerSummary(
                 account_key=account.key,
@@ -357,8 +391,7 @@ async def run_account_worker(
             worker_id=resolved_worker_id,
         )
     finally:
-        try:
-            if lock_acquired and lock_key is not None:
-                await _unlock_account(conn, lock_key)
-        finally:
-            await conn.close()
+        # PostgreSQL session advisory locks are released by closing this dedicated
+        # connection. Relying on session teardown avoids masking a worker exception
+        # with a secondary unlock failure.
+        await conn.close()
