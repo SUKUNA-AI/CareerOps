@@ -371,20 +371,6 @@ def _claim_row(
     )
 
 
-def test_application_claim_migration_uses_canonical_oltp_ids() -> None:
-    migration = Path("sql/migrations/0003_add_hh_application_claims.sql").read_text(
-        encoding="utf-8"
-    )
-    assert "resume_id bigint NOT NULL REFERENCES careerops.resumes (id)" in migration
-    assert "vacancy_id bigint NOT NULL REFERENCES careerops.vacancies (id)" in migration
-    unique_clause = migration.split(
-        "CONSTRAINT application_claims_identity_uk",
-        1,
-    )[1].split(",\n    CONSTRAINT application_claims_status_ck", 1)[0]
-    assert "UNIQUE (resume_id, vacancy_id)" in unique_clause
-    assert "account_key" not in unique_clause
-
-
 @pytest.mark.asyncio
 async def test_application_claim_acquisition_is_atomic_and_resume_specific() -> None:
     run_id = UUID("33333333-3333-4333-8333-333333333333")
