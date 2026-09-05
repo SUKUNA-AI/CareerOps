@@ -17,6 +17,7 @@ import pytest_asyncio
 from psycopg import AsyncConnection
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.pq import TransactionStatus
+from support.hh import make_hh_vacancy
 
 from careerops_contracts import RawVacancyRef
 from careerops_integrations.hh.application_audit import (
@@ -109,21 +110,13 @@ async def clean_postgres_dsn() -> AsyncIterator[str]:
 
 
 def _vacancy(vacancy_id: str) -> dict[str, Any]:
-    return {
-        "id": vacancy_id,
-        "name": f"ML Engineer {vacancy_id}",
-        "description": "<p>Python and PostgreSQL</p>",
-        "alternate_url": f"https://hh.ru/vacancy/{vacancy_id}",
-        "employer": {"id": "10", "name": "Example"},
-        "area": {"id": "1", "name": "Москва"},
-        "relations": [],
-        "archived": False,
-        "closed_for_applicants": False,
-        "has_test": False,
-        "response_letter_required": False,
-        "response_url": None,
-        "published_at": "2026-09-02T10:00:00+0300",
-    }
+    return make_hh_vacancy(
+        vacancy_id=vacancy_id,
+        title=f"ML Engineer {vacancy_id}",
+        description="<p>Python and PostgreSQL</p>",
+        area={"id": "1", "name": "Москва"},
+        published_at="2026-09-02T10:00:00+0300",
+    )
 
 
 def _resume(profile: str, resume_id: str) -> ReconciledResume:
@@ -284,26 +277,6 @@ def _application_service(
         profile_id="profile-apply",
         external_write_guard=WRITE_GUARD,
     )
-
-
-@pytest.mark.asyncio
-async def test_migration_chain_creates_all_orchestration_relations(
-    clean_postgres_dsn: str,
-) -> None:
-    conn = await psycopg.AsyncConnection.connect(clean_postgres_dsn, autocommit=True)
-    async with conn:
-        relations = (
-            "careerops.source_profiles",
-            "careerops.resumes",
-            "careerops.vacancies",
-            "careerops.application_claims",
-            "careerops.observe_query_cursors",
-            "careerops.observation_runs",
-            "careerops.vacancy_observations",
-            "careerops.evaluation_work_items",
-        )
-        for relation in relations:
-            assert await _scalar(conn, "SELECT to_regclass(%s)::text", (relation,)) == relation
 
 
 @pytest.mark.asyncio

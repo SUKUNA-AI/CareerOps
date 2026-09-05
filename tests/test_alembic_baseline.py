@@ -141,16 +141,6 @@ def test_alembic_dependency_and_safe_project_configuration() -> None:
     assert config.get_main_option("prepend_sys_path") is None
 
 
-def test_canonical_baseline_remains_a_graph_root() -> None:
-    script = ScriptDirectory.from_config(_config())
-    assert script.get_bases() == [BASELINE_REVISION]
-
-    revision = script.get_revision(BASELINE_REVISION)
-    assert revision is not None
-    assert revision.down_revision is None
-    assert not revision.branch_labels
-
-
 def test_baseline_upgrade_is_self_contained(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

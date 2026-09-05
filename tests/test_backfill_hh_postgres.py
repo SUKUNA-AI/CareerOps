@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
 from io import StringIO
-from types import TracebackType
 from typing import Any
 from uuid import UUID
 
 import pytest
+from support.postgres import TransactionRecorder
 
 import scripts.backfill_hh_postgres as cli
 from careerops_etl.hh_s3_to_postgres import LoadedBatchResult
@@ -22,29 +21,12 @@ class FakeStore:
         yield f"batches/date=2026-08-31/run_id={RUN_2}/run.json"
 
 
-class FakeTransaction(AbstractAsyncContextManager[None]):
-    def __init__(self, connection: FakeConnection) -> None:
-        self.connection = connection
-
-    async def __aenter__(self) -> None:
-        self.connection.events.append("begin")
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool:
-        self.connection.events.append("rollback" if exc_type else "commit")
-        return False
-
-
 class FakeConnection:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    def transaction(self) -> FakeTransaction:
-        return FakeTransaction(self)
+    def transaction(self) -> TransactionRecorder:
+        return TransactionRecorder(self.events)
 
 
 @pytest.mark.asyncio

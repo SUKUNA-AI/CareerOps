@@ -13,7 +13,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
+reports/
 
 # IDE
 .idea/

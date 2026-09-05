@@ -7,11 +7,11 @@ scheduler tests live beside their respective implementation test modules.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from support.s3 import JsonWriteRef
 
 import careerops_integrations.hh.batch_cli as batch_cli
 from careerops_integrations.hh.configuration import HHAccountsConfig
@@ -26,11 +26,6 @@ from careerops_integrations.hh.runtime import HHExternalWriteGuard, RuntimeMode
 NOW = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
 
 
-@dataclass(frozen=True)
-class Ref:
-    uri: str
-
-
 class FakeStore:
     def __init__(self) -> None:
         self.objects: dict[str, Any] = {}
@@ -41,10 +36,10 @@ class FakeStore:
         payload: Any,
         *,
         collected_at: datetime | None = None,
-    ) -> Ref:
+    ) -> JsonWriteRef:
         assert collected_at is None
         self.objects[key] = deepcopy(payload)
-        return Ref(uri=f"s3://careerops-raw/_lab/hh/{key}")
+        return JsonWriteRef(uri=f"s3://careerops-raw/_lab/hh/{key}")
 
 
 def _accounts() -> HHAccountsConfig:

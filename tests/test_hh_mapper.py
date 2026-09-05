@@ -12,25 +12,16 @@ def test_maps_realistic_hh_vacancy():
         content_hash="a" * 64,
         collected_at=datetime(2026, 8, 30, 12, 0, tzinfo=UTC),
     )
+    # Synthetic input: required source fields and the mappings asserted below.
     payload = {
         "id": "136655995",
         "name": "Junior ML engineer",
         "relations": ["got_response"],
-        "response_letter_required": False,
-        "area": {"id": "1", "name": "Москва"},
-        "salary": None,
         "experience": {"id": "between1And3"},
-        "schedule": {"id": "fullDay"},
-        "employment": {"id": "full"},
         "description": "<p>Python <strong>SQL</strong></p>",
-        "archived": False,
-        "response_url": None,
         "employer": {"id": "4233", "name": "Х5"},
-        "published_at": "2026-08-26T17:40:52+0300",
-        "has_test": False,
         "alternate_url": "https://hh.ru/vacancy/136655995",
         "work_format": [{"id": "ON_SITE"}, {"id": "HYBRID"}],
-        "closed_for_applicants": False,
     }
 
     canonical = map_hh_vacancy(payload, raw=raw)

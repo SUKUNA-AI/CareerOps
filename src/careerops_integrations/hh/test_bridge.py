@@ -24,10 +24,8 @@ def submit_vacancy_test_via_upstream(
     external_write_guard.require("HH vacancy-test upstream bridge")
 
     # Imports are local so ordinary API-only paths do not depend on upstream internals.
-    from hh_applicant_tool.main import HHApplicantTool  # type: ignore[import-untyped]
-    from hh_applicant_tool.operations.apply_vacancies import (  # type: ignore[import-untyped]
-        Operation,
-    )
+    from hh_applicant_tool.main import HHApplicantTool
+    from hh_applicant_tool.operations.apply_vacancies import Operation
 
     tool = HHApplicantTool()
     tool.config_dir = Path(config_dir).resolve()
