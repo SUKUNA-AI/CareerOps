@@ -1,101 +1,84 @@
-from __future__ import annotations
+"""Canonical v2 migrations; never fall back to the legacy runtime DSN."""
 
 import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, pool, text
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
 from alembic import context
-from careerops_storage.schema import CAREEROPS_SCHEMA
-from careerops_storage.schema import metadata as target_metadata
+from careerops_storage.v2 import SCHEMA, metadata
 
 config = context.config
-
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-def _database_url() -> str:
-    configured_url = config.get_main_option("sqlalchemy.url", "").strip()
-    # A programmatic caller may have already validated and pinned an explicit
-    # database URL.  Keep that URL authoritative so an unrelated runtime DSN
-    # cannot redirect migration validation to another PostgreSQL instance.
-    raw_url = configured_url or os.getenv("CAREEROPS_POSTGRES_DSN", "").strip()
+def _database_url() -> URL:
+    raw_url = os.getenv("CAREEROPS_V2_POSTGRES_DSN", "").strip()
     if not raw_url:
-        raise RuntimeError("Set CAREEROPS_POSTGRES_DSN or provide sqlalchemy.url to run Alembic")
-
-    if raw_url.startswith("postgresql://"):
-        raw_url = f"postgresql+psycopg://{raw_url.removeprefix('postgresql://')}"
-    elif raw_url.startswith("postgres://"):
-        raw_url = f"postgresql+psycopg://{raw_url.removeprefix('postgres://')}"
-
+        raise RuntimeError("Online v2 migrations require CAREEROPS_V2_POSTGRES_DSN")
     try:
-        url = make_url(raw_url)
-    except ArgumentError as exc:
-        raise RuntimeError("Alembic requires a valid PostgreSQL database URL") from exc
-    if url.get_backend_name() != "postgresql":
-        raise RuntimeError("Alembic is configured only for PostgreSQL")
-    return raw_url
+        url = make_url(raw_url.replace("postgres://", "postgresql://", 1))
+    except ArgumentError:
+        raise RuntimeError("CAREEROPS_V2_POSTGRES_DSN must be a PostgreSQL URL") from None
+    if url.get_backend_name() != "postgresql" or not url.database:
+        raise RuntimeError("CAREEROPS_V2_POSTGRES_DSN must select an explicit PostgreSQL database")
+    return url.set(drivername="postgresql+psycopg")
 
 
-def _include_name(
-    name: str | None,
-    type_: str,
-    parent_names: dict[str, str | None],
-) -> bool:
+def _include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:
     if type_ == "schema":
-        return name == CAREEROPS_SCHEMA
+        return name == SCHEMA
     if type_ == "table":
-        return parent_names.get("schema_name") == CAREEROPS_SCHEMA
+        return parent_names.get("schema_name") == SCHEMA
     return True
 
 
 def run_migrations_offline() -> None:
-    """Emit PostgreSQL migration SQL without opening a database connection."""
-
-    # The version table stays in PostgreSQL's default schema because Alembic
-    # creates it before the baseline revision creates the careerops schema.
     context.configure(
-        url=_database_url(),
-        target_metadata=target_metadata,
+        dialect_name="postgresql",
+        target_metadata=metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table="alembic_version_v2",
+        version_table_schema="public",
         include_schemas=True,
         include_name=_include_name,
         compare_type=True,
         compare_server_default=True,
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    """Run migrations through a short-lived SQLAlchemy PostgreSQL engine."""
-
-    configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = _database_url()
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        # See the offline path above for the intentional version-table location.
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            include_schemas=True,
-            include_name=_include_name,
-            compare_type=True,
-            compare_server_default=True,
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+    engine = create_engine(_database_url(), poolclass=pool.NullPool)
+    try:
+        with engine.begin() as connection:
+            legacy_present = connection.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'careerops') "
+                    "OR to_regclass('public.alembic_version') IS NOT NULL"
+                )
+            )
+            if legacy_present:
+                raise RuntimeError("V2 lineage refuses a legacy database; provision a new target")
+            context.configure(
+                connection=connection,
+                target_metadata=metadata,
+                version_table="alembic_version_v2",
+                version_table_schema="public",
+                include_schemas=True,
+                include_name=_include_name,
+                compare_type=True,
+                compare_server_default=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+    finally:
+        engine.dispose()
 
 
 if context.is_offline_mode():

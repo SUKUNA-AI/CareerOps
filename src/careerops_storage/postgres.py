@@ -1,4 +1,4 @@
-"""Asynchronous psycopg 3 persistence for the CareerOPS OLTP schema."""
+"""V1 runtime writers for careerops; never point these writers at PostgreSQL v2."""
 
 from __future__ import annotations
 
@@ -1583,9 +1583,7 @@ class PostgresResumeRegistry:
         return AccountResumeInventory(
             account_key=account_key,
             source_profile=source_profile,
-            reconciled_at=max(
-                resume.inactive_at or resume.last_seen_at for resume in resumes
-            ),
+            reconciled_at=max(resume.inactive_at or resume.last_seen_at for resume in resumes),
             resumes=resumes,
         )
 

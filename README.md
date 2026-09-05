@@ -1749,7 +1749,13 @@ infra/systemd/scheduler.env.example
 
 ## 🐘 PostgreSQL
 
-Текущий operational слой:
+Architecture Reset foundation: canonical metadata находится в `careerops_storage.v2`,
+clean Alembic baseline `20260906_v2_0001` создаёт новую `careerops_v2` schema.
+Ownership, lifecycle и recovery contract описаны в
+[PostgreSQL v2 Foundation](docs/architecture-reset/progress/04-postgres-v2-foundation.md).
+Production cutover ещё не выполнен; старые runtime writers пока используют слой ниже.
+
+Legacy operational слой:
 
 ```text
 source_profiles(account_key, profile_key)
@@ -1762,9 +1768,8 @@ application_claims(unique resume_id x vacancy_id state machine)
 applications(proven completed audits)
 ```
 
-Миграция `0003_add_hh_application_claims.sql` добавляет write-claim state
-machine, а `0004_add_hh_orchestration_state.sql` расширяет уже существующий
-OLTP для account/profile, resume lifecycle и OBSERVE materialization.
+Старые SQL bootstrap/repair migrations и Alembic cutover helpers удалены после создания
+v2 foundation. Текущие runtime consumers прежней DB сохранены до появления их замены.
 Runtime reconciliation по умолчанию использует `PostgresResumeRegistry`;
 schema-v3 OBSERVE больше не skip-ается ETL и не притворяется run одного resume.
 Каждый реальный binding материализуется отдельно, а account-wide run хранится в
