@@ -9,6 +9,31 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install CareerOPS
+        run: python -m pip install -e ".[dev]"
+
+      - name: Ruff
+        run: python -m ruff check src scripts tests
+
+      - name: mypy
+        run: python -m mypy src
+
+      - name: Check dependency consistency
+        run: python -m pip check
+
   fast-tests:
     name: Fast tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
