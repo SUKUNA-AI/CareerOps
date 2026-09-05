@@ -30,7 +30,11 @@ from careerops_integrations.hh.driver import HHApplicantToolCLI
 from careerops_integrations.hh.runtime import HHExternalWriteGuard, RuntimeMode
 from careerops_storage.s3 import S3JsonStore, S3Settings
 
-from .errors import HHFailureDisposition
+from .errors import (
+    HHFailureDisposition,
+    HHFailureKind,
+    default_failure_disposition,
+)
 from .raw import HHRawPublisher
 from .tasks import SourceTaskRecord, SourceTaskRepository
 from .transport import HHApplicantToolTransport
@@ -75,8 +79,10 @@ class HHAccountWorkerSummary:
     deferred: int = 0
     retryable_failure: int = 0
     terminal_failure: int = 0
-    account_blocked: bool = False
+    account_paused: bool = False
+    pause_reason: str | None = None
     account_deferred_tasks: int = 0
+    stop_reason: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -154,47 +160,52 @@ async def _try_lock_account(conn: AsyncConnection[Any], account_key: str) -> boo
     return bool(row[0])
 
 
-async def _active_account_block(
+async def _active_account_pause(
     conn: AsyncConnection[Any],
     *,
     account_id: int,
-) -> datetime | None:
+) -> tuple[datetime, str] | None:
     """Return the latest active account-wide source pause encoded in task state."""
 
     cursor = await conn.execute(
         """
-        SELECT max(next_attempt_at)
+        SELECT next_attempt_at, error_category
         FROM careerops_v2.source_tasks
         WHERE account_id = %s
           AND status = 'deferred'
-          AND error_category LIKE 'account_block:%'
+          AND error_category LIKE 'account_pause:%'
           AND next_attempt_at > now()
+        ORDER BY next_attempt_at DESC, id
+        LIMIT 1
         """,
         (account_id,),
     )
     row = await cursor.fetchone()
-    if row is None or row[0] is None:
+    if row is None:
         return None
-    value = row[0]
-    if not isinstance(value, datetime):
-        raise TypeError("PostgreSQL returned a non-datetime account block boundary")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("PostgreSQL returned a timezone-naive account block boundary")
-    return value.astimezone(UTC)
+    boundary = row[0]
+    reason = row[1]
+    if not isinstance(boundary, datetime):
+        raise TypeError("PostgreSQL returned a non-datetime account pause boundary")
+    if boundary.tzinfo is None or boundary.utcoffset() is None:
+        raise ValueError("PostgreSQL returned a timezone-naive account pause boundary")
+    if not isinstance(reason, str) or not reason:
+        raise TypeError("PostgreSQL returned an invalid account pause reason")
+    return boundary.astimezone(UTC), reason
 
 
-async def _defer_account_after_block(
+async def _defer_account_after_pause(
     conn: AsyncConnection[Any],
     *,
     account_id: int,
     error_category: str,
     next_attempt_at: datetime,
 ) -> int:
-    """Persist an account-wide auth/session pause using existing source-task state.
+    """Persist account-wide source backpressure using existing source-task state.
 
     Ready work and expired leases are deferred to the same boundary. A currently
-    live lease is never stolen. Future worker invocations detect the persisted
-    account-block marker before claiming any newly enqueued work.
+    live lease is never stolen. Future worker invocations detect the persisted pause
+    marker before claiming any newly enqueued work.
     """
 
     cursor = await conn.execute(
@@ -230,6 +241,15 @@ def _task_profile_matches(task: SourceTaskRecord, expected_profile: str) -> bool
     return isinstance(value, str) and value.strip() == expected_profile
 
 
+def _pause_disposition(error_kind: HHFailureKind | None) -> HHFailureDisposition | None:
+    if error_kind is None:
+        return None
+    disposition = default_failure_disposition(error_kind)
+    if disposition in {HHFailureDisposition.DEFER, HHFailureDisposition.BLOCK_ACCOUNT}:
+        return disposition
+    return None
+
+
 async def _run_locked_account_worker(
     *,
     conn: AsyncConnection[Any],
@@ -241,13 +261,17 @@ async def _run_locked_account_worker(
     worker_id: str,
 ) -> HHAccountWorkerSummary:
     repository = SourceTaskRepository(conn)
-    if await _active_account_block(conn, account_id=account_id) is not None:
+    active_pause = await _active_account_pause(conn, account_id=account_id)
+    if active_pause is not None:
+        _, pause_reason = active_pause
         return HHAccountWorkerSummary(
             account_key=account.key,
             profile_key=account.profile,
             worker_id=worker_id,
             lock_acquired=True,
-            account_blocked=True,
+            account_paused=True,
+            pause_reason=pause_reason,
+            stop_reason="active_account_pause",
         )
 
     failure_policy = HHSourceFailurePolicy()
@@ -267,8 +291,10 @@ async def _run_locked_account_worker(
     deferred = 0
     retryable_failure = 0
     terminal_failure = 0
-    account_blocked = False
+    account_paused = False
+    pause_reason: str | None = None
     account_deferred_tasks = 0
+    stop_reason: str | None = None
 
     async with S3JsonStore(S3Settings.from_env()) as store:
         executor = HHSourceTaskExecutor(
@@ -294,7 +320,8 @@ async def _run_locked_account_worker(
                     error_category="profile_mismatch",
                 )
                 terminal_failure += 1
-                continue
+                stop_reason = "profile_mismatch"
+                break
 
             result = await executor.run(task)
             match result.outcome:
@@ -307,23 +334,41 @@ async def _run_locked_account_worker(
                 case SourceTaskRunOutcome.TERMINAL_FAILURE:
                     terminal_failure += 1
 
-            if result.account_blocked:
-                account_blocked = True
+            disposition = _pause_disposition(result.error_kind)
+            if result.outcome is SourceTaskRunOutcome.DEFERRED and disposition is not None:
+                account_paused = True
                 now = datetime.now(UTC)
-                blocked_until = failure_policy.next_attempt(
-                    disposition=HHFailureDisposition.BLOCK_ACCOUNT,
+                paused_until = failure_policy.next_attempt(
+                    disposition=disposition,
                     now=now,
                 )
-                reason = (
-                    f"account_block:{result.error_kind.value}"
+                reason_kind = (
+                    result.error_kind.value
                     if result.error_kind is not None
-                    else "account_block:unknown"
+                    else "unknown"
                 )
-                account_deferred_tasks = await _defer_account_after_block(
+                pause_reason = f"account_pause:{reason_kind}"
+                account_deferred_tasks = await _defer_account_after_pause(
                     conn,
                     account_id=account_id,
-                    error_category=reason,
-                    next_attempt_at=blocked_until,
+                    error_category=pause_reason,
+                    next_attempt_at=paused_until,
+                )
+                stop_reason = pause_reason
+                break
+
+            if result.outcome is SourceTaskRunOutcome.RETRYABLE_FAILURE:
+                stop_reason = (
+                    result.error_kind.value
+                    if result.error_kind is not None
+                    else "retryable_failure"
+                )
+                break
+            if result.outcome is SourceTaskRunOutcome.TERMINAL_FAILURE:
+                stop_reason = (
+                    result.error_kind.value
+                    if result.error_kind is not None
+                    else "terminal_failure"
                 )
                 break
 
@@ -337,8 +382,10 @@ async def _run_locked_account_worker(
         deferred=deferred,
         retryable_failure=retryable_failure,
         terminal_failure=terminal_failure,
-        account_blocked=account_blocked,
+        account_paused=account_paused,
+        pause_reason=pause_reason,
         account_deferred_tasks=account_deferred_tasks,
+        stop_reason=stop_reason,
     )
 
 
@@ -380,6 +427,7 @@ async def run_account_worker(
                 profile_key=account.profile,
                 worker_id=resolved_worker_id,
                 lock_acquired=False,
+                stop_reason="account_worker_busy",
             )
         return await _run_locked_account_worker(
             conn=conn,
