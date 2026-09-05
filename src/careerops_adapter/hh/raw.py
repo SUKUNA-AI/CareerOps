@@ -1,12 +1,14 @@
 """Immutable HH RAW publication contract for SeaweedFS.
 
-Object keys carry source identity and a caller-generated observation UUID.
-Retries reuse the same observation UUID. A key collision with different content
-fails closed instead of overwriting the previous source observation.
+Object keys carry source identity and a caller-generated observation UUID. A caller
+that retries publication of the same already-fetched observation must reuse that
+UUID. A fresh source fetch is a new observation and therefore gets a new UUID.
+A key collision with different content fails closed instead of overwriting the
+previous source observation.
 
 SeaweedFS create-only conditional PUT semantics are intentionally not assumed.
 Uniqueness of observation IDs prevents normal writer races; existence/hash checks
-make retries idempotent and detect accidental key reuse.
+make same-observation publication retries idempotent and detect accidental key reuse.
 """
 
 from __future__ import annotations
