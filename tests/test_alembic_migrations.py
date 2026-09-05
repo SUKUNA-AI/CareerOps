@@ -42,6 +42,7 @@ def test_alembic_revision_graph_has_one_root_one_reachable_head() -> None:
     baseline = script.get_revision(BASELINE_REVISION)
     assert baseline is not None
     assert baseline.down_revision is None
+    assert not baseline.branch_labels
 
     for revision in revisions:
         for parent in _parent_revisions(revision.down_revision):

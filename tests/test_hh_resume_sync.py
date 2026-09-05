@@ -201,14 +201,8 @@ def test_missing_known_resume_is_marked_deleted_and_history_is_retained() -> Non
     assert deleted.binding_key == "ml"
     assert deleted.binding_enabled is False
     assert deleted.auto_apply is False
-
-
-def test_deleted_resume_is_not_selected_for_new_applications() -> None:
-    registry = MemoryRegistry()
-    _sync(registry, [_resume("resume-1", "ML")])
-    result = _sync(registry, [], observed_at=NOW + timedelta(days=1))
-    assert result.inventory.auto_apply_resumes == ()
-    assert result.inventory.evaluation_resumes == ()
+    assert second.inventory.auto_apply_resumes == ()
+    assert second.inventory.evaluation_resumes == ()
 
 
 def test_new_id_with_same_title_does_not_inherit_deleted_binding() -> None:

@@ -1,18 +1,13 @@
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import pytest
+from support.s3 import JsonWriteRef
 
 from careerops_integrations.hh.batch_cli import _write_json
 from careerops_integrations.hh.raw import LocalRawStore
-
-
-@dataclass(frozen=True)
-class _Ref:
-    uri: str
 
 
 class FakeStore:
@@ -26,10 +21,10 @@ class FakeStore:
         payload: Any,
         *,
         collected_at: datetime | None = None,
-    ) -> _Ref:
+    ) -> JsonWriteRef:
         self.payload = payload
         self.collected_at = collected_at
-        return _Ref(uri=f"s3://careerops-raw/_lab/hh/{key}")
+        return JsonWriteRef(uri=f"s3://careerops-raw/_lab/hh/{key}")
 
 
 def test_local_raw_store(monkeypatch: pytest.MonkeyPatch) -> None:
