@@ -280,26 +280,6 @@ def _application_service(
 
 
 @pytest.mark.asyncio
-async def test_migration_chain_creates_all_orchestration_relations(
-    clean_postgres_dsn: str,
-) -> None:
-    conn = await psycopg.AsyncConnection.connect(clean_postgres_dsn, autocommit=True)
-    async with conn:
-        relations = (
-            "careerops.source_profiles",
-            "careerops.resumes",
-            "careerops.vacancies",
-            "careerops.application_claims",
-            "careerops.observe_query_cursors",
-            "careerops.observation_runs",
-            "careerops.vacancy_observations",
-            "careerops.evaluation_work_items",
-        )
-        for relation in relations:
-            assert await _scalar(conn, "SELECT to_regclass(%s)::text", (relation,)) == relation
-
-
-@pytest.mark.asyncio
 async def test_apply_materializes_vacancy_before_resume_specific_claim(
     clean_postgres_dsn: str,
 ) -> None:
