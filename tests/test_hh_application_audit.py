@@ -276,6 +276,8 @@ async def test_audited_application_persists_four_objects_and_exact_evidence() ->
     assert result.submission_mode == "negotiations_api"
     assert result.claim_status is ApplicationClaimStatus.SUBMITTED
     assert driver.mode == "negotiations_api"
+    claim = next(iter(claims.records.values()))
+    assert claim.claimed_at.tzinfo is UTC
 
     names = {key.rsplit("/", 1)[-1] for key in store.objects}
     assert names == {
@@ -569,17 +571,3 @@ async def test_pre_fetched_before_avoids_duplicate_initial_fetch() -> None:
 
     assert result.confirmed is True
     assert driver.fetch_count == 1
-
-
-@pytest.mark.asyncio
-async def test_claim_timestamp_is_timezone_aware() -> None:
-    claims = MemoryClaimStore()
-    driver = FakeDriver(_vacancy())
-    await _service(driver=driver, claims=claims).apply(
-        vacancy_id="123",
-        resume_id="resume",
-        message="hello",
-    )
-
-    record = next(iter(claims.records.values()))
-    assert record.claimed_at.tzinfo is UTC
