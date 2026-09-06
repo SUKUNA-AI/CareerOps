@@ -34,6 +34,8 @@ from careerops_integrations.hh.configuration import (
 from .service import V2PostgresSettings
 from .tasks import SourceTaskRepository, SourceTaskSpec, resume_sync_task, search_page_task
 
+_MIN_SEARCH_PAGES = 2
+
 
 class SourceSeedKind(StrEnum):
     """Root work families that orchestration may persist for one generation."""
@@ -99,6 +101,10 @@ def build_source_generation_plan(
     max_unique_vacancies_per_run, and max_full_fetch_per_run are intentionally not
     applied here. They controlled execution throughput by dropping work. V2 persists
     the complete selected query set and lets bounded workers control throughput.
+
+    V2 also guarantees page 0 + adaptive page 1 for search queries. A legacy
+    discovery config with pages=1 therefore cannot silently collapse the new source
+    ingestion path back to a single 50-item page.
     """
 
     if generation_id.int == 0:
@@ -122,7 +128,8 @@ def build_source_generation_plan(
         defaults = discovery.defaults
         for query in selected:
             spec = query.spec
-            max_pages = _query_value(spec.pages, defaults.pages)
+            configured_pages = _query_value(spec.pages, defaults.pages)
+            max_pages = max(_MIN_SEARCH_PAGES, configured_pages)
             search_tasks.append(
                 search_page_task(
                     generation_id=generation_id,
