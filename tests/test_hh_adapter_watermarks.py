@@ -70,7 +70,9 @@ def test_generation_root_carries_persistent_watermark_and_not_legacy_page_cap() 
         discovery=discovery,
     )
     account = accounts.resolve_account("junior")
-    first_query = discovery.select_queries(account.query_set_keys)[0].spec.key
+    selected_queries = discovery.select_queries(account.query_set_keys)
+    assert selected_queries
+    first_query = selected_queries[0].spec.key
     previous = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 
     plan = build_source_generation_plan(
@@ -89,4 +91,4 @@ def test_generation_root_carries_persistent_watermark_and_not_legacy_page_cap() 
     assert first.parameters["max_pages"] > 2
     assert first.parameters["previous_watermark_at"] == previous.isoformat()
     assert first.parameters["watermark_overlap_seconds"] == 3600
-    assert len(plan.search_tasks) == 272
+    assert len(plan.search_tasks) == len(selected_queries)
