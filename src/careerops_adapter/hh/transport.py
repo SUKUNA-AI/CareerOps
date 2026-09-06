@@ -9,7 +9,9 @@ implemented here.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -20,6 +22,26 @@ from careerops_integrations.hh.driver import (
 )
 
 from .errors import HHFailureKind, HHTransportError
+
+_DEFAULT_MIN_REQUEST_INTERVAL_SECONDS = 3.0
+
+
+def _request_min_interval_from_env() -> float:
+    raw = os.getenv(
+        "CAREEROPS_HH_REQUEST_MIN_INTERVAL_SECONDS",
+        str(_DEFAULT_MIN_REQUEST_INTERVAL_SECONDS),
+    ).strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            "CAREEROPS_HH_REQUEST_MIN_INTERVAL_SECONDS must be a number"
+        ) from exc
+    if value < 0:
+        raise ValueError(
+            "CAREEROPS_HH_REQUEST_MIN_INTERVAL_SECONDS must be >= 0"
+        )
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,10 +144,38 @@ def _legacy_failure_kind(message: str) -> HHFailureKind:
 
 
 class HHApplicantToolTransport:
-    """Async CareerOPS boundary around the existing pinned HH CLI driver."""
+    """Async CareerOPS boundary around the existing pinned HH CLI driver.
 
-    def __init__(self, driver: HHApplicantToolCLI) -> None:
+    The vendor hh-applicant-tool remains the actual HH transport implementation.
+    CareerOPS only serializes calls and enforces a conservative minimum request
+    start interval around it so one account cannot hammer HH accidentally.
+    """
+
+    def __init__(
+        self,
+        driver: HHApplicantToolCLI,
+        *,
+        min_request_interval_seconds: float | None = None,
+    ) -> None:
         self._driver = driver
+        interval = (
+            _request_min_interval_from_env()
+            if min_request_interval_seconds is None
+            else min_request_interval_seconds
+        )
+        if interval < 0:
+            raise ValueError("min_request_interval_seconds must be >= 0")
+        self._min_request_interval_seconds = float(interval)
+        self._request_lock = asyncio.Lock()
+        self._last_request_started_at: float | None = None
+
+    async def _wait_for_request_slot(self) -> None:
+        if self._last_request_started_at is None:
+            return
+        elapsed = time.monotonic() - self._last_request_started_at
+        remaining = self._min_request_interval_seconds - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     async def _call_api(
         self,
@@ -134,25 +184,28 @@ class HHApplicantToolTransport:
         params: dict[str, ParamValue] | None = None,
         operation: str,
     ) -> dict[str, Any]:
-        try:
-            return await asyncio.to_thread(
-                self._driver.call_api,
-                endpoint,
-                params=params,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise HHTransportError(
-                kind=HHFailureKind.TEMPORARY_HTTP_ERROR,
-                operation=operation,
-                message="upstream CLI timed out",
-            ) from exc
-        except HHDriverError as exc:
-            message = str(exc)
-            raise HHTransportError(
-                kind=_legacy_failure_kind(message),
-                operation=operation,
-                message=message,
-            ) from exc
+        async with self._request_lock:
+            await self._wait_for_request_slot()
+            self._last_request_started_at = time.monotonic()
+            try:
+                return await asyncio.to_thread(
+                    self._driver.call_api,
+                    endpoint,
+                    params=params,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise HHTransportError(
+                    kind=HHFailureKind.TEMPORARY_HTTP_ERROR,
+                    operation=operation,
+                    message="upstream CLI timed out",
+                ) from exc
+            except HHDriverError as exc:
+                message = str(exc)
+                raise HHTransportError(
+                    kind=_legacy_failure_kind(message),
+                    operation=operation,
+                    message=message,
+                ) from exc
 
     async def search_page(self, request: HHSearchPageRequest) -> dict[str, Any]:
         """Fetch one page without flattening or deduplicating source items."""
