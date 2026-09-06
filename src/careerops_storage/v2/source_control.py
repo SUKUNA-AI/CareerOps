@@ -12,10 +12,34 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
-from .domain import accounts
-from .metadata import metadata, queue_columns, queue_constraints
+from .domain import accounts, profiles
+from .metadata import metadata, queue_columns, queue_constraints, timestamps
+
+source_watermarks = Table(
+    "source_watermarks",
+    metadata,
+    Column("source_id", BigInteger, nullable=False),
+    Column("account_id", BigInteger, nullable=False),
+    Column("profile_id", BigInteger, nullable=False),
+    Column("query_key", Text, nullable=False),
+    Column("published_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("generation_id", UUID(as_uuid=True), nullable=False),
+    Column("observed_at", TIMESTAMP(timezone=True), nullable=False),
+    *timestamps(),
+    ForeignKeyConstraint(
+        ["profile_id", "account_id", "source_id"],
+        [profiles.c.id, profiles.c.account_id, profiles.c.source_id],
+    ),
+    UniqueConstraint("account_id", "profile_id", "query_key"),
+    CheckConstraint("length(btrim(query_key)) > 0", name="query_key"),
+)
+Index(
+    "ix_source_watermarks_profile",
+    source_watermarks.c.account_id,
+    source_watermarks.c.profile_id,
+)
 
 source_tasks = Table(
     "source_tasks",
