@@ -306,7 +306,8 @@ class SourceTaskRepository:
         row = await cursor.fetchone()
         if row is None:
             raise ValueError(
-                f"account_id {account_id} / profile_key {profile_key!r} is not a registered HH profile"
+                "account/profile is not a registered HH profile: "
+                f"account_id={account_id}, profile_key={profile_key!r}"
             )
         return UUID(str(row[0]))
 
