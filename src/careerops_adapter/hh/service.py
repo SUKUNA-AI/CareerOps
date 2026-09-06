@@ -201,18 +201,19 @@ async def _defer_account_after_pause(
     error_category: str,
     next_attempt_at: datetime,
 ) -> int:
-    """Persist account-wide source backpressure using existing source-task state.
+    """Persist account-wide source backpressure without extending later retries.
 
-    Ready work and expired leases are deferred to the same boundary. A currently
-    live lease is never stolen. Future worker invocations detect the persisted pause
-    marker before claiming any newly enqueued work.
+    Only ready work that would run before the pause boundary, plus expired leases,
+    is moved to that boundary. Tasks already scheduled for a later retry keep their
+    original retry time and are not converted into an account-pause marker. A live
+    lease is never stolen.
     """
 
     cursor = await conn.execute(
         """
         UPDATE careerops_v2.source_tasks
         SET status = 'deferred',
-            next_attempt_at = GREATEST(COALESCE(next_attempt_at, %s), %s),
+            next_attempt_at = %s,
             finished_at = NULL,
             error_category = %s,
             result_artifact_uri = NULL,
@@ -224,14 +225,17 @@ async def _defer_account_after_pause(
         WHERE account_id = %s
           AND task_kind IN ('search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch')
           AND (
-              status IN ('pending', 'deferred', 'retryable_failure')
+              (
+                  status IN ('pending', 'deferred', 'retryable_failure')
+                  AND next_attempt_at <= %s
+              )
               OR (
                   status IN ('claimed', 'running')
                   AND lease_expires_at <= now()
               )
           )
         """,
-        (next_attempt_at, next_attempt_at, error_category, account_id),
+        (next_attempt_at, error_category, account_id, next_attempt_at),
     )
     return int(cursor.rowcount)
 
