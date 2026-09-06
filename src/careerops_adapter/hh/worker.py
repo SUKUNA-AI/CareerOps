@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from botocore.exceptions import ClientError  # type: ignore[import-untyped]
+from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
 from .errors import (
     HHFailureDisposition,
@@ -34,6 +34,7 @@ from .tasks import (
     vacancy_fetch_task,
 )
 from .transport import HHReadTransport, HHResumeListPageRequest, HHSearchPageRequest
+from .watermarks import HHSearchWatermarkStore
 
 Clock = Callable[[], datetime]
 UuidFactory = Callable[[], UUID]
@@ -85,6 +86,22 @@ class SourceTaskRunResult:
     error_kind: HHFailureKind | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _SearchWatermarkAdvance:
+    profile_key: str
+    query_key: str
+    generation_id: UUID
+    published_at: datetime
+    observed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionResult:
+    raw_uri: str
+    children: tuple[SourceTaskSpec, ...]
+    watermark: _SearchWatermarkAdvance | None = None
+
+
 def _required_str(parameters: dict[str, Any], key: str) -> str:
     value = parameters.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -105,6 +122,33 @@ def _required_int(parameters: dict[str, Any], key: str) -> int:
             message=f"missing or invalid {key}",
         )
     return value
+
+
+def _optional_datetime(parameters: dict[str, Any], key: str) -> datetime | None:
+    value = parameters.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise HHTransportError(
+            kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
+            operation="source_task_parameters",
+            message=f"invalid {key}",
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HHTransportError(
+            kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
+            operation="source_task_parameters",
+            message=f"invalid {key}",
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HHTransportError(
+            kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
+            operation="source_task_parameters",
+            message=f"timezone-naive {key}",
+        )
+    return parsed.astimezone(UTC)
 
 
 def _generation_id(parameters: dict[str, Any]) -> UUID:
@@ -150,6 +194,88 @@ def _pages(payload: dict[str, Any], operation: str) -> int:
     return value
 
 
+def _item_published_at(item: dict[str, Any]) -> datetime | None:
+    value = item.get("published_at")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _max_datetime(*values: datetime | None) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _page_watermark_state(
+    items: list[dict[str, Any]],
+    *,
+    previous_watermark: datetime | None,
+    overlap_seconds: int,
+) -> tuple[datetime | None, bool]:
+    """Return the newest page timestamp and whether the safe overlap boundary was seen.
+
+    A page with any missing/unparseable `published_at` value never proves the
+    boundary. In that case paging continues to source exhaustion rather than risking
+    a false stop.
+    """
+
+    timestamps = [_item_published_at(item) for item in items]
+    valid = [value for value in timestamps if value is not None]
+    newest = max(valid) if valid else None
+    if previous_watermark is None or not items or len(valid) != len(items):
+        return newest, False
+    boundary = previous_watermark - timedelta(seconds=overlap_seconds)
+    return newest, min(valid) <= boundary
+
+
+def _search_continuation(
+    *,
+    task: SourceTaskRecord,
+    request: HHSearchPageRequest,
+    generation_id: UUID,
+    profile_key: str,
+    query_key: str,
+    next_page: int,
+    max_pages: int,
+    previous_watermark: datetime | None,
+    candidate_watermark: datetime | None,
+    overlap_seconds: int,
+) -> SourceTaskSpec:
+    base = search_page_task(
+        generation_id=generation_id,
+        profile_key=profile_key,
+        query_key=query_key,
+        text=request.text,
+        page=next_page,
+        area=request.area,
+        period=request.period,
+        order_by=request.order_by,
+        per_page=request.per_page,
+        professional_roles=request.professional_roles,
+        max_pages=max_pages,
+        parent_task_id=task.id,
+    )
+    parameters = dict(base.parameters)
+    parameters["previous_watermark_at"] = (
+        previous_watermark.isoformat() if previous_watermark is not None else None
+    )
+    parameters["candidate_watermark_at"] = (
+        candidate_watermark.isoformat() if candidate_watermark is not None else None
+    )
+    parameters["watermark_overlap_seconds"] = overlap_seconds
+    return SourceTaskSpec.build(
+        SourceTaskKind.SEARCH_PAGE,
+        parameters,
+        parent_task_id=task.id,
+    )
+
+
 class HHSourceTaskExecutor:
     """Run one claimed HH task: source call -> immutable RAW -> persistent children."""
 
@@ -159,6 +285,7 @@ class HHSourceTaskExecutor:
         transport: HHReadTransport,
         raw: HHRawPublisher,
         repository: SourceTaskRepository,
+        watermarks: HHSearchWatermarkStore,
         failure_policy: HHSourceFailurePolicy | None = None,
         clock: Clock = _utc_now,
         uuid_factory: UuidFactory = uuid4,
@@ -166,6 +293,7 @@ class HHSourceTaskExecutor:
         self._transport = transport
         self._raw = raw
         self._repository = repository
+        self._watermarks = watermarks
         self._failure_policy = failure_policy or HHSourceFailurePolicy()
         self._clock = clock
         self._uuid_factory = uuid_factory
@@ -175,7 +303,7 @@ class HHSourceTaskExecutor:
 
         await self._repository.mark_running(task)
         try:
-            raw_uri, children = await self._execute(task)
+            execution = await self._execute(task)
         except HHTransportError as exc:
             return await self._handle_transport_error(task, exc)
         except RawObjectCollisionError:
@@ -187,7 +315,7 @@ class HHSourceTaskExecutor:
                 task_id=task.id,
                 outcome=SourceTaskRunOutcome.TERMINAL_FAILURE,
             )
-        except (RawWriteVerificationError, ClientError):
+        except (RawWriteVerificationError, ClientError, BotoCoreError):
             now = self._now()
             await self._repository.retryable_failure(
                 task,
@@ -201,14 +329,27 @@ class HHSourceTaskExecutor:
 
         await self._repository.succeed_with_children(
             task,
-            result_artifact_uri=raw_uri,
-            children=children,
+            result_artifact_uri=execution.raw_uri,
+            children=execution.children,
         )
+        # Watermarks intentionally move only after task success and durable child
+        # creation. Failure here causes harmless re-reading in the next generation;
+        # it can never make the source cursor skip unpersisted work.
+        if execution.watermark is not None:
+            watermark = execution.watermark
+            await self._watermarks.advance(
+                account_id=task.account_id,
+                profile_key=watermark.profile_key,
+                query_key=watermark.query_key,
+                published_at=watermark.published_at,
+                generation_id=watermark.generation_id,
+                observed_at=watermark.observed_at,
+            )
         return SourceTaskRunResult(
             task_id=task.id,
             outcome=SourceTaskRunOutcome.SUCCEEDED,
-            raw_uri=raw_uri,
-            child_count=len(children),
+            raw_uri=execution.raw_uri,
+            child_count=len(execution.children),
         )
 
     def _now(self) -> datetime:
@@ -225,10 +366,7 @@ class HHSourceTaskExecutor:
             observation_id=self._uuid_factory(),
         )
 
-    async def _execute(
-        self,
-        task: SourceTaskRecord,
-    ) -> tuple[str, tuple[SourceTaskSpec, ...]]:
+    async def _execute(self, task: SourceTaskRecord) -> _ExecutionResult:
         match task.kind:
             case SourceTaskKind.SEARCH_PAGE:
                 return await self._search_page(task)
@@ -250,16 +388,22 @@ class HHSourceTaskExecutor:
             message=f"unsupported task kind {task.kind}",
         )
 
-    async def _search_page(
-        self,
-        task: SourceTaskRecord,
-    ) -> tuple[str, tuple[SourceTaskSpec, ...]]:
+    async def _search_page(self, task: SourceTaskRecord) -> _ExecutionResult:
         p = task.parameters
         generation_id = _generation_id(p)
         profile_key = _required_str(p, "profile_key")
         query_key = _required_str(p, "query_key")
         page = _required_int(p, "page")
         max_pages = _required_int(p, "max_pages")
+        overlap_seconds = _required_int(p, "watermark_overlap_seconds")
+        if overlap_seconds < 0:
+            raise HHTransportError(
+                kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
+                operation="source_task_parameters",
+                message="watermark_overlap_seconds must be >= 0",
+            )
+        previous_watermark = _optional_datetime(p, "previous_watermark_at")
+        candidate_watermark = _optional_datetime(p, "candidate_watermark_at")
         roles = p.get("professional_roles", [])
         if not isinstance(roles, list) or any(
             isinstance(role, bool) or not isinstance(role, int) for role in roles
@@ -279,16 +423,18 @@ class HHSourceTaskExecutor:
             professional_roles=tuple(roles),
         )
         payload = await self._transport.search_page(request)
+        raw_context = self._raw_context(task, profile_key)
         raw = await self._raw.publish_search_page(
-            context=self._raw_context(task, profile_key),
+            context=raw_context,
             query_key=query_key,
             page=page,
             payload=payload,
         )
 
+        source_items = _items(payload, "search_page")
         children: list[SourceTaskSpec] = []
         seen_vacancies: set[str] = set()
-        for item in _items(payload, "search_page"):
+        for item in source_items:
             vacancy_id = str(item.get("id") or "").strip()
             if not vacancy_id or vacancy_id in seen_vacancies:
                 continue
@@ -302,31 +448,49 @@ class HHSourceTaskExecutor:
                 )
             )
 
+        newest_on_page, watermark_reached = _page_watermark_state(
+            source_items,
+            previous_watermark=previous_watermark,
+            overlap_seconds=overlap_seconds,
+        )
+        candidate_watermark = _max_datetime(candidate_watermark, newest_on_page)
         total_pages = _pages(payload, "search_page")
         next_page = page + 1
-        if next_page < total_pages and next_page < max_pages:
+        has_next_page = next_page < total_pages and next_page < max_pages
+        if has_next_page and not watermark_reached:
             children.append(
-                search_page_task(
+                _search_continuation(
+                    task=task,
+                    request=request,
                     generation_id=generation_id,
                     profile_key=profile_key,
                     query_key=query_key,
-                    text=request.text,
-                    page=next_page,
-                    area=request.area,
-                    period=request.period,
-                    order_by=request.order_by,
-                    per_page=request.per_page,
-                    professional_roles=request.professional_roles,
+                    next_page=next_page,
                     max_pages=max_pages,
-                    parent_task_id=task.id,
+                    previous_watermark=previous_watermark,
+                    candidate_watermark=candidate_watermark,
+                    overlap_seconds=overlap_seconds,
                 )
             )
-        return raw.ref.uri, tuple(children)
+            watermark_advance = None
+        elif candidate_watermark is not None:
+            watermark_advance = _SearchWatermarkAdvance(
+                profile_key=profile_key,
+                query_key=query_key,
+                generation_id=generation_id,
+                published_at=candidate_watermark,
+                observed_at=raw_context.observed_at,
+            )
+        else:
+            watermark_advance = None
 
-    async def _vacancy_fetch(
-        self,
-        task: SourceTaskRecord,
-    ) -> tuple[str, tuple[SourceTaskSpec, ...]]:
+        return _ExecutionResult(
+            raw_uri=raw.ref.uri,
+            children=tuple(children),
+            watermark=watermark_advance,
+        )
+
+    async def _vacancy_fetch(self, task: SourceTaskRecord) -> _ExecutionResult:
         p = task.parameters
         profile_key = _required_str(p, "profile_key")
         vacancy_id = _required_str(p, "vacancy_id")
@@ -336,12 +500,9 @@ class HHSourceTaskExecutor:
             vacancy_id=vacancy_id,
             payload=payload,
         )
-        return raw.ref.uri, ()
+        return _ExecutionResult(raw_uri=raw.ref.uri, children=())
 
-    async def _resume_sync(
-        self,
-        task: SourceTaskRecord,
-    ) -> tuple[str, tuple[SourceTaskSpec, ...]]:
+    async def _resume_sync(self, task: SourceTaskRecord) -> _ExecutionResult:
         p = task.parameters
         generation_id = _generation_id(p)
         profile_key = _required_str(p, "profile_key")
@@ -382,12 +543,9 @@ class HHSourceTaskExecutor:
                     parent_task_id=task.id,
                 )
             )
-        return raw.ref.uri, tuple(children)
+        return _ExecutionResult(raw_uri=raw.ref.uri, children=tuple(children))
 
-    async def _resume_fetch(
-        self,
-        task: SourceTaskRecord,
-    ) -> tuple[str, tuple[SourceTaskSpec, ...]]:
+    async def _resume_fetch(self, task: SourceTaskRecord) -> _ExecutionResult:
         p = task.parameters
         profile_key = _required_str(p, "profile_key")
         resume_id = _required_str(p, "resume_id")
@@ -397,7 +555,7 @@ class HHSourceTaskExecutor:
             resume_id=resume_id,
             payload=payload,
         )
-        return raw.ref.uri, ()
+        return _ExecutionResult(raw_uri=raw.ref.uri, children=())
 
     async def _handle_transport_error(
         self,
