@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from support.postgres import (
     UnsafePostgresTestTarget,
     load_postgres_test_target,
@@ -32,7 +31,6 @@ def test_postgres_test_target_accepts_explicit_local_disposable_dsn(dsn: str) ->
         "postgresql://user:pass@localhost:5432/postgres",
         "postgresql://user:pass@localhost:5432/careerops",
         "postgresql://user:pass@localhost:5432/careerops_prod_test",
-        "postgresql://user:pass@localhost:5432/careerops",
         "host=localhost dbname=careerops_ci_test port=not-a-number",
     ],
 )
