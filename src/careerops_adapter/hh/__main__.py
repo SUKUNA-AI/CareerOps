@@ -90,26 +90,30 @@ def _parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> int:
     if args.command == "seed":
-        summary = await seed_source_generation(
-            account_key=args.account_key,
-            generation_id=args.generation_id,
-            kind=SourceSeedKind(args.kind),
-            accounts_config=args.accounts_config,
-            discovery_config=args.discovery_config,
-        )
+        summary_payload = (
+            await seed_source_generation(
+                account_key=args.account_key,
+                generation_id=args.generation_id,
+                kind=SourceSeedKind(args.kind),
+                accounts_config=args.accounts_config,
+                discovery_config=args.discovery_config,
+            )
+        ).as_dict()
     elif args.command == "work":
-        summary = await run_account_worker(
-            account_key=args.account_key,
-            accounts_config=args.accounts_config,
-            config_dir=args.config_dir,
-            max_tasks=args.max_tasks,
-            lease_seconds=args.lease_seconds,
-            worker_id=args.worker_id,
-        )
+        summary_payload = (
+            await run_account_worker(
+                account_key=args.account_key,
+                accounts_config=args.accounts_config,
+                config_dir=args.config_dir,
+                max_tasks=args.max_tasks,
+                lease_seconds=args.lease_seconds,
+                worker_id=args.worker_id,
+            )
+        ).as_dict()
     else:  # pragma: no cover - argparse enforces a known required subcommand.
         raise RuntimeError(f"unsupported HH adapter command: {args.command!r}")
 
-    print(json.dumps(summary.as_dict(), ensure_ascii=False, sort_keys=True))
+    print(json.dumps(summary_payload, ensure_ascii=False, sort_keys=True))
     return 0
 
 
