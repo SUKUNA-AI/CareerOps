@@ -267,14 +267,14 @@ async def _run_locked_account_worker(
     repository = SourceTaskRepository(conn)
     active_pause = await _active_account_pause(conn, account_id=account_id)
     if active_pause is not None:
-        _, pause_reason = active_pause
+        _, active_pause_reason = active_pause
         return HHAccountWorkerSummary(
             account_key=account.key,
             profile_key=account.profile,
             worker_id=worker_id,
             lock_acquired=True,
             account_paused=True,
-            pause_reason=pause_reason,
+            pause_reason=active_pause_reason,
             stop_reason="active_account_pause",
         )
 
