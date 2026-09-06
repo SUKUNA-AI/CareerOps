@@ -38,6 +38,7 @@ from .errors import (
 from .raw import HHRawPublisher
 from .tasks import SourceTaskRecord, SourceTaskRepository
 from .transport import HHApplicantToolTransport
+from .watermarks import HHSearchWatermarkStore
 from .worker import (
     HHSourceFailurePolicy,
     HHSourceTaskExecutor,
@@ -305,6 +306,7 @@ async def _run_locked_account_worker(
             transport=transport,
             raw=HHRawPublisher(store),
             repository=repository,
+            watermarks=HHSearchWatermarkStore(conn),
             failure_policy=failure_policy,
         )
         for _ in range(max_tasks):
