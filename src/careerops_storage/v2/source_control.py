@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    PrimaryKeyConstraint,
     Table,
     Text,
     UniqueConstraint,
@@ -32,7 +33,7 @@ source_watermarks = Table(
         ["profile_id", "account_id", "source_id"],
         [profiles.c.id, profiles.c.account_id, profiles.c.source_id],
     ),
-    UniqueConstraint("account_id", "profile_id", "query_key"),
+    PrimaryKeyConstraint("account_id", "profile_id", "query_key"),
     CheckConstraint("length(btrim(query_key)) > 0", name="query_key"),
 )
 Index(
