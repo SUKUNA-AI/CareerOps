@@ -14,11 +14,12 @@ independent root task in the same generation when explicitly requested.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID
 
 import psycopg
