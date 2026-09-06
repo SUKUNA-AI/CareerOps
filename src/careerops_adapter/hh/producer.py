@@ -1,8 +1,9 @@
 """Create lossless root HH source work without scheduling policy.
 
-A generation is identified by an externally supplied UUID. Retrying the same
-orchestration step with the same UUID and unchanged configuration produces the
-same task keys, so enqueue is idempotent and never resets existing task state.
+A generation is identified by an externally supplied UUID. Retrying an already
+seeded generation reuses its existing root tasks instead of re-reading current
+watermarks or configuration, so orchestration retries cannot change the scan
+boundary halfway through a generation.
 
 This module deliberately does not rotate queries, enforce per-run query/fetch
 budgets, or contact HH. All selected queries become persistent SEARCH_PAGE tasks;
@@ -12,10 +13,12 @@ independent root task in the same generation when explicitly requested.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID
 
 import psycopg
@@ -32,9 +35,19 @@ from careerops_integrations.hh.configuration import (
 )
 
 from .service import V2PostgresSettings
-from .tasks import SourceTaskRepository, SourceTaskSpec, resume_sync_task, search_page_task
+from .tasks import (
+    SourceTaskKind,
+    SourceTaskRepository,
+    SourceTaskSpec,
+    resume_sync_task,
+    search_page_task,
+)
+from .watermarks import HHSearchWatermarkStore
 
-_MIN_SEARCH_PAGES = 2
+# This is only a defensive corruption guard. Normal paging stops at the smaller
+# source-reported `pages` value or the persisted publication watermark.
+_SOURCE_PAGE_SAFETY_CAP = 10_000
+_DEFAULT_WATERMARK_OVERLAP_SECONDS = 3600
 
 
 class SourceSeedKind(StrEnum):
@@ -88,28 +101,64 @@ def _query_value(value: int | None, default: int) -> int:
     return default if value is None else value
 
 
+def _watermark_overlap_seconds_from_env() -> int:
+    raw = os.getenv(
+        "CAREEROPS_HH_WATERMARK_OVERLAP_SECONDS",
+        str(_DEFAULT_WATERMARK_OVERLAP_SECONDS),
+    ).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("CAREEROPS_HH_WATERMARK_OVERLAP_SECONDS must be an integer") from exc
+    if value < 0:
+        raise ValueError("CAREEROPS_HH_WATERMARK_OVERLAP_SECONDS must be >= 0")
+    return value
+
+
+def _watermark_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("search watermark must be timezone-aware")
+    return value.astimezone(UTC).isoformat()
+
+
+def _watermarked_search_root(
+    *,
+    base: SourceTaskSpec,
+    previous_watermark: datetime | None,
+    overlap_seconds: int,
+) -> SourceTaskSpec:
+    parameters = dict(base.parameters)
+    parameters["previous_watermark_at"] = _watermark_iso(previous_watermark)
+    parameters["candidate_watermark_at"] = None
+    parameters["watermark_overlap_seconds"] = overlap_seconds
+    return SourceTaskSpec.build(SourceTaskKind.SEARCH_PAGE, parameters)
+
+
 def build_source_generation_plan(
     *,
     account: HHAccountConfig,
     discovery: DiscoveryConfig | None,
     generation_id: UUID,
     kind: SourceSeedKind,
+    watermarks: Mapping[str, datetime] | None = None,
+    watermark_overlap_seconds: int = _DEFAULT_WATERMARK_OVERLAP_SECONDS,
 ) -> HHSourceGenerationPlan:
     """Build all initial persistent work for one explicit observation generation.
 
     Legacy run-level truncation knobs such as max_queries_per_run,
-    max_unique_vacancies_per_run, and max_full_fetch_per_run are intentionally not
-    applied here. They controlled execution throughput by dropping work. V2 persists
-    the complete selected query set and lets bounded workers control throughput.
-
-    V2 also guarantees page 0 + adaptive page 1 for search queries. A legacy
-    discovery config with pages=1 therefore cannot silently collapse the new source
-    ingestion path back to a single 50-item page.
+    max_unique_vacancies_per_run, max_full_fetch_per_run, and configured `pages` are
+    intentionally not applied here. V2 follows source-reported pages until it reaches
+    the previous publication watermark (with overlap) or source exhaustion.
     """
 
     if generation_id.int == 0:
         raise ValueError("generation_id must not be the nil UUID")
+    if watermark_overlap_seconds < 0:
+        raise ValueError("watermark_overlap_seconds must be >= 0")
 
+    known_watermarks = watermarks or {}
     search_tasks: list[SourceTaskSpec] = []
     if kind.includes_search:
         if discovery is None:
@@ -128,20 +177,23 @@ def build_source_generation_plan(
         defaults = discovery.defaults
         for query in selected:
             spec = query.spec
-            configured_pages = _query_value(spec.pages, defaults.pages)
-            max_pages = max(_MIN_SEARCH_PAGES, configured_pages)
+            base = search_page_task(
+                generation_id=generation_id,
+                profile_key=account.profile,
+                query_key=spec.key,
+                text=spec.text,
+                page=0,
+                area=_query_value(spec.area, defaults.area),
+                period=_query_value(spec.period, defaults.period),
+                order_by=defaults.order_by,
+                per_page=_query_value(spec.per_page, defaults.per_page),
+                max_pages=_SOURCE_PAGE_SAFETY_CAP,
+            )
             search_tasks.append(
-                search_page_task(
-                    generation_id=generation_id,
-                    profile_key=account.profile,
-                    query_key=spec.key,
-                    text=spec.text,
-                    page=0,
-                    area=_query_value(spec.area, defaults.area),
-                    period=_query_value(spec.period, defaults.period),
-                    order_by=defaults.order_by,
-                    per_page=_query_value(spec.per_page, defaults.per_page),
-                    max_pages=max_pages,
+                _watermarked_search_root(
+                    base=base,
+                    previous_watermark=known_watermarks.get(spec.key),
+                    overlap_seconds=watermark_overlap_seconds,
                 )
             )
 
@@ -192,6 +244,44 @@ async def _resolve_v2_account_id(
     return int(rows[0][0])
 
 
+async def _existing_generation_counts(
+    conn: AsyncConnection[Any],
+    *,
+    account_id: int,
+    generation_id: UUID,
+) -> tuple[int, int]:
+    cursor = await conn.execute(
+        """
+        SELECT task_kind, count(*)
+        FROM careerops_v2.source_tasks
+        WHERE account_id = %s
+          AND parent_task_id IS NULL
+          AND parameters ->> 'generation_id' = %s
+          AND task_kind IN ('search_page', 'resume_sync')
+        GROUP BY task_kind
+        """,
+        (account_id, str(generation_id)),
+    )
+    search_count = 0
+    resume_count = 0
+    for task_kind, count in await cursor.fetchall():
+        if task_kind == SourceTaskKind.SEARCH_PAGE.value:
+            search_count = int(count)
+        elif task_kind == SourceTaskKind.RESUME_SYNC.value:
+            resume_count = int(count)
+    return search_count, resume_count
+
+
+def _kind_from_counts(search_count: int, resume_count: int) -> SourceSeedKind | None:
+    if search_count and resume_count:
+        return SourceSeedKind.ALL
+    if search_count:
+        return SourceSeedKind.SEARCH
+    if resume_count:
+        return SourceSeedKind.RESUMES
+    return None
+
+
 async def seed_source_generation(
     *,
     account_key: str,
@@ -202,9 +292,9 @@ async def seed_source_generation(
 ) -> HHSourceSeedSummary:
     """Atomically ensure all initial tasks for one externally identified generation.
 
-    This function only reads local configuration and writes PostgreSQL v2 queue
-    state. It performs no HH or S3 calls. A future orchestrator should provide a
-    stable generation UUID for retries instead of inventing a new UUID each time.
+    This function only reads local configuration and writes PostgreSQL v2 control
+    state. It performs no HH or S3 calls. Existing generations are immutable: a
+    retry with the same UUID returns the previously seeded root set.
     """
 
     accounts_path = accounts_config or accounts_config_path_from_env()
@@ -217,13 +307,6 @@ async def seed_source_generation(
         accounts = load_accounts_config(accounts_path)
 
     account = accounts.resolve_account(account_key.strip())
-    plan = build_source_generation_plan(
-        account=account,
-        discovery=discovery,
-        generation_id=generation_id,
-        kind=kind,
-    )
-
     settings = V2PostgresSettings.from_env()
     conn = await psycopg.AsyncConnection.connect(settings.dsn, autocommit=True)
     try:
@@ -231,6 +314,42 @@ async def seed_source_generation(
             conn,
             account_key=account.key,
             profile_key=account.profile,
+        )
+        existing_search, existing_resume = await _existing_generation_counts(
+            conn,
+            account_id=account_id,
+            generation_id=generation_id,
+        )
+        existing_kind = _kind_from_counts(existing_search, existing_resume)
+        if existing_kind is not None:
+            if existing_kind is not kind:
+                raise ValueError(
+                    f"generation {generation_id} already exists as {existing_kind.value!r}, "
+                    f"not {kind.value!r}"
+                )
+            return HHSourceSeedSummary(
+                generation_id=str(generation_id),
+                account_key=account.key,
+                profile_key=account.profile,
+                kind=kind.value,
+                search_tasks=existing_search,
+                resume_tasks=existing_resume,
+                ensured_tasks=existing_search + existing_resume,
+            )
+
+        watermarks: dict[str, datetime] = {}
+        if kind.includes_search:
+            watermarks = await HHSearchWatermarkStore(conn).load_for_profile(
+                account_id=account_id,
+                profile_key=account.profile,
+            )
+        plan = build_source_generation_plan(
+            account=account,
+            discovery=discovery,
+            generation_id=generation_id,
+            kind=kind,
+            watermarks=watermarks,
+            watermark_overlap_seconds=_watermark_overlap_seconds_from_env(),
         )
         repository = SourceTaskRepository(conn)
         # Root seeding is all-or-nothing. On orchestration retry, ON CONFLICT returns
