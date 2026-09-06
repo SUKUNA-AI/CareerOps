@@ -8,7 +8,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-
 from support.postgres import PostgresTestTarget, load_postgres_test_target
 
 
