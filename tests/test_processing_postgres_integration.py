@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import psycopg
 import pytest
@@ -141,7 +142,11 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
     return vacancy_id, binding_id
 
 
-def _spec(vacancy_id: int, binding_id: int, fingerprint_char: str) -> ProcessingWorkSpec:
+def _spec(
+    vacancy_id: int,
+    binding_id: int,
+    fingerprint_char: str,
+) -> ProcessingWorkSpec:
     return ProcessingWorkSpec(
         vacancy_id=vacancy_id,
         binding_id=binding_id,
@@ -152,6 +157,37 @@ def _spec(vacancy_id: int, binding_id: int, fingerprint_char: str) -> Processing
         ),
         pipeline_version="processing-v2-test",
         policy_version="policy-v1",
+    )
+
+
+async def _insert_pending_job(
+    connection: psycopg.AsyncConnection[object],
+    *,
+    vacancy_id: int,
+    binding_id: int,
+    fingerprint_char: str,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO careerops_v2.processing_jobs (
+            id,
+            vacancy_id,
+            binding_id,
+            binding_version,
+            input_fingerprint,
+            input_manifest_uri,
+            pipeline_version,
+            policy_version
+        )
+        VALUES (%s, %s, %s, 1, %s, %s, 'processing-v2-test', 'policy-v1')
+        """,
+        (
+            uuid4(),
+            vacancy_id,
+            binding_id,
+            fingerprint_char * 64,
+            f"s3://careerops-artifacts/processing/manifests/{fingerprint_char * 64}.json",
+        ),
     )
 
 
@@ -206,6 +242,27 @@ async def test_superseded_exact_work_can_become_current_again(
     by_id = {str(row[0]): (str(row[1]), row[2]) for row in rows}
     assert by_id[str(first_id)] == ("pending", None)
     assert by_id[str(second_id)] == ("cancelled", "superseded")
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_exact_work_can_become_current_again(
+    processing_connection: psycopg.AsyncConnection[object],
+) -> None:
+    vacancy_id, binding_id = await _seed_pair(processing_connection)
+    store = PostgresProcessingJobStore(processing_connection)
+    spec = _spec(vacancy_id, binding_id, "a")
+    job_id = await store.reconcile_current(spec)
+
+    withdrawn = await store.withdraw_pair(ProcessingPairKey(vacancy_id, binding_id))
+    assert withdrawn == 1
+    assert await store.reconcile_current(spec) == job_id
+
+    cursor = await processing_connection.execute(
+        "SELECT status, error_category FROM careerops_v2.processing_jobs WHERE id = %s",
+        (job_id,),
+    )
+    row = await cursor.fetchone()
+    assert row == ("pending", None)
 
 
 @pytest.mark.asyncio
@@ -378,3 +435,49 @@ async def test_success_requires_artifact_and_clears_lease(
     assert row[1] == artifact_uri
     assert row[2] is None
     assert row[3] is not None
+
+
+@pytest.mark.asyncio
+async def test_database_rejects_two_active_jobs_for_same_pair(
+    processing_connection: psycopg.AsyncConnection[object],
+) -> None:
+    vacancy_id, binding_id = await _seed_pair(processing_connection)
+    store = PostgresProcessingJobStore(processing_connection)
+    await store.reconcile_current(_spec(vacancy_id, binding_id, "a"))
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        await _insert_pending_job(
+            processing_connection,
+            vacancy_id=vacancy_id,
+            binding_id=binding_id,
+            fingerprint_char="b",
+        )
+
+
+@pytest.mark.asyncio
+async def test_active_pair_migration_preflight_reports_existing_duplicates(
+    processing_target: DisposablePostgresTarget,
+    processing_connection: psycopg.AsyncConnection[object],
+) -> None:
+    config = build_alembic_config(processing_target)
+    command.downgrade(config, "20260906_v2_0002")
+
+    vacancy_id, binding_id = await _seed_pair(processing_connection)
+    await _insert_pending_job(
+        processing_connection,
+        vacancy_id=vacancy_id,
+        binding_id=binding_id,
+        fingerprint_char="a",
+    )
+    await _insert_pending_job(
+        processing_connection,
+        vacancy_id=vacancy_id,
+        binding_id=binding_id,
+        fingerprint_char="b",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="duplicate active Processing job pairs exist before migration",
+    ):
+        command.upgrade(config, "head")

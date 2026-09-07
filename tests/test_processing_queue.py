@@ -12,7 +12,12 @@ from careerops_processing.queue import (
 from careerops_processing.reconciliation import ProcessingReconciler
 
 
-def _spec(*, vacancy_id: int = 1, binding_id: int = 2, char: str = "a") -> ProcessingWorkSpec:
+def _spec(
+    *,
+    vacancy_id: int = 1,
+    binding_id: int = 2,
+    char: str = "a",
+) -> ProcessingWorkSpec:
     return ProcessingWorkSpec(
         vacancy_id=vacancy_id,
         binding_id=binding_id,

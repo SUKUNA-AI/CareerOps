@@ -65,7 +65,12 @@ class _FakeStore:
         if self.fail_renewal:
             raise ProcessingJobLeaseLost("lease lost")
 
-    async def succeed(self, job: ProcessingJobRecord, *, result_artifact_uri: str) -> None:
+    async def succeed(
+        self,
+        job: ProcessingJobRecord,
+        *,
+        result_artifact_uri: str,
+    ) -> None:
         self.transitions.append(("succeeded", (job.id, result_artifact_uri)))
 
     async def defer(
@@ -94,7 +99,12 @@ class _FakeStore:
     ) -> None:
         self.transitions.append(("terminal", (job.id, error_category)))
 
-    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "operator.cancelled") -> None:
+    async def cancel(
+        self,
+        job: ProcessingJobRecord,
+        *,
+        reason: str = "operator.cancelled",
+    ) -> None:
         self.transitions.append(("cancelled", (job.id, reason)))
 
 
@@ -203,7 +213,10 @@ async def test_worker_routes_deferred_result_without_losing_work() -> None:
     )
 
     assert await worker.run_one() is True
-    assert ("deferred", (job.id, "reranker.unavailable", next_attempt)) in store.transitions
+    assert (
+        "deferred",
+        (job.id, "reranker.unavailable", next_attempt),
+    ) in store.transitions
 
 
 @pytest.mark.asyncio

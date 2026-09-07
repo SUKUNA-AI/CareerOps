@@ -158,7 +158,12 @@ class ProcessingJobStore(Protocol):
         lease_seconds: int = 300,
     ) -> None: ...
 
-    async def succeed(self, job: ProcessingJobRecord, *, result_artifact_uri: str) -> None: ...
+    async def succeed(
+        self,
+        job: ProcessingJobRecord,
+        *,
+        result_artifact_uri: str,
+    ) -> None: ...
 
     async def defer(
         self,
@@ -183,4 +188,9 @@ class ProcessingJobStore(Protocol):
         error_category: str,
     ) -> None: ...
 
-    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "operator.cancelled") -> None: ...
+    async def cancel(
+        self,
+        job: ProcessingJobRecord,
+        *,
+        reason: str = "operator.cancelled",
+    ) -> None: ...
