@@ -31,6 +31,8 @@ class PostgresProcessingJobStore:
         job_id = uuid4()
         async with self._conn.transaction():
             await self._lock_pair(spec.pair)
+            await self._cancel_competing_active(spec)
+
             cursor = await self._conn.execute(
                 """
                 INSERT INTO careerops_v2.processing_jobs (
@@ -124,31 +126,7 @@ class PostgresProcessingJobStore:
             row = await cursor.fetchone()
             if row is None:
                 raise RuntimeError("processing job upsert returned no id")
-            current_job_id = UUID(str(row[0]))
-
-            await self._conn.execute(
-                """
-                UPDATE careerops_v2.processing_jobs
-                SET status = 'cancelled',
-                    next_attempt_at = NULL,
-                    finished_at = now(),
-                    error_category = 'superseded',
-                    result_artifact_uri = NULL,
-                    lease_owner = NULL,
-                    lease_token = NULL,
-                    leased_at = NULL,
-                    lease_expires_at = NULL,
-                    updated_at = now()
-                WHERE vacancy_id = %s
-                  AND binding_id = %s
-                  AND id <> %s
-                  AND status IN (
-                      'pending', 'claimed', 'running', 'deferred', 'retryable_failure'
-                  )
-                """,
-                (spec.vacancy_id, spec.binding_id, current_job_id),
-            )
-            return current_job_id
+            return UUID(str(row[0]))
 
     async def withdraw_pair(
         self,
@@ -451,6 +429,44 @@ class PostgresProcessingJobStore:
             (status.value, next_attempt_at, normalized_error, job.id, token),
         )
         self._require_one(cursor.rowcount, job.id)
+
+    async def _cancel_competing_active(self, spec: ProcessingWorkSpec) -> None:
+        """Cancel active work whose exact identity differs from the desired spec."""
+
+        await self._conn.execute(
+            """
+            UPDATE careerops_v2.processing_jobs
+            SET status = 'cancelled',
+                next_attempt_at = NULL,
+                finished_at = now(),
+                error_category = 'superseded',
+                result_artifact_uri = NULL,
+                lease_owner = NULL,
+                lease_token = NULL,
+                leased_at = NULL,
+                lease_expires_at = NULL,
+                updated_at = now()
+            WHERE vacancy_id = %s
+              AND binding_id = %s
+              AND status IN (
+                  'pending', 'claimed', 'running', 'deferred', 'retryable_failure'
+              )
+              AND NOT (
+                  binding_version = %s
+                  AND input_fingerprint = %s
+                  AND pipeline_version = %s
+                  AND policy_version = %s
+              )
+            """,
+            (
+                spec.vacancy_id,
+                spec.binding_id,
+                spec.binding_version,
+                spec.input_fingerprint,
+                spec.pipeline_version,
+                spec.policy_version,
+            ),
+        )
 
     async def _lock_pair(self, pair: ProcessingPairKey) -> None:
         await self._conn.execute(

@@ -61,6 +61,15 @@ Index(
     processing_jobs.c.lease_expires_at,
     postgresql_where=text("status IN ('claimed', 'running')"),
 )
+Index(
+    "uq_processing_jobs_active_pair",
+    processing_jobs.c.vacancy_id,
+    processing_jobs.c.binding_id,
+    unique=True,
+    postgresql_where=text(
+        "status IN ('pending', 'claimed', 'running', 'deferred', 'retryable_failure')"
+    ),
+)
 Index("ix_processing_jobs_binding", processing_jobs.c.binding_id)
 
 match_results = Table(
