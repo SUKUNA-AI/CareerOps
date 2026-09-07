@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from careerops_processing.contracts import FilterPolicy, TargetPolicy
+
+_SAFE_SEGMENT = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 
 class TargetPolicyRepository(Protocol):
@@ -95,7 +98,14 @@ class FileTargetPolicyRepository:
             raise ValueError("current_policy_version в index и policy file не совпадает")
         return self._materialize(document)
 
+    @staticmethod
+    def _require_segment(value: str, field_name: str) -> str:
+        if not _SAFE_SEGMENT.fullmatch(value):
+            raise ValueError(f"{field_name} содержит недопустимые символы")
+        return value
+
     def get(self, target_key: str, policy_version: str) -> TargetPolicy:
+        policy_version = self._require_segment(policy_version, "policy_version")
         current = self.get_current(target_key)
         if current.policy_version == policy_version:
             return current

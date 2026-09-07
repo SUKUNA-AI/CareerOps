@@ -148,6 +148,8 @@ class ProcessingArtifactStore:
         metadata: Mapping[str, str],
         expected_sha256: str,
         expected_size: int,
+        expected_kind: ProcessingArtifactKind,
+        expected_schema_version: str,
     ) -> None:
         digest = hashlib.sha256(body).hexdigest()
         if digest != expected_sha256 or len(body) != expected_size:
@@ -157,6 +159,10 @@ class ProcessingArtifactStore:
         stored_digest = metadata.get("sha256")
         if stored_digest != expected_sha256:
             raise ProcessingArtifactIntegrityError("artifact metadata sha256 не совпадает")
+        if metadata.get("artifact-kind") != expected_kind.value:
+            raise ProcessingArtifactIntegrityError("artifact kind metadata не совпадает")
+        if metadata.get("schema-version") != expected_schema_version:
+            raise ProcessingArtifactIntegrityError("artifact schema metadata не совпадает")
 
     async def put_contract(
         self,
@@ -196,6 +202,8 @@ class ProcessingArtifactStore:
             metadata=metadata,
             expected_sha256=digest,
             expected_size=len(body),
+            expected_kind=kind,
+            expected_schema_version=schema_version,
         )
         return ProcessingArtifactRef(
             kind=kind,
@@ -210,6 +218,13 @@ class ProcessingArtifactStore:
         if not ref.uri.startswith(prefix):
             raise ValueError("artifact ref указывает на другой bucket")
         key = ref.uri[len(prefix) :]
+        expected_key = self._key(
+            kind=ref.kind,
+            schema_version=ref.schema_version,
+            sha256=ref.sha256,
+        )
+        if key != expected_key:
+            raise ProcessingArtifactIntegrityError("artifact URI не совпадает с content address")
         existing = await self._read_existing(key)
         if existing is None:
             raise FileNotFoundError(ref.uri)
@@ -219,6 +234,8 @@ class ProcessingArtifactStore:
             metadata=metadata,
             expected_sha256=ref.sha256,
             expected_size=ref.size_bytes,
+            expected_kind=ref.kind,
+            expected_schema_version=ref.schema_version,
         )
         value = json.loads(body.decode("utf-8"))
         if not isinstance(value, dict):
