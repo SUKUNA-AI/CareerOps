@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from .queue import ProcessingPairKey, ProcessingWorkSpec
+from .queue import RECONCILIATION_WITHDRAWN, ProcessingPairKey, ProcessingWorkSpec
 
 
 class ProcessingReconciliationStore(Protocol):
@@ -19,7 +19,7 @@ class ProcessingReconciliationStore(Protocol):
         self,
         pair: ProcessingPairKey,
         *,
-        reason: str,
+        reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int: ...
 
 
@@ -44,7 +44,7 @@ class ProcessingReconciler:
         specs: Iterable[ProcessingWorkSpec],
         *,
         withdrawn_pairs: Iterable[ProcessingPairKey] = (),
-        withdrawal_reason: str = "reconciliation.withdrawn",
+        withdrawal_reason: str = RECONCILIATION_WITHDRAWN,
     ) -> ProcessingReconciliationResult:
         desired: dict[ProcessingPairKey, ProcessingWorkSpec] = {}
         for spec in specs:

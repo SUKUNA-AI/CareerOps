@@ -10,6 +10,10 @@ from uuid import UUID
 
 from .contracts import ProcessingInputManifest
 
+RECONCILIATION_CANCEL_PREFIX = "reconciliation."
+RECONCILIATION_SUPERSEDED = "superseded"
+RECONCILIATION_WITHDRAWN = "reconciliation.withdrawn"
+
 
 def _require_positive_int(value: int, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -135,7 +139,7 @@ class ProcessingJobStore(Protocol):
         self,
         pair: ProcessingPairKey,
         *,
-        reason: str,
+        reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int: ...
 
     async def claim_next(
@@ -179,4 +183,4 @@ class ProcessingJobStore(Protocol):
         error_category: str,
     ) -> None: ...
 
-    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "cancelled") -> None: ...
+    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "operator.cancelled") -> None: ...

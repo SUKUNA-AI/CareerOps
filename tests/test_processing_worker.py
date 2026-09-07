@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from careerops_processing.queue import (
+    RECONCILIATION_WITHDRAWN,
     ProcessingJobLeaseLost,
     ProcessingJobRecord,
     ProcessingJobStatus,
@@ -32,7 +33,12 @@ class _FakeStore:
         del spec
         return uuid4()
 
-    async def withdraw_pair(self, pair: ProcessingPairKey, *, reason: str) -> int:
+    async def withdraw_pair(
+        self,
+        pair: ProcessingPairKey,
+        *,
+        reason: str = RECONCILIATION_WITHDRAWN,
+    ) -> int:
         self.transitions.append(("withdraw", (pair, reason)))
         return 0
 
@@ -88,7 +94,7 @@ class _FakeStore:
     ) -> None:
         self.transitions.append(("terminal", (job.id, error_category)))
 
-    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "cancelled") -> None:
+    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "operator.cancelled") -> None:
         self.transitions.append(("cancelled", (job.id, reason)))
 
 

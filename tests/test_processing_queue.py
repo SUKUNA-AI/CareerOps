@@ -4,7 +4,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from careerops_processing.queue import ProcessingPairKey, ProcessingWorkSpec
+from careerops_processing.queue import (
+    RECONCILIATION_WITHDRAWN,
+    ProcessingPairKey,
+    ProcessingWorkSpec,
+)
 from careerops_processing.reconciliation import ProcessingReconciler
 
 
@@ -62,7 +66,12 @@ class _FakeStore:
         self.seen.append(spec)
         return uuid4()
 
-    async def withdraw_pair(self, pair: ProcessingPairKey, *, reason: str) -> int:
+    async def withdraw_pair(
+        self,
+        pair: ProcessingPairKey,
+        *,
+        reason: str = RECONCILIATION_WITHDRAWN,
+    ) -> int:
         self.withdrawn.append((pair, reason))
         return 1
 
@@ -104,7 +113,7 @@ async def test_reconciler_withdraws_explicit_absent_pairs() -> None:
     assert result.desired_pairs == 0
     assert result.withdrawn_pairs == 1
     assert result.withdrawn_jobs == 1
-    assert store.withdrawn == [(pair, "reconciliation.withdrawn")]
+    assert store.withdrawn == [(pair, RECONCILIATION_WITHDRAWN)]
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,9 @@ from uuid import UUID, uuid4
 from psycopg import AsyncConnection
 
 from ..queue import (
+    RECONCILIATION_CANCEL_PREFIX,
+    RECONCILIATION_SUPERSEDED,
+    RECONCILIATION_WITHDRAWN,
     ProcessingJobLeaseLost,
     ProcessingJobRecord,
     ProcessingJobStatus,
@@ -57,55 +60,82 @@ class PostgresProcessingJobStore:
                 DO UPDATE SET
                     status = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN 'pending'
                         ELSE processing_jobs.status
                     END,
                     next_attempt_at = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN now()
                         ELSE processing_jobs.next_attempt_at
                     END,
                     finished_at = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.finished_at
                     END,
                     error_category = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.error_category
                     END,
                     result_artifact_uri = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.result_artifact_uri
                     END,
                     lease_owner = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.lease_owner
                     END,
                     lease_token = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.lease_token
                     END,
                     leased_at = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.leased_at
                     END,
                     lease_expires_at = CASE
                         WHEN processing_jobs.status = 'cancelled'
-                         AND processing_jobs.error_category = 'superseded'
+                         AND (
+                             processing_jobs.error_category = 'superseded'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                         )
                         THEN NULL
                         ELSE processing_jobs.lease_expires_at
                     END,
@@ -132,11 +162,13 @@ class PostgresProcessingJobStore:
         self,
         pair: ProcessingPairKey,
         *,
-        reason: str,
+        reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int:
         """Fence every active job for a pair that left authoritative desired state."""
 
         normalized_reason = self._non_empty(reason, "withdraw reason")
+        if not normalized_reason.startswith(RECONCILIATION_CANCEL_PREFIX):
+            raise ValueError("withdraw reason must use the reserved reconciliation.* namespace")
         async with self._conn.transaction():
             await self._lock_pair(pair)
             cursor = await self._conn.execute(
@@ -369,8 +401,12 @@ class PostgresProcessingJobStore:
         )
         self._require_one(cursor.rowcount, job.id)
 
-    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "cancelled") -> None:
+    async def cancel(self, job: ProcessingJobRecord, *, reason: str = "operator.cancelled") -> None:
         normalized_reason = self._non_empty(reason, "cancel reason")
+        if normalized_reason == RECONCILIATION_SUPERSEDED or normalized_reason.startswith(
+            RECONCILIATION_CANCEL_PREFIX
+        ):
+            raise ValueError("manual cancel cannot use a reconciliation-owned reason")
         token = self._required_token(job)
         cursor = await self._conn.execute(
             """
@@ -439,7 +475,7 @@ class PostgresProcessingJobStore:
             SET status = 'cancelled',
                 next_attempt_at = NULL,
                 finished_at = now(),
-                error_category = 'superseded',
+                error_category = %s,
                 result_artifact_uri = NULL,
                 lease_owner = NULL,
                 lease_token = NULL,
@@ -459,6 +495,7 @@ class PostgresProcessingJobStore:
               )
             """,
             (
+                RECONCILIATION_SUPERSEDED,
                 spec.vacancy_id,
                 spec.binding_id,
                 spec.binding_version,

@@ -13,12 +13,12 @@ The stage adds:
 - pure Processing queue contracts;
 - PostgreSQL queue implementation;
 - desired-work reconciliation and explicit pair withdrawal;
+- database-enforced single-active-job invariant per vacancy × binding;
 - `SKIP LOCKED` claiming and expired-lease reclaim;
-- UUID fencing tokens;
-- lease renewal/heartbeat;
+- UUID fencing tokens and heartbeat renewal;
 - deferred/retryable/terminal/cancelled transitions;
 - artifact-first success acknowledgement;
-- worker lifecycle used by later Processing executors.
+- the permanent worker lifecycle used by later Processing executors.
 
 ## Work identity
 
@@ -33,43 +33,82 @@ vacancy_id
 + policy_version
 ```
 
-`input_fingerprint` is produced by the immutable P2-01 `ProcessingInputManifest`. Job IDs,
-claim timestamps, leases and result artifact URIs do not participate in semantic work
-identity.
+`input_fingerprint` comes from the immutable P2-01 `ProcessingInputManifest`. Job IDs, claim
+timestamps, leases and result artifact URIs do not participate in semantic work identity.
 
-Exact successful or terminal work is not silently recomputed. A new semantic input,
-pipeline version or policy version produces different work. Exact work cancelled only because
-it was `superseded` may be reactivated if authoritative current state later returns to that
-same immutable input. Operator/manual cancellation is deliberately not reactivated by normal
-reconciliation.
+Exact successful or terminal work is not silently recomputed. A new semantic input, pipeline
+version or policy version produces different work.
+
+Cancellation ownership is explicit:
+
+```text
+superseded
+reconciliation.*
+```
+
+are reconciliation-owned reasons. Exact work cancelled for one of those reasons may be
+reactivated if authoritative desired state later returns to the same immutable input.
+Operator/manual cancellation is deliberately not reactivated by normal reconciliation and
+cannot use the reserved reconciliation reasons.
+
+## One active job per decision unit
+
+PostgreSQL has a partial unique index:
+
+```text
+UNIQUE (vacancy_id, binding_id)
+WHERE status IN (
+    pending,
+    claimed,
+    running,
+    deferred,
+    retryable_failure
+)
+```
+
+This makes “one active job per vacancy × binding” a database invariant rather than merely a
+repository convention.
+
+Reconciliation therefore runs under a short pair advisory lock and performs operations in
+this order:
+
+```text
+cancel competing active exact-work identities
+↓
+insert / reuse / reactivate desired exact work
+```
+
+The transaction is atomic: if creation/reactivation fails, cancellation of the previous active
+work rolls back with it.
 
 ## Reconciliation
-
-Reconciliation is explicit and idempotent.
 
 For a desired pair:
 
 ```text
-exact work exists -> reuse exact job identity
-exact superseded work -> reactivate as pending
-new exact work -> insert pending job
-other active work for same pair -> cancelled/superseded
+exact active work exists        -> reuse exact job identity
+exact succeeded/terminal work   -> reuse historical job identity
+exact reconciliation-cancelled  -> reactivate as pending
+new exact work                  -> insert pending job
+other active work               -> cancelled as superseded
 ```
 
-For a pair that leaves desired state, the producer must issue an explicit withdrawal:
+For a pair that leaves desired state, the desired-state producer issues explicit withdrawal:
 
 ```text
 withdraw_pair(vacancy_id, binding_id)
 ```
 
-That transition cancels pending/claimed/running/deferred/retryable work and clears its lease,
-so an inflight stale worker is fenced immediately. Absence from one partial/keyset page is
-never interpreted as withdrawal; the caller must derive withdrawals from an authoritative
-current-state reconciliation.
+Withdrawal cancels pending/claimed/running/deferred/retryable work and clears its lease, so an
+inflight stale worker is fenced immediately.
 
-Pair reconciliation and withdrawal use a short PostgreSQL transaction advisory lock to
-serialize competing desired-state writers. No advisory lock is held during S3, Jina, matching
-or worker execution.
+Absence from one partial/keyset page is never interpreted as withdrawal. The caller must derive
+withdrawals from an authoritative current-state reconciliation. P2-02 provides the permanent
+pair-level primitive; the live normalized-ref producer can be added without changing queue
+semantics.
+
+Pair reconciliation and withdrawal use only a short PostgreSQL transaction advisory lock. No
+advisory lock is held during S3, Jina, matching-core calls or worker execution.
 
 ## Claim and fencing
 
@@ -79,7 +118,7 @@ Workers claim one due job with `FOR UPDATE SKIP LOCKED`. Claiming:
 - reclaims expired `claimed`/`running` work;
 - increments `attempt_count`;
 - creates a fresh UUID `lease_token`;
-- records owner and lease timestamps.
+- records lease owner and timestamps.
 
 Every mutation after claim requires:
 
@@ -90,8 +129,8 @@ job id
 + unexpired lease
 ```
 
-A superseded, withdrawn, expired or reclaimed worker therefore receives
-`ProcessingJobLeaseLost` instead of publishing stale success.
+A superseded, withdrawn, expired or reclaimed worker receives `ProcessingJobLeaseLost` instead
+of publishing stale success.
 
 ## Heartbeat
 
@@ -105,7 +144,7 @@ restart rather than silently corrupt queue state.
 
 ## Failure semantics
 
-Business/technical execution returns one operational disposition:
+The executor returns one operational disposition:
 
 ```text
 SUCCEEDED
@@ -114,45 +153,47 @@ RETRYABLE_FAILURE
 TERMINAL_FAILURE
 ```
 
-These are queue states, not matching outcomes. `SKIP`, `REVIEW` and
+These are queue outcomes, not matching decisions. `SKIP`, `REVIEW` and
 `APPLICATION_CANDIDATE` remain later semantic results inside a successful Processing job.
 
 An unhandled executor exception becomes `retryable_failure` with a bounded retry delay.
-Jina/model-specific executors introduced later can return `deferred` for unavailable
+Reranker/model-specific executors introduced later can return `deferred` for unavailable
 capacity/runtime without converting infrastructure failure into a low match score.
 
 ## Artifact-first acknowledgement
 
-A worker may acknowledge `succeeded` only after its executor has already produced an
-`s3://` result artifact URI. PostgreSQL success then stores that URI and clears the lease.
+A worker may acknowledge `succeeded` only after its executor has produced an `s3://` result
+artifact URI. PostgreSQL success stores that URI and clears the lease.
 
 If artifact creation succeeds but the final PostgreSQL transition fails, the object may be an
-orphan and can be garbage-collected later. PostgreSQL must never record `succeeded` without
-an immutable result artifact reference.
+orphan and can be garbage-collected later. PostgreSQL must never record `succeeded` without an
+immutable result artifact reference.
 
 ## Separation from current match publication
 
 P2-02 owns durable computation jobs only. It intentionally does not update `match_results` or
 `application_candidates`.
 
-A previously successful exact job may become current again without recomputation. P2-07 must
-therefore reconcile current match/candidate publication from the pinned successful job and its
-immutable result artifact; queue re-execution is not used as a substitute for current-state
-publication correctness.
+A previously successful exact job may become current again without recomputation. The later
+publication stage must therefore reconcile current match/candidate state from the pinned
+successful job and immutable result artifact; queue re-execution is not a substitute for
+current-state publication correctness.
 
 ## Spark dependency
 
-None of P2-02 depends on Spark implementation. Live desired-work production remains blocked
-until normalized current refs satisfy the P2-01 contract, but queue/reconciliation/worker
-semantics are final and testable against contract fixtures and PostgreSQL v2.
+P2-02 has no Spark implementation dependency. Live desired-work production remains blocked
+until normalized current refs satisfy P2-01, but queue/reconciliation/worker semantics are
+final and testable against contract fixtures and PostgreSQL v2.
 
 ## Definition of Done
 
 - no second processing queue/schema exists;
 - work identity is deterministic and idempotent;
+- PostgreSQL enforces at most one active job per vacancy × binding;
 - newer desired work fences older active work for the pair;
 - explicit pair withdrawal fences stale active work;
-- only `superseded` exact jobs are automatically reactivated;
+- reconciliation-owned cancellation is safely reactivatable;
+- manual cancellation is not silently reactivated;
 - due work is claimed with `SKIP LOCKED`;
 - expired leases are reclaimable with a new fencing token;
 - stale tokens cannot renew, finish, retry or cancel a reclaimed job;
@@ -160,5 +201,5 @@ semantics are final and testable against contract fixtures and PostgreSQL v2.
 - deferred/retryable work is preserved rather than sampled/dropped;
 - success requires an S3 artifact URI;
 - unit tests cover reconciliation and worker lifecycle;
-- PostgreSQL integration tests cover idempotency, supersession, withdrawal, lease reclaim,
-  deferred scheduling and artifact-first completion.
+- PostgreSQL integration tests exercise idempotency, supersession, withdrawal, lease reclaim,
+  deferred scheduling, schema invariants and artifact-first completion.
