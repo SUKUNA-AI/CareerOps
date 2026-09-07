@@ -1,8 +1,7 @@
 """High-recall deterministic vacancy admission filter.
 
-The filter is deliberately asymmetric: it can prove an exclusion, but it never
-proves a match. Missing, ambiguous, mixed-role, or partially understood input
-therefore remains KEEP and proceeds to later Processing stages.
+The filter is asymmetric by design: it may prove an exclusion, but it never
+proves a match. Ambiguous or incomplete evidence therefore remains KEEP.
 """
 
 from __future__ import annotations
@@ -30,6 +29,9 @@ def _rx(pattern: str) -> re.Pattern[str]:
     return re.compile(pattern)
 
 
+# These patterns are intentionally conservative. A title is allowed to prove a
+# foreign occupation only when the occupation itself is explicit. Generic
+# language/framework/research terms are not enough for EXCLUDE_PROVEN.
 _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     RoleFamily.ML_ENGINEERING: (
         _rx(r"\b(?:ml|machine learning)[\s-]*(?:engineer|developer)\b"),
@@ -39,17 +41,17 @@ _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     ),
     RoleFamily.DATA_SCIENCE: (
         _rx(r"\bdata[\s-]*scientist\b"),
-        _rx(r"\bdata science(?:\s+engineer)?\b"),
+        _rx(r"\bdata science\s+engineer\b"),
         _rx(r"\bдата[\s-]*с[аa]йентист\b"),
     ),
     RoleFamily.AI_LLM: (
         _rx(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:engineer|developer)\b"),
         _rx(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:инженер|разработчик)\b"),
         _rx(r"\b(?:инженер|разработчик)\s+(?:ai|ии|llm|nlp|rag)\b"),
-        _rx(r"\b(?:generative ai|genai)(?:\s+(?:engineer|developer))?\b"),
+        _rx(r"\b(?:generative ai|genai)\s+(?:engineer|developer)\b"),
     ),
     RoleFamily.COMPUTER_VISION: (
-        _rx(r"\bcomputer vision(?:\s+(?:engineer|developer))?\b"),
+        _rx(r"\bcomputer vision\s+(?:engineer|developer)\b"),
         _rx(r"\b(?:cv|vlm)[\s-]*(?:engineer|developer)\b"),
         _rx(r"\b(?:cv|vlm)[\s-]*(?:инженер|разработчик)\b"),
         _rx(r"\b(?:инженер|разработчик)\s+компьютерного\s+зрения\b"),
@@ -61,7 +63,9 @@ _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
         _rx(r"\bmodel serving\s+engineer\b"),
     ),
     RoleFamily.ML_RESEARCH: (
-        _rx(r"\b(?:applied|research)\s+(?:scientist|engineer)\b"),
+        _rx(r"\b(?:ml|ai|machine learning)\s+research\s+(?:engineer|scientist)\b"),
+        _rx(r"\bresearch\s+(?:engineer|scientist)\s+(?:ml|ai|machine learning)\b"),
+        _rx(r"\bapplied\s+(?:ml|ai|machine learning)\s+scientist\b"),
         _rx(r"\b(?:ml|ai)[\s-]*researcher\b"),
         _rx(r"\bисследователь\s+(?:ml|ai|ии|машинного обучения)\b"),
     ),
@@ -82,9 +86,9 @@ _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     RoleFamily.PYTHON_BACKEND: (
         _rx(r"\bpython[\s-]*backend(?:\s+(?:developer|engineer))?\b"),
         _rx(r"\bbackend(?:\s+(?:developer|engineer))?\s+python\b"),
-        _rx(r"\bpython[\s-]*(?:developer|software engineer)\b"),
-        _rx(r"\bpython[\s-]*разработчик\b"),
+        _rx(r"\bserver[\s-]*side\s+python(?:\s+(?:developer|engineer))?\b"),
         _rx(r"\b(?:бэкенд|бекенд)[\s-]*разработчик\s+python\b"),
+        _rx(r"\bpython[\s-]*(?:бэкенд|бекенд)[\s-]*(?:разработчик|инженер)\b"),
     ),
     RoleFamily.CPP: (
         _rx(r"(?<!\w)c\+\+(?!\w)(?:\s+(?:developer|engineer|programmer))?"),
@@ -94,15 +98,14 @@ _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     RoleFamily.DATA_ANALYTICS: (
         _rx(r"\bdata[\s-]*analyst\b"),
         _rx(r"\b(?:аналитик данных|аналитик dwh)\b"),
-        _rx(r"\bbi[\s-]*(?:analyst|developer)\b"),
+        _rx(r"\bbi[\s-]*analyst\b"),
     ),
     RoleFamily.JAVA_BACKEND: (
-        _rx(r"\bjava[\s-]*(?:developer|engineer)\b"),
         _rx(r"\bjava\s+backend(?:\s+(?:developer|engineer))?\b"),
         _rx(r"\bbackend(?:\s+(?:developer|engineer))?\s+java\b"),
         _rx(r"\bbackend\s+java(?:\s+(?:developer|engineer))?\b"),
-        _rx(r"\b(?:разработчик|инженер)\s+java\b"),
         _rx(r"\bjava[\s-]*(?:бэкенд|бекенд)[\s-]*(?:разработчик|инженер)\b"),
+        _rx(r"\b(?:бэкенд|бекенд)[\s-]*(?:разработчик|инженер)\s+java\b"),
     ),
     RoleFamily.FRONTEND: (
         _rx(r"\bfront[\s-]*end(?:\s+(?:developer|engineer))?\b"),
@@ -159,7 +162,32 @@ _MANAGEMENT_PATTERNS = (
     _rx(r"\bруководитель\s+(?:команды|отдела|направления|проекта)\b"),
 )
 
-_NEGATION_WORDS = {"no", "not", "without", "не", "нет", "без"}
+_NEGATION_WORDS = {
+    "no",
+    "not",
+    "never",
+    "without",
+    "не",
+    "нет",
+    "никогда",
+    "без",
+}
+_NEGATION_PHRASES = (
+    "do not work with",
+    "does not work with",
+    "not related to",
+    "not connected to",
+    "not required",
+    "no requirement",
+    "не работаем с",
+    "не связан с",
+    "не связана с",
+    "не относится к",
+    "не требуется",
+    "не требуем",
+    "не обязателен",
+    "не обязательна",
+)
 _RELOCATION_NEGATIVE_PHRASES = (
     "relocation is not required",
     "relocation not required",
@@ -280,22 +308,12 @@ def _exclude(
 
 
 def _is_negated(text: str, start: int) -> bool:
-    prefix = text[max(0, start - 64) : start]
-    words = re.findall(r"[a-zа-я0-9+_-]+", _normalize(prefix))[-4:]
+    prefix = _normalize(text[max(0, start - 96) : start])
+    words = re.findall(r"[a-zа-я0-9+_-]+", prefix)[-6:]
     if any(word in _NEGATION_WORDS for word in words):
         return True
     compact = " ".join(words)
-    return any(
-        phrase in compact
-        for phrase in (
-            "не требуется",
-            "не требуем",
-            "не обязателен",
-            "не обязательна",
-            "not required",
-            "no requirement",
-        )
-    )
+    return any(phrase in compact for phrase in _NEGATION_PHRASES)
 
 
 def _contains_unnegated_term(text: str, term: str) -> bool:
@@ -329,9 +347,7 @@ def _location_conflict_proven(
 ) -> FilterEvidence | None:
     if not (policy.allowed_area_ids or policy.allowed_area_names):
         return None
-    if not all_formats_understood:
-        return None
-    if WorkFormat.REMOTE in formats:
+    if not all_formats_understood or WorkFormat.REMOTE in formats:
         return None
     if vacancy.location.state is not ValueState.KNOWN or vacancy.location.value is None:
         return None
@@ -358,18 +374,11 @@ def _location_conflict_proven(
             allowed_names = {_normalize(value) for value in policy.allowed_area_names}
             matched = matched or actual_name in allowed_names
 
-    if matched:
-        return None
-
-    # A hard reject is safe only when every configured location dimension was
-    # actually comparable. Otherwise an unseen alternative could still match.
-    if policy_dimensions == 0 or comparable_dimensions != policy_dimensions:
+    if matched or policy_dimensions == 0 or comparable_dimensions != policy_dimensions:
         return None
 
     value = location.area_id or location.area_name
-    if value is None:
-        return None
-    return _evidence("vacancy.location", value)
+    return _evidence("vacancy.location", value) if value is not None else None
 
 
 def _unavailable_exclusion(
