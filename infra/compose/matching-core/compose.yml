@@ -1,0 +1,24 @@
+name: careerops-matching-core
+
+services:
+  matching-core:
+    container_name: careerops-matching-core
+    build:
+      context: ../../..
+      dockerfile: infra/compose/matching-core/Dockerfile
+    network_mode: host
+    environment:
+      CAREEROPS_MATCHING_CORE_LISTEN_ADDR: 127.0.0.1:50051
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

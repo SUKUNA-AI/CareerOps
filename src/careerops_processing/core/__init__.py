@@ -1,6 +1,7 @@
-"""Pure deterministic Processing core boundary.
+"""Pure deterministic Python reference semantics for Processing v2.
 
-Implementation intentionally starts in Python. The package must remain free of
-PostgreSQL, S3, HTTP and model-serving concerns so measured hot paths can later be
-replaced by the native module without changing service orchestration contracts.
+This package stays free of PostgreSQL, S3, HTTP and model-serving concerns. It is the
+correctness/reference implementation used to define and test deterministic semantics.
+Measured production hot paths may later execute in the separate C++20
+`careerops-matching-core` service, which must prove parity against this reference layer.
 """
