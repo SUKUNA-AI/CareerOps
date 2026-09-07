@@ -8,8 +8,8 @@ therefore remains KEEP and proceeds to later Processing stages.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from decimal import Decimal
-from typing import Iterable
 
 from careerops_processing.contracts.common import SourceLabel, ValueState
 from careerops_processing.contracts.filtering import (
@@ -26,133 +26,137 @@ from careerops_processing.contracts.normalized import NormalizedResume, Normaliz
 from careerops_processing.contracts.policy import TargetPolicy
 
 
+def _rx(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern)
+
+
 _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     RoleFamily.ML_ENGINEERING: (
-        re.compile(r"\b(?:ml|machine learning)[\s-]*(?:engineer|developer)\b"),
-        re.compile(r"\bml[\s-]*(?:инженер|разработчик)\b"),
-        re.compile(r"\bинженер(?:\s+по)?\s+машинн(?:ому|ого)\s+обучени[юя]\b"),
-        re.compile(r"\bразработчик\s+(?:моделей\s+)?машинного\s+обучения\b"),
+        _rx(r"\b(?:ml|machine learning)[\s-]*(?:engineer|developer)\b"),
+        _rx(r"\bml[\s-]*(?:инженер|разработчик)\b"),
+        _rx(r"\bинженер(?:\s+по)?\s+машинн(?:ому|ого)\s+обучени[юя]\b"),
+        _rx(r"\bразработчик\s+(?:моделей\s+)?машинного\s+обучения\b"),
     ),
     RoleFamily.DATA_SCIENCE: (
-        re.compile(r"\bdata[\s-]*scientist\b"),
-        re.compile(r"\bdata science(?:\s+engineer)?\b"),
-        re.compile(r"\bдата[\s-]*с[аa]йентист\b"),
+        _rx(r"\bdata[\s-]*scientist\b"),
+        _rx(r"\bdata science(?:\s+engineer)?\b"),
+        _rx(r"\bдата[\s-]*с[аa]йентист\b"),
     ),
     RoleFamily.AI_LLM: (
-        re.compile(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:engineer|developer)\b"),
-        re.compile(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:инженер|разработчик)\b"),
-        re.compile(r"\b(?:инженер|разработчик)\s+(?:ai|ии|llm|nlp|rag)\b"),
-        re.compile(r"\b(?:generative ai|genai)(?:\s+(?:engineer|developer))?\b"),
+        _rx(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:engineer|developer)\b"),
+        _rx(r"\b(?:ai|llm|nlp|rag)[\s-]*(?:инженер|разработчик)\b"),
+        _rx(r"\b(?:инженер|разработчик)\s+(?:ai|ии|llm|nlp|rag)\b"),
+        _rx(r"\b(?:generative ai|genai)(?:\s+(?:engineer|developer))?\b"),
     ),
     RoleFamily.COMPUTER_VISION: (
-        re.compile(r"\bcomputer vision(?:\s+(?:engineer|developer))?\b"),
-        re.compile(r"\b(?:cv|vlm)[\s-]*(?:engineer|developer)\b"),
-        re.compile(r"\b(?:cv|vlm)[\s-]*(?:инженер|разработчик)\b"),
-        re.compile(r"\b(?:инженер|разработчик)\s+компьютерного\s+зрения\b"),
+        _rx(r"\bcomputer vision(?:\s+(?:engineer|developer))?\b"),
+        _rx(r"\b(?:cv|vlm)[\s-]*(?:engineer|developer)\b"),
+        _rx(r"\b(?:cv|vlm)[\s-]*(?:инженер|разработчик)\b"),
+        _rx(r"\b(?:инженер|разработчик)\s+компьютерного\s+зрения\b"),
     ),
     RoleFamily.MLOPS: (
-        re.compile(r"\bmlops(?:\s+(?:engineer|developer))?\b"),
-        re.compile(r"\bml[\s-]*(?:platform|infrastructure)\s+engineer\b"),
-        re.compile(r"\b(?:ml|llm)[\s-]*inference\s+engineer\b"),
-        re.compile(r"\bmodel serving\s+engineer\b"),
+        _rx(r"\bmlops(?:\s+(?:engineer|developer))?\b"),
+        _rx(r"\bml[\s-]*(?:platform|infrastructure)\s+engineer\b"),
+        _rx(r"\b(?:ml|llm)[\s-]*inference\s+engineer\b"),
+        _rx(r"\bmodel serving\s+engineer\b"),
     ),
     RoleFamily.ML_RESEARCH: (
-        re.compile(r"\b(?:applied|research)\s+(?:scientist|engineer)\b"),
-        re.compile(r"\b(?:ml|ai)[\s-]*researcher\b"),
-        re.compile(r"\bисследователь\s+(?:ml|ai|ии|машинного обучения)\b"),
+        _rx(r"\b(?:applied|research)\s+(?:scientist|engineer)\b"),
+        _rx(r"\b(?:ml|ai)[\s-]*researcher\b"),
+        _rx(r"\bисследователь\s+(?:ml|ai|ии|машинного обучения)\b"),
     ),
     RoleFamily.RECOMMENDATION_RANKING: (
-        re.compile(
-            r"\b(?:recommendation|recommender|ranking|personalization)"
-            r"[\s-].*engineer\b"
-        ),
-        re.compile(r"\b(?:инженер|разработчик)\s+(?:рекомендательных систем|ранжирования)\b"),
+        _rx(r"\b(?:recommendation|recommender|ranking|personalization)[\s-].*engineer\b"),
+        _rx(r"\b(?:инженер|разработчик)\s+(?:рекомендательных систем|ранжирования)\b"),
     ),
     RoleFamily.DATA_ENGINEERING: (
-        re.compile(r"\bdata[\s-]*(?:engineer|engineering)\b"),
-        re.compile(r"\b(?:etl|elt|dwh)[\s-]*(?:engineer|developer)\b"),
-        re.compile(
+        _rx(r"\bdata[\s-]*(?:engineer|engineering)\b"),
+        _rx(r"\b(?:etl|elt|dwh)[\s-]*(?:engineer|developer)\b"),
+        _rx(
             r"\b(?:data platform|data pipeline|data infrastructure|big data|streaming data)"
             r"\s+engineer\b"
         ),
-        re.compile(r"\b(?:дата[\s-]*инженер|инженер данных)\b"),
-        re.compile(r"\b(?:разработчик|инженер)\s+(?:etl|dwh|хранилищ? данных|витрин данных)\b"),
+        _rx(r"\b(?:дата[\s-]*инженер|инженер данных)\b"),
+        _rx(r"\b(?:разработчик|инженер)\s+(?:etl|dwh|хранилищ? данных|витрин данных)\b"),
     ),
     RoleFamily.PYTHON_BACKEND: (
-        re.compile(r"\bpython[\s-]*backend(?:\s+(?:developer|engineer))?\b"),
-        re.compile(r"\bbackend(?:\s+(?:developer|engineer))?\s+python\b"),
-        re.compile(r"\bpython[\s-]*(?:developer|software engineer)\b"),
-        re.compile(r"\bpython[\s-]*разработчик\b"),
-        re.compile(r"\b(?:бэкенд|бекенд)[\s-]*разработчик\s+python\b"),
+        _rx(r"\bpython[\s-]*backend(?:\s+(?:developer|engineer))?\b"),
+        _rx(r"\bbackend(?:\s+(?:developer|engineer))?\s+python\b"),
+        _rx(r"\bpython[\s-]*(?:developer|software engineer)\b"),
+        _rx(r"\bpython[\s-]*разработчик\b"),
+        _rx(r"\b(?:бэкенд|бекенд)[\s-]*разработчик\s+python\b"),
     ),
     RoleFamily.CPP: (
-        re.compile(r"(?<!\w)c\+\+(?:\s+(?:developer|engineer|programmer))?\b"),
-        re.compile(r"\bc/c\+\+(?:\s+(?:developer|engineer))?\b"),
-        re.compile(r"\b(?:разработчик|программист|инженер)\s+c\+\+\b"),
+        _rx(r"(?<!\w)c\+\+(?!\w)(?:\s+(?:developer|engineer|programmer))?"),
+        _rx(r"(?<!\w)c/c\+\+(?!\w)(?:\s+(?:developer|engineer))?"),
+        _rx(r"\b(?:разработчик|программист|инженер)\s+c\+\+(?!\w)"),
     ),
     RoleFamily.DATA_ANALYTICS: (
-        re.compile(r"\bdata[\s-]*analyst\b"),
-        re.compile(r"\b(?:аналитик данных|аналитик dwh)\b"),
-        re.compile(r"\bbi[\s-]*(?:analyst|developer)\b"),
+        _rx(r"\bdata[\s-]*analyst\b"),
+        _rx(r"\b(?:аналитик данных|аналитик dwh)\b"),
+        _rx(r"\bbi[\s-]*(?:analyst|developer)\b"),
     ),
     RoleFamily.JAVA_BACKEND: (
-        re.compile(r"\bjava[\s-]*(?:developer|engineer)\b"),
-        re.compile(r"\bbackend(?:\s+(?:developer|engineer))?\s+java\b"),
-        re.compile(r"\b(?:разработчик|инженер)\s+java\b"),
+        _rx(r"\bjava[\s-]*(?:developer|engineer)\b"),
+        _rx(r"\bjava\s+backend(?:\s+(?:developer|engineer))?\b"),
+        _rx(r"\bbackend(?:\s+(?:developer|engineer))?\s+java\b"),
+        _rx(r"\bbackend\s+java(?:\s+(?:developer|engineer))?\b"),
+        _rx(r"\b(?:разработчик|инженер)\s+java\b"),
+        _rx(r"\bjava[\s-]*(?:бэкенд|бекенд)[\s-]*(?:разработчик|инженер)\b"),
     ),
     RoleFamily.FRONTEND: (
-        re.compile(r"\bfront[\s-]*end(?:\s+(?:developer|engineer))?\b"),
-        re.compile(r"\bfrontend(?:\s+(?:developer|engineer))?\b"),
-        re.compile(r"\bфронтенд[\s-]*(?:разработчик|инженер)\b"),
+        _rx(r"\bfront[\s-]*end(?:\s+(?:developer|engineer))?\b"),
+        _rx(r"\bfrontend(?:\s+(?:developer|engineer))?\b"),
+        _rx(r"\bфронтенд[\s-]*(?:разработчик|инженер)\b"),
     ),
     RoleFamily.DEVOPS: (
-        re.compile(r"\bdevops(?:\s+engineer)?\b"),
-        re.compile(r"\bdevops[\s-]*инженер\b"),
+        _rx(r"\bdevops(?:\s+engineer)?\b"),
+        _rx(r"\bdevops[\s-]*инженер\b"),
     ),
     RoleFamily.QA: (
-        re.compile(r"\bqa(?:\s+(?:engineer|automation))?\b"),
-        re.compile(r"\btest(?:\s+automation)?\s+engineer\b"),
-        re.compile(r"\b(?:qa[\s-]*инженер|тестировщик)\b"),
+        _rx(r"\bqa(?:\s+(?:engineer|automation))?\b"),
+        _rx(r"\btest(?:\s+automation)?\s+engineer\b"),
+        _rx(r"\b(?:qa[\s-]*инженер|тестировщик)\b"),
     ),
     RoleFamily.PRODUCT_MANAGEMENT: (
-        re.compile(r"\bproduct\s+manager\b"),
-        re.compile(r"\bпродуктов(?:ый|ого)\s+менеджер\b"),
+        _rx(r"\bproduct\s+manager\b"),
+        _rx(r"\bпродуктов(?:ый|ого)\s+менеджер\b"),
     ),
     RoleFamily.PROJECT_MANAGEMENT: (
-        re.compile(r"\bproject\s+manager\b"),
-        re.compile(r"\bруководитель\s+проекта\b"),
+        _rx(r"\bproject\s+manager\b"),
+        _rx(r"\bруководитель\s+проекта\b"),
     ),
     RoleFamily.BUSINESS_ANALYSIS: (
-        re.compile(r"\bbusiness\s+analyst\b"),
-        re.compile(r"\bбизнес[\s-]*аналитик\b"),
+        _rx(r"\bbusiness\s+analyst\b"),
+        _rx(r"\bбизнес[\s-]*аналитик\b"),
     ),
     RoleFamily.SYSTEM_ANALYSIS: (
-        re.compile(r"\bsystem(?:s)?\s+analyst\b"),
-        re.compile(r"\bсистемн(?:ый|ого)\s+аналитик\b"),
+        _rx(r"\bsystem(?:s)?\s+analyst\b"),
+        _rx(r"\bсистемн(?:ый|ого)\s+аналитик\b"),
     ),
     RoleFamily.DBA: (
-        re.compile(r"\b(?:database administrator|dba)\b"),
-        re.compile(r"\bадминистратор\s+баз(?:ы| данных)\b"),
+        _rx(r"\b(?:database administrator|dba)\b"),
+        _rx(r"\bадминистратор\s+баз(?:ы| данных)\b"),
     ),
 }
 
 _SENIORITY_PATTERNS: dict[SeniorityLevel, tuple[re.Pattern[str], ...]] = {
-    SeniorityLevel.INTERN: (re.compile(r"\b(?:intern|internship|trainee|стажер|стажёр)\b"),),
-    SeniorityLevel.JUNIOR: (re.compile(r"\b(?:junior|jr\.?|младший)\b"),),
-    SeniorityLevel.MIDDLE: (re.compile(r"\b(?:middle|mid(?:dle)?|мидл)\b"),),
-    SeniorityLevel.SENIOR: (re.compile(r"\b(?:senior|sr\.?|старший)\b"),),
-    SeniorityLevel.LEAD: (re.compile(r"\b(?:tech\s+lead|team\s+lead|lead|лид|тимлид)\b"),),
-    SeniorityLevel.PRINCIPAL: (re.compile(r"\b(?:principal|staff|ведущий)\b"),),
-    SeniorityLevel.HEAD: (re.compile(r"\b(?:head|director|руководитель)\b"),),
+    SeniorityLevel.INTERN: (_rx(r"\b(?:intern|internship|trainee|стажер|стажёр)\b"),),
+    SeniorityLevel.JUNIOR: (_rx(r"\b(?:junior|jr\.?|младший)\b"),),
+    SeniorityLevel.MIDDLE: (_rx(r"\b(?:middle|mid(?:dle)?|мидл)\b"),),
+    SeniorityLevel.SENIOR: (_rx(r"\b(?:senior|sr\.?|старший)\b"),),
+    SeniorityLevel.LEAD: (_rx(r"\b(?:tech\s+lead|team\s+lead|lead|лид|тимлид)\b"),),
+    SeniorityLevel.PRINCIPAL: (_rx(r"\b(?:principal|staff|ведущий)\b"),),
+    SeniorityLevel.HEAD: (_rx(r"\b(?:head|director|руководитель)\b"),),
 }
 
 _MANAGEMENT_PATTERNS = (
-    re.compile(r"\bteam\s+lead\b"),
-    re.compile(r"\bhead\s+of\b"),
-    re.compile(r"\bdirector\b"),
-    re.compile(r"\bmanager\b"),
-    re.compile(r"\bтимлид\b"),
-    re.compile(r"\bруководитель\s+(?:команды|отдела|направления|проекта)\b"),
+    _rx(r"\bteam\s+lead\b"),
+    _rx(r"\bhead\s+of\b"),
+    _rx(r"\bdirector\b"),
+    _rx(r"\bmanager\b"),
+    _rx(r"\bтимлид\b"),
+    _rx(r"\bруководитель\s+(?:команды|отдела|направления|проекта)\b"),
 )
 
 _NEGATION_WORDS = {"no", "not", "without", "не", "нет", "без"}
@@ -170,6 +174,20 @@ _RELOCATION_NEGATIVE_PHRASES = (
     "без релокации",
     "без переезда",
 )
+_RELOCATION_POSITIVE_PHRASES = (
+    "relocation required",
+    "relocation is required",
+    "relocation mandatory",
+    "relocation is mandatory",
+    "релокация обязательна",
+    "релокация необходима",
+    "требуется релокация",
+    "переезд обязателен",
+    "переезд необходим",
+    "требуется переезд",
+    "готовность к переезду",
+    "готовность к релокации",
+)
 
 
 def _normalize(text: str) -> str:
@@ -178,7 +196,7 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _title(vacancy: NormalizedVacancy) -> str | None:
+def _known_title(vacancy: NormalizedVacancy) -> str | None:
     if vacancy.title.state is not ValueState.KNOWN or vacancy.title.value is None:
         return None
     return _normalize(str(vacancy.title.value))
@@ -201,7 +219,7 @@ def _seniority_levels(title: str) -> frozenset[SeniorityLevel]:
 
 
 def _label_text(label: SourceLabel) -> str:
-    parts = [label.key, label.label or "", label.source_code or ""]
+    parts = (label.key, label.label or "", label.source_code or "")
     return _normalize(" ".join(part for part in parts if part))
 
 
@@ -216,14 +234,31 @@ def _work_format(label: SourceLabel) -> WorkFormat | None:
     return None
 
 
+def _known_work_formats(vacancy: NormalizedVacancy) -> tuple[frozenset[WorkFormat], bool]:
+    if not vacancy.work_formats:
+        return frozenset(), False
+    resolved: set[WorkFormat] = set()
+    for label in vacancy.work_formats:
+        value = _work_format(label)
+        if value is None:
+            return frozenset(resolved), False
+        resolved.add(value)
+    return frozenset(resolved), True
+
+
 def _evidence(path: str, value: object) -> FilterEvidence:
     return FilterEvidence(source_path=path, value=str(value))
 
 
-def _text_evidence(path: str, text: str, locator: str, quote: str) -> FilterEvidence:
+def _text_evidence(
+    path: str,
+    value: str,
+    locator: str,
+    quote: str,
+) -> FilterEvidence:
     return FilterEvidence(
         source_path=path,
-        value=text,
+        value=value,
         source_locator=locator,
         quote=quote,
     )
@@ -246,7 +281,7 @@ def _exclude(
 
 def _is_negated(text: str, start: int) -> bool:
     prefix = text[max(0, start - 64) : start]
-    words = re.findall(r"[a-zа-я0-9+_-]+", prefix.casefold().replace("ё", "е"))[-4:]
+    words = re.findall(r"[a-zа-я0-9+_-]+", _normalize(prefix))[-4:]
     if any(word in _NEGATION_WORDS for word in words):
         return True
     compact = " ".join(words)
@@ -263,53 +298,313 @@ def _is_negated(text: str, start: int) -> bool:
     )
 
 
-def _unnegated_term(text: str, term: str) -> bool:
-    normalized_text = _normalize(text)
-    normalized_term = _normalize(term)
-    if not normalized_term:
+def _contains_unnegated_term(text: str, term: str) -> bool:
+    haystack = _normalize(text)
+    needle = _normalize(term)
+    if not needle:
         return False
     start = 0
     while True:
-        index = normalized_text.find(normalized_term, start)
+        index = haystack.find(needle, start)
         if index < 0:
             return False
-        if not _is_negated(normalized_text, index):
+        if not _is_negated(haystack, index):
             return True
-        start = index + len(normalized_term)
+        start = index + len(needle)
 
 
 def _explicit_relocation_required(fact: str) -> bool:
     text = _normalize(fact)
     if any(phrase in text for phrase in _RELOCATION_NEGATIVE_PHRASES):
         return False
+    return any(phrase in text for phrase in _RELOCATION_POSITIVE_PHRASES)
 
-    relocation_tokens = ("relocation", "релокац", "переезд")
-    if not any(token in text for token in relocation_tokens):
-        return False
 
-    positive_markers = (
-        "required",
-        "mandatory",
-        "обязател",
-        "необходим",
-        "готовность к переезду",
-        "готовность к релокации",
+def _location_conflict_proven(
+    vacancy: NormalizedVacancy,
+    policy: FilterPolicy,
+    *,
+    formats: frozenset[WorkFormat],
+    all_formats_understood: bool,
+) -> FilterEvidence | None:
+    if not (policy.allowed_area_ids or policy.allowed_area_names):
+        return None
+    if not all_formats_understood:
+        return None
+    if WorkFormat.REMOTE in formats:
+        return None
+    if vacancy.location.state is not ValueState.KNOWN or vacancy.location.value is None:
+        return None
+
+    location = vacancy.location.value
+    actual_id = location.area_id.casefold() if location.area_id else None
+    actual_name = _normalize(location.area_name) if location.area_name else None
+
+    policy_dimensions = 0
+    comparable_dimensions = 0
+    matched = False
+
+    if policy.allowed_area_ids:
+        policy_dimensions += 1
+        if actual_id is not None:
+            comparable_dimensions += 1
+            allowed_ids = {value.casefold() for value in policy.allowed_area_ids}
+            matched = matched or actual_id in allowed_ids
+
+    if policy.allowed_area_names:
+        policy_dimensions += 1
+        if actual_name is not None:
+            comparable_dimensions += 1
+            allowed_names = {_normalize(value) for value in policy.allowed_area_names}
+            matched = matched or actual_name in allowed_names
+
+    if matched:
+        return None
+
+    # A hard reject is safe only when every configured location dimension was
+    # actually comparable. Otherwise an unseen alternative could still match.
+    if policy_dimensions == 0 or comparable_dimensions != policy_dimensions:
+        return None
+
+    value = location.area_id or location.area_name
+    if value is None:
+        return None
+    return _evidence("vacancy.location", value)
+
+
+def _unavailable_exclusion(
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if not policy.exclude_unavailable:
+        return None
+    evidence: list[FilterEvidence] = []
+    if vacancy.archived.state is ValueState.KNOWN and vacancy.archived.value is True:
+        evidence.append(_evidence("vacancy.archived", True))
+    if (
+        vacancy.closed_for_applicants.state is ValueState.KNOWN
+        and vacancy.closed_for_applicants.value is True
+    ):
+        evidence.append(_evidence("vacancy.closed_for_applicants", True))
+    if not evidence:
+        return None
+    return _exclude(
+        rule_id="filter.source.unavailable.v1",
+        reason_code="source.vacancy_unavailable",
+        target_policy=target_policy,
+        evidence=evidence,
     )
-    return any(marker in text for marker in positive_markers)
 
 
-def _known_work_formats(vacancy: NormalizedVacancy) -> tuple[frozenset[WorkFormat], bool]:
-    if not vacancy.work_formats:
-        return frozenset(), False
-    resolved: set[WorkFormat] = set()
-    all_understood = True
-    for label in vacancy.work_formats:
-        value = _work_format(label)
-        if value is None:
-            all_understood = False
-        else:
-            resolved.add(value)
-    return frozenset(resolved), all_understood
+def _role_exclusion(
+    title: str | None,
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if title is None:
+        return None
+    families = _role_families(title)
+    if not families:
+        return None
+
+    allowed = set(policy.allowed_primary_roles)
+    forbidden = set(policy.forbidden_primary_roles)
+    disjoint_from_allowed = bool(allowed) and families.isdisjoint(allowed)
+    wholly_forbidden = bool(forbidden) and families <= forbidden
+    if not (disjoint_from_allowed or wholly_forbidden):
+        return None
+
+    return _exclude(
+        rule_id="filter.role.primary_disjoint.v1",
+        reason_code="filter.primary_role_disjoint",
+        target_policy=target_policy,
+        evidence=(_evidence("vacancy.title", vacancy.title.value),),
+    )
+
+
+def _seniority_exclusion(
+    title: str | None,
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if title is None or not policy.forbidden_seniority:
+        return None
+    levels = _seniority_levels(title)
+    forbidden = set(policy.forbidden_seniority)
+    if not levels or not levels <= forbidden:
+        return None
+    return _exclude(
+        rule_id="filter.seniority.forbidden.v1",
+        reason_code="filter.seniority_forbidden",
+        target_policy=target_policy,
+        evidence=(_evidence("vacancy.title", vacancy.title.value),),
+    )
+
+
+def _management_exclusion(
+    title: str | None,
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if title is None or policy.management_allowed:
+        return None
+    if not any(pattern.search(title) for pattern in _MANAGEMENT_PATTERNS):
+        return None
+    return _exclude(
+        rule_id="filter.management.forbidden.v1",
+        reason_code="filter.management_forbidden",
+        target_policy=target_policy,
+        evidence=(_evidence("vacancy.title", vacancy.title.value),),
+    )
+
+
+def _work_format_exclusion(
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+    *,
+    formats: frozenset[WorkFormat],
+    all_formats_understood: bool,
+) -> ProvenExclusion | None:
+    allowed = set(policy.allowed_work_formats)
+    if not allowed or not formats or not all_formats_understood:
+        return None
+    if not formats.isdisjoint(allowed):
+        return None
+    return _exclude(
+        rule_id="filter.work_format.hard_conflict.v1",
+        reason_code="policy.hard_work_format_conflict",
+        target_policy=target_policy,
+        evidence=tuple(
+            _evidence("vacancy.work_formats", _label_text(label))
+            for label in vacancy.work_formats
+        ),
+    )
+
+
+def _location_exclusion(
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+    *,
+    formats: frozenset[WorkFormat],
+    all_formats_understood: bool,
+) -> ProvenExclusion | None:
+    evidence = _location_conflict_proven(
+        vacancy,
+        policy,
+        formats=formats,
+        all_formats_understood=all_formats_understood,
+    )
+    if evidence is None:
+        return None
+    return _exclude(
+        rule_id="filter.location.hard_conflict.v1",
+        reason_code="policy.hard_location_conflict",
+        target_policy=target_policy,
+        evidence=(evidence,),
+    )
+
+
+def _relocation_exclusion(
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if policy.relocation_allowed:
+        return None
+    for fact in vacancy.relocation_facts:
+        if _explicit_relocation_required(fact):
+            return _exclude(
+                rule_id="filter.relocation.required.v1",
+                reason_code="policy.relocation_required",
+                target_policy=target_policy,
+                evidence=(_evidence("vacancy.relocation_facts", fact),),
+            )
+    return None
+
+
+def _experience_exclusion(
+    vacancy: NormalizedVacancy,
+    resume: NormalizedResume | None,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if resume is None or policy.maximum_experience_gap_years is None:
+        return None
+    if vacancy.experience.state is not ValueState.KNOWN or vacancy.experience.value is None:
+        return None
+    if vacancy.experience.value.minimum_years is None:
+        return None
+    if (
+        resume.total_experience_years.state is not ValueState.KNOWN
+        or resume.total_experience_years.value is None
+    ):
+        return None
+
+    required = Decimal(vacancy.experience.value.minimum_years)
+    available = Decimal(resume.total_experience_years.value)
+    if required <= available + policy.maximum_experience_gap_years:
+        return None
+
+    return _exclude(
+        rule_id="filter.experience.gap_exceeded.v1",
+        reason_code="filter.experience_gap_exceeded",
+        target_policy=target_policy,
+        evidence=(
+            _evidence("vacancy.experience.minimum_years", required),
+            _evidence("resume.total_experience_years", available),
+        ),
+    )
+
+
+def _forbidden_context_exclusion(
+    vacancy: NormalizedVacancy,
+    target_policy: TargetPolicy,
+    policy: FilterPolicy,
+) -> ProvenExclusion | None:
+    if not policy.forbidden_context_terms:
+        return None
+
+    sources: list[tuple[str, str, str | None, str | None]] = []
+    if vacancy.title.state is ValueState.KNOWN and vacancy.title.value is not None:
+        sources.append(("vacancy.title", str(vacancy.title.value), None, None))
+    if vacancy.employer.state is ValueState.KNOWN and vacancy.employer.value is not None:
+        if vacancy.employer.value.name:
+            sources.append(("vacancy.employer.name", vacancy.employer.value.name, None, None))
+    for block in vacancy.text_blocks:
+        sources.append(
+            (
+                f"vacancy.text_blocks.{block.block_id}",
+                block.text,
+                block.source_ref.locator,
+                block.source_ref.quote,
+            )
+        )
+
+    evidence: list[FilterEvidence] = []
+    for term in policy.forbidden_context_terms:
+        for path, text, locator, quote in sources:
+            if not _contains_unnegated_term(text, term):
+                continue
+            if locator is not None and quote is not None:
+                evidence.append(_text_evidence(path, term, locator, quote))
+            else:
+                evidence.append(_evidence(path, term))
+            break
+
+    if not evidence:
+        return None
+    return _exclude(
+        rule_id="filter.context.forbidden.v1",
+        reason_code="policy.forbidden_context",
+        target_policy=target_policy,
+        evidence=evidence,
+    )
 
 
 def evaluate_filter(
@@ -320,197 +615,37 @@ def evaluate_filter(
     """Return KEEP unless at least one policy-backed exclusion is fully proven."""
 
     policy = FilterPolicy.from_target_policy(target_policy)
-    exclusions: list[ProvenExclusion] = []
-
-    if policy.exclude_unavailable:
-        unavailable: list[FilterEvidence] = []
-        if vacancy.archived.state is ValueState.KNOWN and vacancy.archived.value is True:
-            unavailable.append(_evidence("vacancy.archived", True))
-        if (
-            vacancy.closed_for_applicants.state is ValueState.KNOWN
-            and vacancy.closed_for_applicants.value is True
-        ):
-            unavailable.append(_evidence("vacancy.closed_for_applicants", True))
-        if unavailable:
-            exclusions.append(
-                _exclude(
-                    rule_id="filter.source.unavailable.v1",
-                    reason_code="source.vacancy_unavailable",
-                    target_policy=target_policy,
-                    evidence=unavailable,
-                )
-            )
-
-    title = _title(vacancy)
-    if title is not None:
-        families = _role_families(title)
-        if families:
-            allowed = set(policy.allowed_primary_roles)
-            forbidden = set(policy.forbidden_primary_roles)
-            proven_disjoint = bool(allowed) and families.isdisjoint(allowed)
-            proven_forbidden = bool(forbidden) and families <= forbidden
-            if proven_disjoint or proven_forbidden:
-                exclusions.append(
-                    _exclude(
-                        rule_id="filter.role.primary_disjoint.v1",
-                        reason_code="filter.primary_role_disjoint",
-                        target_policy=target_policy,
-                        evidence=(_evidence("vacancy.title", vacancy.title.value),),
-                    )
-                )
-
-        seniority = _seniority_levels(title)
-        forbidden_seniority = set(policy.forbidden_seniority)
-        if seniority and forbidden_seniority and seniority <= forbidden_seniority:
-            exclusions.append(
-                _exclude(
-                    rule_id="filter.seniority.forbidden.v1",
-                    reason_code="filter.seniority_forbidden",
-                    target_policy=target_policy,
-                    evidence=(_evidence("vacancy.title", vacancy.title.value),),
-                )
-            )
-
-        if not policy.management_allowed and any(
-            pattern.search(title) for pattern in _MANAGEMENT_PATTERNS
-        ):
-            exclusions.append(
-                _exclude(
-                    rule_id="filter.management.forbidden.v1",
-                    reason_code="filter.management_forbidden",
-                    target_policy=target_policy,
-                    evidence=(_evidence("vacancy.title", vacancy.title.value),),
-                )
-            )
-
+    title = _known_title(vacancy)
     formats, all_formats_understood = _known_work_formats(vacancy)
-    allowed_formats = set(policy.allowed_work_formats)
-    if (
-        allowed_formats
-        and formats
-        and all_formats_understood
-        and formats.isdisjoint(allowed_formats)
-    ):
-        exclusions.append(
-            _exclude(
-                rule_id="filter.work_format.hard_conflict.v1",
-                reason_code="policy.hard_work_format_conflict",
-                target_policy=target_policy,
-                evidence=tuple(
-                    _evidence("vacancy.work_formats", _label_text(label))
-                    for label in vacancy.work_formats
-                ),
-            )
-        )
 
-    area_restricted = bool(policy.allowed_area_ids or policy.allowed_area_names)
-    remote_is_compatible = WorkFormat.REMOTE in formats and (
-        not allowed_formats or WorkFormat.REMOTE in allowed_formats
+    rules = (
+        _unavailable_exclusion(vacancy, target_policy, policy),
+        _role_exclusion(title, vacancy, target_policy, policy),
+        _seniority_exclusion(title, vacancy, target_policy, policy),
+        _management_exclusion(title, vacancy, target_policy, policy),
+        _work_format_exclusion(
+            vacancy,
+            target_policy,
+            policy,
+            formats=formats,
+            all_formats_understood=all_formats_understood,
+        ),
+        _location_exclusion(
+            vacancy,
+            target_policy,
+            policy,
+            formats=formats,
+            all_formats_understood=all_formats_understood,
+        ),
+        _relocation_exclusion(vacancy, target_policy, policy),
+        _experience_exclusion(vacancy, resume, target_policy, policy),
+        _forbidden_context_exclusion(vacancy, target_policy, policy),
     )
-    if area_restricted and all_formats_understood and formats and not remote_is_compatible:
-        location = vacancy.location
-        if location.state is ValueState.KNOWN and location.value is not None:
-            allowed_ids = {value.casefold() for value in policy.allowed_area_ids}
-            allowed_names = {_normalize(value) for value in policy.allowed_area_names}
-            actual_id = (location.value.area_id or "").casefold()
-            actual_name = _normalize(location.value.area_name or "")
-            has_area_identity = bool(actual_id or actual_name)
-            id_match = bool(actual_id) and actual_id in allowed_ids
-            name_match = bool(actual_name) and actual_name in allowed_names
-            if has_area_identity and not id_match and not name_match:
-                exclusions.append(
-                    _exclude(
-                        rule_id="filter.location.hard_conflict.v1",
-                        reason_code="policy.hard_location_conflict",
-                        target_policy=target_policy,
-                        evidence=(
-                            _evidence(
-                                "vacancy.location",
-                                location.value.area_id or location.value.area_name,
-                            ),
-                        ),
-                    )
-                )
-
-    if not policy.relocation_allowed:
-        for fact in vacancy.relocation_facts:
-            if _explicit_relocation_required(fact):
-                exclusions.append(
-                    _exclude(
-                        rule_id="filter.relocation.required.v1",
-                        reason_code="policy.relocation_required",
-                        target_policy=target_policy,
-                        evidence=(_evidence("vacancy.relocation_facts", fact),),
-                    )
-                )
-                break
-
-    if (
-        resume is not None
-        and policy.maximum_experience_gap_years is not None
-        and vacancy.experience.state is ValueState.KNOWN
-        and vacancy.experience.value is not None
-        and vacancy.experience.value.minimum_years is not None
-        and resume.total_experience_years.state is ValueState.KNOWN
-        and resume.total_experience_years.value is not None
-    ):
-        required = Decimal(vacancy.experience.value.minimum_years)
-        available = Decimal(resume.total_experience_years.value)
-        if required > available + policy.maximum_experience_gap_years:
-            exclusions.append(
-                _exclude(
-                    rule_id="filter.experience.gap_exceeded.v1",
-                    reason_code="filter.experience_gap_exceeded",
-                    target_policy=target_policy,
-                    evidence=(
-                        _evidence("vacancy.experience.minimum_years", required),
-                        _evidence("resume.total_experience_years", available),
-                    ),
-                )
-            )
-
-    if policy.forbidden_context_terms:
-        sources: list[tuple[str, str, str | None, str | None]] = []
-        if vacancy.title.state is ValueState.KNOWN and vacancy.title.value is not None:
-            sources.append(("vacancy.title", str(vacancy.title.value), None, None))
-        if vacancy.employer.state is ValueState.KNOWN and vacancy.employer.value is not None:
-            if vacancy.employer.value.name:
-                sources.append(
-                    ("vacancy.employer.name", vacancy.employer.value.name, None, None)
-                )
-        for block in vacancy.text_blocks:
-            sources.append(
-                (
-                    f"vacancy.text_blocks.{block.block_id}",
-                    block.text,
-                    block.source_ref.locator,
-                    block.source_ref.quote,
-                )
-            )
-
-        context_evidence: list[FilterEvidence] = []
-        for term in policy.forbidden_context_terms:
-            for path, text, locator, quote in sources:
-                if not _unnegated_term(text, term):
-                    continue
-                if locator is not None and quote is not None:
-                    context_evidence.append(_text_evidence(path, term, locator, quote))
-                else:
-                    context_evidence.append(_evidence(path, term))
-                break
-        if context_evidence:
-            exclusions.append(
-                _exclude(
-                    rule_id="filter.context.forbidden.v1",
-                    reason_code="policy.forbidden_context",
-                    target_policy=target_policy,
-                    evidence=context_evidence,
-                )
-            )
+    exclusions = tuple(item for item in rules if item is not None)
 
     if not exclusions:
         return FilterDecision(outcome=FilterOutcome.KEEP)
     return FilterDecision(
         outcome=FilterOutcome.EXCLUDE_PROVEN,
-        exclusions=tuple(exclusions),
+        exclusions=exclusions,
     )
