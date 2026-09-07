@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from careerops_processing.contracts import (
     DataQualityReport,
@@ -51,7 +52,7 @@ def _vacancy(
         semantic_content_hash=HASH_B,
         title=_known(title),
         employer=_known(Employer(name="Example")),
-        experience=_known(ExperienceRange(minimum_years=0)),
+        experience=_known(ExperienceRange(minimum_years=Decimal("0"))),
         work_formats=work_formats,
         location=_known(location) if location is not None else _missing(),
         salary=_missing(),

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 REMOVED_RUNTIME_PATHS = (
@@ -74,7 +73,10 @@ def test_source_tree_has_no_retired_runtime_imports_or_write_api() -> None:
 
 def test_main_tests_do_not_import_retired_runtime_modules() -> None:
     offenders: list[str] = []
+    this_file = Path(__file__).resolve()
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
+        if path.resolve() == this_file:
+            continue
         text = path.read_text(encoding="utf-8")
         for token in FORBIDDEN_RUNTIME_IMPORTS:
             if token in text:

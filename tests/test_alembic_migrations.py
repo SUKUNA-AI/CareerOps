@@ -4,9 +4,10 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+
+from alembic import command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 V2_BASELINE_REVISION = "20260906_v2_0001"

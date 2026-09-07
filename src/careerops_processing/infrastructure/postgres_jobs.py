@@ -62,7 +62,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN 'pending'
                         ELSE processing_jobs.status
@@ -71,7 +71,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN now()
                         ELSE processing_jobs.next_attempt_at
@@ -80,7 +80,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.finished_at
@@ -89,7 +89,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.error_category
@@ -98,7 +98,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.result_artifact_uri
@@ -107,7 +107,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_owner
@@ -116,7 +116,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_token
@@ -125,7 +125,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.leased_at
@@ -134,7 +134,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_expires_at

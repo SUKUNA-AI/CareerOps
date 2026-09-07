@@ -8,16 +8,16 @@ from uuid import uuid4
 import psycopg
 import pytest
 import pytest_asyncio
-from alembic import command
 from alembic.config import Config
+from support.postgres import PostgresTestTarget
 
+from alembic import command
 from careerops_processing.infrastructure import PostgresProcessingJobStore
 from careerops_processing.queue import (
     ProcessingJobLeaseLost,
     ProcessingPairKey,
     ProcessingWorkSpec,
 )
-from support.postgres import PostgresTestTarget
 
 pytestmark = pytest.mark.integration_postgres
 

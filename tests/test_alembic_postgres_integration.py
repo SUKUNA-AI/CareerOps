@@ -4,12 +4,12 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-
-from careerops_storage.v2 import SCHEMA, metadata
 from support.postgres import PostgresTestTarget
+
+from alembic import command
+from careerops_storage.v2 import SCHEMA, metadata
 
 pytestmark = pytest.mark.integration_postgres
 

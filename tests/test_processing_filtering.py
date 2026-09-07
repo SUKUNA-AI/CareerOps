@@ -241,7 +241,8 @@ def test_relocation_negation_is_not_a_blocker() -> None:
 
 def test_lead_is_not_universal_management_reject() -> None:
     target = policy(management_allowed=False)
-    assert evaluate_filter(vacancy(title="Lead Data Engineer"), target).outcome is FilterOutcome.KEEP
+    lead_result = evaluate_filter(vacancy(title="Lead Data Engineer"), target)
+    assert lead_result.outcome is FilterOutcome.KEEP
     result = evaluate_filter(vacancy(title="Team Lead Data Engineer"), target)
     assert result.outcome is FilterOutcome.EXCLUDE_PROVEN
     assert result.exclusions[0].reason_code == "filter.management_forbidden"
