@@ -5,10 +5,9 @@ seeded generation reuses its existing root tasks instead of re-reading current
 watermarks or configuration, so orchestration retries cannot change the scan
 boundary halfway through a generation.
 
-This module deliberately does not rotate queries, enforce per-run query/fetch
-budgets, or contact HH. All selected queries become persistent SEARCH_PAGE tasks;
-execution throughput is bounded later by the worker. Resume inventory sync is an
-independent root task in the same generation when explicitly requested.
+All selected queries become persistent SEARCH_PAGE tasks. Execution throughput is
+bounded later by the worker. Resume inventory sync is an independent root task in
+the same generation when explicitly requested.
 """
 
 from __future__ import annotations
@@ -45,8 +44,8 @@ from .tasks import (
 )
 from .watermarks import HHSearchWatermarkStore
 
-# This is only a defensive corruption guard. Normal paging stops at the smaller
-# source-reported `pages` value or the persisted publication watermark.
+# Defensive corruption guard only. Normal paging stops at the source-reported page
+# count, the persisted publication watermark, or source exhaustion.
 _SOURCE_PAGE_SAFETY_CAP = 10_000
 _DEFAULT_WATERMARK_OVERLAP_SECONDS = 3600
 
@@ -148,10 +147,9 @@ def build_source_generation_plan(
 ) -> HHSourceGenerationPlan:
     """Build all initial persistent work for one explicit observation generation.
 
-    Legacy run-level truncation knobs such as max_queries_per_run,
-    max_unique_vacancies_per_run, max_full_fetch_per_run, and configured `pages` are
-    intentionally not applied here. V2 follows source-reported pages until it reaches
-    the previous publication watermark (with overlap) or source exhaustion.
+    Every selected query starts at page zero. Subsequent pages are driven by the
+    source-reported page count and stop at the previous publication watermark with
+    overlap, or at source exhaustion. The safety cap only guards corrupt pagination.
     """
 
     if generation_id.int == 0:

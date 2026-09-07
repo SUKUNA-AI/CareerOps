@@ -24,32 +24,12 @@ class _StrictModel(BaseModel):
 
 
 class DiscoveryDefaults(_StrictModel):
-    """Source request defaults shared by the broad query catalog.
-
-    Run-level truncation and delay knobs are intentionally retained in the v1
-    discovery document until that large catalog is revised separately. The v2
-    adapter never reads them when building persistent source work.
-    """
+    """Source request defaults shared by the broad query catalog."""
 
     area: int = Field(default=1, ge=1)
     period: int = Field(default=14, ge=1)
-    pages: int = Field(default=1, ge=1)
     per_page: int = Field(default=50, ge=1, le=100)
     order_by: str = Field(default="publication_time", min_length=1)
-    max_queries_per_run: int = Field(default=50, ge=1)
-    search_query_delay_seconds: float = Field(default=1.0, ge=0)
-    full_fetch_min_delay_seconds: float = Field(default=1.5, ge=0)
-    full_fetch_max_delay_seconds: float = Field(default=3.0, ge=0)
-    max_unique_vacancies_per_run: int = Field(default=250, ge=1)
-    max_full_fetch_per_run: int = Field(default=100, ge=1)
-
-    @model_validator(mode="after")
-    def validate_delay_range(self) -> DiscoveryDefaults:
-        if self.full_fetch_max_delay_seconds < self.full_fetch_min_delay_seconds:
-            raise ValueError(
-                "full_fetch_max_delay_seconds must be >= full_fetch_min_delay_seconds"
-            )
-        return self
 
 
 class DiscoveryQuerySpec(_StrictModel):
@@ -60,7 +40,6 @@ class DiscoveryQuerySpec(_StrictModel):
     enabled: bool = True
     area: int | None = Field(default=None, ge=1)
     period: int | None = Field(default=None, ge=1)
-    pages: int | None = Field(default=None, ge=1)
     per_page: int | None = Field(default=None, ge=1, le=100)
 
     @field_validator("key")
