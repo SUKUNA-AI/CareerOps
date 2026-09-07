@@ -4,6 +4,8 @@ on:
   pull_request:
     branches:
       - main
+      - architecture-reset
+      - ar/processing-v2
 
 permissions:
   contents: read
