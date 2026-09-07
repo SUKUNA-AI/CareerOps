@@ -1,0 +1,21 @@
+{
+  "content": {
+    "filtering": {
+      "allowed_primary_roles": [
+        "ml_engineering",
+        "data_science",
+        "ai_llm",
+        "computer_vision",
+        "mlops",
+        "ml_research",
+        "recommendation_ranking",
+        "python_backend"
+      ],
+      "exclude_unavailable": true,
+      "schema_version": 1
+    }
+  },
+  "policy_version": "2026-09-07.1",
+  "schema_version": "careerops.target-policy.v1",
+  "target_key": "ml_5y"
+}

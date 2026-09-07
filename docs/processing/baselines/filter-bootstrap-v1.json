@@ -1,0 +1,20 @@
+{
+  "schema_version": "careerops.filter-bootstrap-baseline.v1",
+  "corpus_id": "filter-bootstrap-v1",
+  "corpus_kind": "bootstrap_adversarial",
+  "filter_version": "filter-p2-03-v1",
+  "source_filter_commit": "9cad668ad585b22a2d422bd4a395b41e1fdaf9be",
+  "measurement_mode": "deterministic_manual_review",
+  "release_gate_eligible": false,
+  "metrics": {
+    "total_cases": 26,
+    "expected_keep": 17,
+    "expected_exclude_proven": 9,
+    "false_exclusions": 0,
+    "retention_false_negative_rate": 0.0,
+    "retention_recall": 1.0,
+    "missed_exclusions": 0,
+    "reason_mismatches": 0
+  },
+  "release_note": "Нужен real annotated HH corpus перед production release gate"
+}
