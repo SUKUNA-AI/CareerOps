@@ -12,6 +12,16 @@ from .common import (
     ValueState,
 )
 from .compatibility import validate_bundle_for_ref
+from .filtering import (
+    FilterDecision,
+    FilterEvidence,
+    FilterOutcome,
+    FilterPolicy,
+    ProvenExclusion,
+    RoleFamily,
+    SeniorityLevel,
+    WorkFormat,
+)
 from .manifest import MANIFEST_SCHEMA_VERSION, ProcessingInputManifest
 from .normalized import (
     DataQualityReport,
@@ -40,6 +50,10 @@ __all__ = [
     "EntityType",
     "ExperienceEntry",
     "ExperienceRange",
+    "FilterDecision",
+    "FilterEvidence",
+    "FilterOutcome",
+    "FilterPolicy",
     "INITIAL_REASON_CODES",
     "JinaVersionBundle",
     "LanguageEntry",
@@ -51,16 +65,20 @@ __all__ = [
     "ProcessingInputManifest",
     "ProcessingVersionBundle",
     "ProjectEntry",
+    "ProvenExclusion",
     "RawObservationRef",
     "ReasonCode",
     "ReasonNamespace",
+    "RoleFamily",
     "Salary",
+    "SeniorityLevel",
     "SourceLabel",
     "SourceTextRef",
     "SourceValue",
     "TargetPolicy",
     "TextBlock",
     "ValueState",
+    "WorkFormat",
     "WorkPreferences",
     "validate_bundle_for_ref",
 ]

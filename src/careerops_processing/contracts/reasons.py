@@ -29,7 +29,12 @@ class ReasonNamespace(StrEnum):
 
 INITIAL_REASON_CODES: tuple[ReasonCode, ...] = (
     "filter.primary_role_disjoint",
+    "filter.seniority_forbidden",
+    "filter.management_forbidden",
+    "filter.experience_gap_exceeded",
     "policy.hard_location_conflict",
+    "policy.hard_work_format_conflict",
+    "policy.relocation_required",
     "policy.forbidden_context",
     "source.vacancy_unavailable",
     "requirements.critical_contradiction",

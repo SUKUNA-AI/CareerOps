@@ -5,3 +5,7 @@ correctness/reference implementation used to define and test deterministic seman
 Measured production hot paths may later execute in the separate C++20
 `careerops-matching-core` service, which must prove parity against this reference layer.
 """
+
+from .filtering import evaluate_filter
+
+__all__ = ["evaluate_filter"]
