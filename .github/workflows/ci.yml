@@ -74,7 +74,7 @@ jobs:
             -q \
             --tb=short \
             -p no:cacheprovider \
-            -m "not integration_postgres" \
+            -m "not integration_postgres and not integration_matching_core" \
             --junitxml=reports/pytest.xml
 
       - name: Collect failure diagnostics
@@ -176,6 +176,130 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: postgres-integration
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  matching-core-build:
+    name: Matching core / C++ build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install C++ and gRPC build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            libgrpc++-dev \
+            libprotobuf-dev \
+            pkg-config \
+            protobuf-compiler \
+            protobuf-compiler-grpc
+
+      - name: Configure matching core
+        run: >-
+          cmake
+          -S services/careerops-matching-core
+          -B build/matching-core
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build matching core
+        run: cmake --build build/matching-core --parallel
+
+      - name: Verify generated code and executable
+        run: |
+          set -euo pipefail
+          generated=build/matching-core/generated/careerops/matching_core/v1/control
+          binary=build/matching-core/careerops-matching-core
+
+          test -f "${generated}.pb.cc"
+          test -f "${generated}.pb.h"
+          test -f "${generated}.grpc.pb.cc"
+          test -f "${generated}.grpc.pb.h"
+          test -x "${binary}"
+
+          mkdir -p reports
+          ldd "${binary}" | tee reports/matching-core-ldd.txt
+          if grep -q "not found" reports/matching-core-ldd.txt; then
+            echo "matching-core has unresolved shared libraries" >&2
+            exit 1
+          fi
+
+      - name: Upload matching core binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: matching-core-binary
+          path: build/matching-core/careerops-matching-core
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload matching core build diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: matching-core-build-diagnostics
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  matching-core-grpc-contract:
+    name: Matching core / gRPC contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: matching-core-build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install matching core runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgrpc++-dev \
+            libprotobuf-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CareerOPS matching-core test dependencies
+        run: python -m pip install -e ".[dev,matching-core-test]"
+
+      - name: Download matching core binary
+        uses: actions/download-artifact@v7
+        with:
+          name: matching-core-binary
+          path: build/matching-core-artifact
+
+      - name: Run Python to C++ gRPC contract suite
+        env:
+          CAREEROPS_MATCHING_CORE_BINARY: >-
+            ${{ github.workspace }}/build/matching-core-artifact/careerops-matching-core
+        run: |
+          chmod +x "${CAREEROPS_MATCHING_CORE_BINARY}"
+          mkdir -p reports
+          python -m pytest \
+            -q \
+            --tb=short \
+            -p no:cacheprovider \
+            -m "integration_matching_core" \
+            tests/integration/matching_core \
+            --junitxml=reports/matching-core-grpc.xml
+
+      - name: Upload matching core contract diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: matching-core-grpc-contract
           path: reports/
           if-no-files-found: warn
           retention-days: 7

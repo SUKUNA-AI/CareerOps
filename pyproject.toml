@@ -20,6 +20,10 @@ dev = [
     "ruff>=0.12,<1",
     "mypy>=1.17,<2",
 ]
+matching-core-test = [
+    "grpcio>=1.74,<2",
+    "grpcio-tools>=1.74,<2",
+]
 
 [build-system]
 requires = ["setuptools>=80"]
@@ -34,6 +38,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
     "integration_postgres: uses real PostgreSQL DDL/DML, constraints, transactions, locking or concurrency; requires an explicitly configured disposable local test target via CAREEROPS_TEST_POSTGRES_DSN; no runtime/production DSN fallback",
+    "integration_matching_core: runs the real compiled C++ matching-core executable over loopback gRPC against Python stubs generated from the canonical proto",
 ]
 
 [tool.ruff]
