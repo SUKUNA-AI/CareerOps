@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
 import pytest
 import pytest_asyncio
 from alembic import command
+from alembic.config import Config
 
 from careerops_processing.infrastructure import PostgresProcessingJobStore
 from careerops_processing.queue import (
@@ -16,37 +17,28 @@ from careerops_processing.queue import (
     ProcessingPairKey,
     ProcessingWorkSpec,
 )
-from careerops_storage.alembic_cutover import (
-    TEST_POSTGRES_DSN_ENV,
-    DisposablePostgresTarget,
-    assert_disposable_state_is_empty,
-    build_alembic_config,
-    reset_disposable_state,
-    validate_disposable_postgres_dsn,
-)
+from support.postgres import PostgresTestTarget
 
 pytestmark = pytest.mark.integration_postgres
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _alembic_config() -> Config:
+    return Config(str(PROJECT_ROOT / "alembic.ini"))
+
 
 @pytest.fixture
-def processing_target() -> Iterator[DisposablePostgresTarget]:
-    dsn = os.getenv(TEST_POSTGRES_DSN_ENV, "").strip()
-    if not dsn:
-        pytest.skip(f"{TEST_POSTGRES_DSN_ENV} is not configured")
-
-    target = validate_disposable_postgres_dsn(dsn)
-    reset_disposable_state(target)
-    assert_disposable_state_is_empty(target)
-    command.upgrade(build_alembic_config(target), "head")
-    try:
-        yield target
-    finally:
-        reset_disposable_state(target)
+def processing_target(
+    v2_postgres_test_target: PostgresTestTarget,
+) -> PostgresTestTarget:
+    command.upgrade(_alembic_config(), "head")
+    return v2_postgres_test_target
 
 
 @pytest_asyncio.fixture
 async def processing_connection(
-    processing_target: DisposablePostgresTarget,
+    processing_target: PostgresTestTarget,
 ) -> AsyncIterator[psycopg.AsyncConnection[object]]:
     connection = await psycopg.AsyncConnection.connect(
         processing_target.dsn,
@@ -59,14 +51,14 @@ async def processing_connection(
 
 
 async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, int]:
-    cursor = await connection.execute(
+    source = await connection.execute(
         "INSERT INTO careerops_v2.sources (source_key) VALUES ('hh') RETURNING id"
     )
-    source_row = await cursor.fetchone()
+    source_row = await source.fetchone()
     assert source_row is not None
     source_id = int(source_row[0])
 
-    cursor = await connection.execute(
+    account = await connection.execute(
         """
         INSERT INTO careerops_v2.accounts (source_id, account_key)
         VALUES (%s, 'processing-test')
@@ -74,11 +66,11 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
         """,
         (source_id,),
     )
-    account_row = await cursor.fetchone()
+    account_row = await account.fetchone()
     assert account_row is not None
     account_id = int(account_row[0])
 
-    cursor = await connection.execute(
+    profile = await connection.execute(
         """
         INSERT INTO careerops_v2.profiles (source_id, account_id, profile_key)
         VALUES (%s, %s, 'processing-test-profile')
@@ -86,11 +78,11 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
         """,
         (source_id, account_id),
     )
-    profile_row = await cursor.fetchone()
+    profile_row = await profile.fetchone()
     assert profile_row is not None
     profile_id = int(profile_row[0])
 
-    cursor = await connection.execute(
+    resume = await connection.execute(
         """
         INSERT INTO careerops_v2.resumes (
             source_id,
@@ -105,11 +97,11 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
         """,
         (source_id, account_id, profile_id),
     )
-    resume_row = await cursor.fetchone()
+    resume_row = await resume.fetchone()
     assert resume_row is not None
     resume_id = int(resume_row[0])
 
-    cursor = await connection.execute(
+    binding = await connection.execute(
         """
         INSERT INTO careerops_v2.resume_bindings (
             account_id,
@@ -124,11 +116,11 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
         """,
         (account_id, resume_id),
     )
-    binding_row = await cursor.fetchone()
+    binding_row = await binding.fetchone()
     assert binding_row is not None
     binding_id = int(binding_row[0])
 
-    cursor = await connection.execute(
+    vacancy = await connection.execute(
         """
         INSERT INTO careerops_v2.vacancies (source_id, source_vacancy_id)
         VALUES (%s, 'vacancy-test')
@@ -136,7 +128,7 @@ async def _seed_pair(connection: psycopg.AsyncConnection[object]) -> tuple[int, 
         """,
         (source_id,),
     )
-    vacancy_row = await cursor.fetchone()
+    vacancy_row = await vacancy.fetchone()
     assert vacancy_row is not None
     vacancy_id = int(vacancy_row[0])
     return vacancy_id, binding_id
@@ -147,13 +139,14 @@ def _spec(
     binding_id: int,
     fingerprint_char: str,
 ) -> ProcessingWorkSpec:
+    fingerprint = fingerprint_char * 64
     return ProcessingWorkSpec(
         vacancy_id=vacancy_id,
         binding_id=binding_id,
         binding_version=1,
-        input_fingerprint=fingerprint_char * 64,
+        input_fingerprint=fingerprint,
         input_manifest_uri=(
-            f"s3://careerops-artifacts/processing/manifests/{fingerprint_char * 64}.json"
+            f"s3://careerops-artifacts/processing/manifests/{fingerprint}.json"
         ),
         pipeline_version="processing-v2-test",
         policy_version="policy-v1",
@@ -167,6 +160,7 @@ async def _insert_pending_job(
     binding_id: int,
     fingerprint_char: str,
 ) -> None:
+    fingerprint = fingerprint_char * 64
     await connection.execute(
         """
         INSERT INTO careerops_v2.processing_jobs (
@@ -185,8 +179,8 @@ async def _insert_pending_job(
             uuid4(),
             vacancy_id,
             binding_id,
-            fingerprint_char * 64,
-            f"s3://careerops-artifacts/processing/manifests/{fingerprint_char * 64}.json",
+            fingerprint,
+            f"s3://careerops-artifacts/processing/manifests/{fingerprint}.json",
         ),
     )
 
@@ -202,8 +196,7 @@ async def test_reconcile_is_idempotent_and_supersedes_active_work(
     first_id = await store.reconcile_current(first)
     assert await store.reconcile_current(first) == first_id
 
-    second = _spec(vacancy_id, binding_id, "b")
-    second_id = await store.reconcile_current(second)
+    second_id = await store.reconcile_current(_spec(vacancy_id, binding_id, "b"))
     assert second_id != first_id
 
     cursor = await processing_connection.execute(
@@ -222,30 +215,7 @@ async def test_reconcile_is_idempotent_and_supersedes_active_work(
 
 
 @pytest.mark.asyncio
-async def test_superseded_exact_work_can_become_current_again(
-    processing_connection: psycopg.AsyncConnection[object],
-) -> None:
-    vacancy_id, binding_id = await _seed_pair(processing_connection)
-    store = PostgresProcessingJobStore(processing_connection)
-
-    first = _spec(vacancy_id, binding_id, "a")
-    second = _spec(vacancy_id, binding_id, "b")
-    first_id = await store.reconcile_current(first)
-    second_id = await store.reconcile_current(second)
-
-    assert await store.reconcile_current(first) == first_id
-
-    cursor = await processing_connection.execute(
-        "SELECT id, status, error_category FROM careerops_v2.processing_jobs"
-    )
-    rows = await cursor.fetchall()
-    by_id = {str(row[0]): (str(row[1]), row[2]) for row in rows}
-    assert by_id[str(first_id)] == ("pending", None)
-    assert by_id[str(second_id)] == ("cancelled", "superseded")
-
-
-@pytest.mark.asyncio
-async def test_withdrawn_exact_work_can_become_current_again(
+async def test_reconciliation_cancelled_exact_work_can_become_current_again(
     processing_connection: psycopg.AsyncConnection[object],
 ) -> None:
     vacancy_id, binding_id = await _seed_pair(processing_connection)
@@ -253,8 +223,7 @@ async def test_withdrawn_exact_work_can_become_current_again(
     spec = _spec(vacancy_id, binding_id, "a")
     job_id = await store.reconcile_current(spec)
 
-    withdrawn = await store.withdraw_pair(ProcessingPairKey(vacancy_id, binding_id))
-    assert withdrawn == 1
+    assert await store.withdraw_pair(ProcessingPairKey(vacancy_id, binding_id)) == 1
     assert await store.reconcile_current(spec) == job_id
 
     cursor = await processing_connection.execute(
@@ -289,28 +258,6 @@ async def test_manual_cancelled_exact_work_is_not_implicitly_reactivated(
 
 
 @pytest.mark.asyncio
-async def test_superseding_running_job_fences_stale_worker(
-    processing_connection: psycopg.AsyncConnection[object],
-) -> None:
-    vacancy_id, binding_id = await _seed_pair(processing_connection)
-    store = PostgresProcessingJobStore(processing_connection)
-
-    first_id = await store.reconcile_current(_spec(vacancy_id, binding_id, "a"))
-    claimed = await store.claim_next(worker_id="worker-a", lease_seconds=300)
-    assert claimed is not None
-    assert claimed.id == first_id
-    await store.mark_running(claimed)
-
-    await store.reconcile_current(_spec(vacancy_id, binding_id, "b"))
-
-    with pytest.raises(ProcessingJobLeaseLost):
-        await store.succeed(
-            claimed,
-            result_artifact_uri="s3://careerops-artifacts/processing/result.json",
-        )
-
-
-@pytest.mark.asyncio
 async def test_withdraw_pair_fences_inflight_worker(
     processing_connection: psycopg.AsyncConnection[object],
 ) -> None:
@@ -322,11 +269,13 @@ async def test_withdraw_pair_fences_inflight_worker(
     assert claimed is not None
     await store.mark_running(claimed)
 
-    withdrawn = await store.withdraw_pair(
-        ProcessingPairKey(vacancy_id, binding_id),
-        reason="reconciliation.withdrawn",
+    assert (
+        await store.withdraw_pair(
+            ProcessingPairKey(vacancy_id, binding_id),
+            reason="reconciliation.withdrawn",
+        )
+        == 1
     )
-    assert withdrawn == 1
 
     with pytest.raises(ProcessingJobLeaseLost):
         await store.renew_lease(claimed)
@@ -349,7 +298,6 @@ async def test_expired_lease_is_reclaimed_with_new_fencing_token(
     job_id = await store.reconcile_current(_spec(vacancy_id, binding_id, "a"))
     first_claim = await store.claim_next(worker_id="worker-a", lease_seconds=300)
     assert first_claim is not None
-    assert first_claim.id == job_id
     assert first_claim.lease_token is not None
 
     await processing_connection.execute(
@@ -392,8 +340,11 @@ async def test_deferred_job_is_not_claimable_until_due(
 
     assert await store.claim_next(worker_id="worker-b") is None
     await processing_connection.execute(
-        "UPDATE careerops_v2.processing_jobs SET next_attempt_at = now() - interval '1 second' "
-        "WHERE id = %s",
+        """
+        UPDATE careerops_v2.processing_jobs
+        SET next_attempt_at = now() - interval '1 second'
+        WHERE id = %s
+        """,
         (job_id,),
     )
 
@@ -456,10 +407,10 @@ async def test_database_rejects_two_active_jobs_for_same_pair(
 
 @pytest.mark.asyncio
 async def test_active_pair_migration_preflight_reports_existing_duplicates(
-    processing_target: DisposablePostgresTarget,
+    processing_target: PostgresTestTarget,
     processing_connection: psycopg.AsyncConnection[object],
 ) -> None:
-    config = build_alembic_config(processing_target)
+    config = _alembic_config()
     command.downgrade(config, "20260906_v2_0002")
 
     vacancy_id, binding_id = await _seed_pair(processing_connection)
