@@ -27,7 +27,6 @@ from careerops_integrations.hh.configuration import (
     load_accounts_config,
 )
 from careerops_integrations.hh.driver import HHApplicantToolCLI
-from careerops_integrations.hh.runtime import HHExternalWriteGuard, RuntimeMode
 from careerops_storage.s3 import S3JsonStore, S3Settings
 
 from .errors import (
@@ -48,7 +47,7 @@ from .worker import (
 
 @dataclass(frozen=True, slots=True)
 class V2PostgresSettings:
-    """Explicit v2 PostgreSQL target; never fall back to the legacy runtime DSN."""
+    """Explicit PostgreSQL v2 target for source-control state."""
 
     dsn: str
 
@@ -58,11 +57,6 @@ class V2PostgresSettings:
         if not value:
             raise RuntimeError(
                 "CAREEROPS_V2_POSTGRES_DSN is required by the HH v2 worker"
-            )
-        legacy = os.getenv("CAREEROPS_POSTGRES_DSN", "").strip()
-        if legacy and legacy == value:
-            raise RuntimeError(
-                "CAREEROPS_V2_POSTGRES_DSN must not point at the legacy CareerOPS database"
             )
         return cls(dsn=value)
 
@@ -90,14 +84,10 @@ class HHAccountWorkerSummary:
 
 
 def default_worker_id() -> str:
-    """Return a diagnostic worker id without embedding credentials or source data."""
-
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
 def default_accounts_config_path() -> Path:
-    """Expose the existing non-secret account topology pointer to the new CLI."""
-
     return accounts_config_path_from_env()
 
 
@@ -105,8 +95,6 @@ def _resolve_source_account(
     accounts: HHAccountsConfig,
     account_key: str,
 ) -> HHAccountConfig:
-    """Resolve an enabled source account without depending on resume policy bindings."""
-
     normalized = account_key.strip()
     if not normalized:
         raise ValueError("account_key must not be empty")
@@ -166,8 +154,6 @@ async def _active_account_pause(
     *,
     account_id: int,
 ) -> tuple[datetime, str] | None:
-    """Return the latest active account-wide source pause encoded in task state."""
-
     cursor = await conn.execute(
         """
         SELECT next_attempt_at, error_category
@@ -202,13 +188,7 @@ async def _defer_account_after_pause(
     error_category: str,
     next_attempt_at: datetime,
 ) -> int:
-    """Persist account-wide source backpressure without extending later retries.
-
-    Only ready work that would run before the pause boundary, plus expired leases,
-    is moved to that boundary. Tasks already scheduled for a later retry keep their
-    original retry time and are not converted into an account-pause marker. A live
-    lease is never stolen.
-    """
+    """Persist account-wide source backpressure without extending later retries."""
 
     cursor = await conn.execute(
         """
@@ -280,14 +260,9 @@ async def _run_locked_account_worker(
         )
 
     failure_policy = HHSourceFailurePolicy()
-    guard = HHExternalWriteGuard(
-        runtime_mode=RuntimeMode.OBSERVE,
-        allow_external_writes=False,
-    )
     driver = HHApplicantToolCLI(
         config_dir=config_dir,
         profile=account.profile,
-        external_write_guard=guard,
     )
     transport = HHApplicantToolTransport(driver)
 
@@ -445,7 +420,4 @@ async def run_account_worker(
             worker_id=resolved_worker_id,
         )
     finally:
-        # PostgreSQL session advisory locks are released by closing this dedicated
-        # connection. Relying on session teardown avoids masking a worker exception
-        # with a secondary unlock failure.
         await conn.close()

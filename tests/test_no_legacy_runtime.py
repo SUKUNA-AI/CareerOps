@@ -26,12 +26,12 @@ REMOVED_RUNTIME_PATHS = (
     "src/careerops_integrations/hh/raw.py",
     "src/careerops_integrations/hh/reader.py",
     "src/careerops_integrations/hh/resume_sync.py",
+    "src/careerops_integrations/hh/runtime.py",
     "src/careerops_integrations/hh/sync.py",
     "src/careerops_integrations/hh/test_bridge.py",
     "infra/compose/hh-worker",
     "infra/systemd",
-    "scripts/backfill_hh_postgres.py",
-    "scripts/materialize_hh_pending.py",
+    "scripts",
     "letter.example.txt",
 )
 
@@ -39,10 +39,19 @@ FORBIDDEN_RUNTIME_IMPORTS = (
     "careerops_integrations.hh.filtering",
     "careerops_integrations.hh.mapper",
     "careerops_integrations.hh.observe",
+    "careerops_integrations.hh.runtime",
     "careerops_etl.hh_s3_to_postgres",
     "careerops_storage.postgres",
     "careerops_storage.schema",
     "careerops_scheduler",
+)
+
+FORBIDDEN_SOURCE_TOKENS = (
+    "HHExternalWriteGuard",
+    "RuntimeMode.APPLY",
+    "RuntimeMode.OBSERVE",
+    "submit_application(",
+    "submit_application_with_test(",
 )
 
 
@@ -51,11 +60,11 @@ def test_retired_runtime_paths_are_absent() -> None:
     assert remaining == []
 
 
-def test_source_tree_has_no_retired_runtime_imports() -> None:
+def test_source_tree_has_no_retired_runtime_imports_or_write_api() -> None:
     offenders: list[str] = []
     for path in (PROJECT_ROOT / "src").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        for token in FORBIDDEN_RUNTIME_IMPORTS:
+        for token in (*FORBIDDEN_RUNTIME_IMPORTS, *FORBIDDEN_SOURCE_TOKENS):
             if token in text:
                 offenders.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
     assert offenders == []
