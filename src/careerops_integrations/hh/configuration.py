@@ -1,4 +1,4 @@
-"""Versioned non-secret HH account and broad-discovery TOML contracts."""
+"""Versioned non-secret HH source topology and discovery TOML contracts."""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-
-from .runtime import RuntimeMode
 
 _ACCOUNT_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _QUERY_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -26,7 +24,12 @@ class _StrictModel(BaseModel):
 
 
 class DiscoveryDefaults(_StrictModel):
-    """Technical search/fetch limits shared by the broad query catalog."""
+    """Source request defaults shared by the broad query catalog.
+
+    Run-level truncation and delay knobs are intentionally retained in the v1
+    discovery document until that large catalog is revised separately. The v2
+    adapter never reads them when building persistent source work.
+    """
 
     area: int = Field(default=1, ge=1)
     period: int = Field(default=14, ge=1)
@@ -42,8 +45,6 @@ class DiscoveryDefaults(_StrictModel):
 
     @model_validator(mode="after")
     def validate_delay_range(self) -> DiscoveryDefaults:
-        """Require an ordered technical full-fetch delay range."""
-
         if self.full_fetch_max_delay_seconds < self.full_fetch_min_delay_seconds:
             raise ValueError(
                 "full_fetch_max_delay_seconds must be >= full_fetch_min_delay_seconds"
@@ -65,8 +66,6 @@ class DiscoveryQuerySpec(_StrictModel):
     @field_validator("key")
     @classmethod
     def validate_key(cls, value: str) -> str:
-        """Keep query keys safe for S3 path segments."""
-
         value = value.strip()
         if _QUERY_KEY.fullmatch(value) is None:
             raise ValueError("query key must match [a-z0-9][a-z0-9-]*")
@@ -75,8 +74,6 @@ class DiscoveryQuerySpec(_StrictModel):
     @field_validator("text")
     @classmethod
     def normalize_text(cls, value: str) -> str:
-        """Reject whitespace-only HH query text."""
-
         value = value.strip()
         if not value:
             raise ValueError("query text must not be empty")
@@ -91,8 +88,6 @@ class DiscoveryQuerySet(_StrictModel):
 
     @model_validator(mode="after")
     def validate_local_keys(self) -> DiscoveryQuerySet:
-        """Reject duplicate query keys inside a set."""
-
         keys = [query.key for query in self.queries]
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
@@ -102,7 +97,7 @@ class DiscoveryQuerySet(_StrictModel):
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryQuery:
-    """One enabled query resolved with its owning set and technical defaults."""
+    """One enabled query resolved with its owning set and source parameters."""
 
     query_set_key: str
     spec: DiscoveryQuerySpec
@@ -117,8 +112,6 @@ class DiscoveryConfig(_StrictModel):
 
     @model_validator(mode="after")
     def validate_catalog(self) -> DiscoveryConfig:
-        """Require safe set keys and globally unique stable query keys."""
-
         seen: dict[str, str] = {}
         for set_key, query_set in self.query_sets.items():
             if _ACCOUNT_KEY.fullmatch(set_key) is None:
@@ -139,8 +132,6 @@ class DiscoveryConfig(_StrictModel):
         self,
         query_set_keys: list[str] | tuple[str, ...],
     ) -> tuple[DiscoveryQuery, ...]:
-        """Union ordered query-set references and execute each enabled query once."""
-
         selected: list[DiscoveryQuery] = []
         seen_sets: set[str] = set()
         for set_key in query_set_keys:
@@ -159,8 +150,6 @@ class DiscoveryConfig(_StrictModel):
 
     @property
     def enabled_query_count_by_set(self) -> dict[str, int]:
-        """Return query counts for reporting and catalog regression tests."""
-
         return {
             key: sum(query.enabled for query in query_set.queries)
             for key, query_set in self.query_sets.items()
@@ -168,7 +157,7 @@ class DiscoveryConfig(_StrictModel):
 
 
 class HHResumeBindingConfig(_StrictModel):
-    """Explicit policy binding for one stable HH resume identity."""
+    """Explicit binding from one stable HH resume identity to one target."""
 
     key: str = Field(min_length=1)
     source_resume_id: str = Field(min_length=1)
@@ -181,8 +170,6 @@ class HHResumeBindingConfig(_StrictModel):
     @field_validator("key", "target_key")
     @classmethod
     def normalize_key(cls, value: str) -> str:
-        """Normalize and validate account-scoped identifiers."""
-
         value = value.strip()
         if _ACCOUNT_KEY.fullmatch(value) is None:
             raise ValueError("key must match [a-z0-9][a-z0-9_-]*")
@@ -191,8 +178,6 @@ class HHResumeBindingConfig(_StrictModel):
     @field_validator("source_resume_id")
     @classmethod
     def normalize_source_resume_id(cls, value: str) -> str:
-        """Require a non-empty stable HH identity or example placeholder."""
-
         value = value.strip()
         if not value:
             raise ValueError("source_resume_id must not be empty")
@@ -201,8 +186,6 @@ class HHResumeBindingConfig(_StrictModel):
     @field_validator("query_sets")
     @classmethod
     def validate_query_sets_unique(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        """Reject duplicate query-set references within one resume."""
-
         normalized = tuple(item.strip() for item in value)
         if any(not item for item in normalized):
             raise ValueError("query set keys must not be empty")
@@ -212,22 +195,16 @@ class HHResumeBindingConfig(_StrictModel):
 
 
 class HHAccountConfig(_StrictModel):
-    """One authenticated HH profile with N resume targets."""
+    """One authenticated HH source profile with explicit resume bindings."""
 
     key: str = Field(min_length=1)
     profile: str = Field(min_length=1)
     enabled: bool = True
-    observe_runs_per_day: int = Field(default=3, ge=1)
-    apply_runs_per_day: int = Field(default=7, ge=1)
-    apply_daily_cap: int = Field(default=100, ge=1)
-    max_apply_per_run: int = Field(default=15, ge=1)
     bindings: tuple[HHResumeBindingConfig, ...] = Field(min_length=1)
 
     @field_validator("key")
     @classmethod
     def validate_key(cls, value: str) -> str:
-        """Keep account keys stable and safe for plans and S3 sidecars."""
-
         value = value.strip()
         if _ACCOUNT_KEY.fullmatch(value) is None:
             raise ValueError("account key must match [a-z0-9][a-z0-9_-]*")
@@ -236,8 +213,6 @@ class HHAccountConfig(_StrictModel):
     @field_validator("profile")
     @classmethod
     def normalize_profile(cls, value: str) -> str:
-        """Reject an empty upstream profile selector."""
-
         value = value.strip()
         if not value:
             raise ValueError("profile must not be empty")
@@ -245,8 +220,6 @@ class HHAccountConfig(_StrictModel):
 
     @model_validator(mode="after")
     def validate_resume_keys(self) -> HHAccountConfig:
-        """Require resume keys to be unique within their account."""
-
         keys = [binding.key for binding in self.bindings]
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
@@ -262,22 +235,14 @@ class HHAccountConfig(_StrictModel):
                 f"duplicate source_resume_id values in account {self.key!r}: "
                 f"{duplicate_source_ids}"
             )
-        if self.apply_runs_per_day * self.max_apply_per_run < self.apply_daily_cap:
-            raise ValueError(
-                "apply_runs_per_day * max_apply_per_run must be >= apply_daily_cap"
-            )
         return self
 
     @property
     def enabled_bindings(self) -> tuple[HHResumeBindingConfig, ...]:
-        """Return policy bindings enabled for this account runtime."""
-
         return tuple(binding for binding in self.bindings if binding.enabled)
 
     @property
     def query_set_keys(self) -> tuple[str, ...]:
-        """Union enabled-resume query sets while preserving configured order."""
-
         result: list[str] = []
         seen: set[str] = set()
         for binding in self.enabled_bindings:
@@ -288,8 +253,6 @@ class HHAccountConfig(_StrictModel):
         return tuple(result)
 
     def resolve_binding(self, binding_key: str) -> HHResumeBindingConfig:
-        """Resolve one enabled explicit binding without title-based guessing."""
-
         for binding in self.enabled_bindings:
             if binding.key == binding_key:
                 return binding
@@ -298,35 +261,14 @@ class HHAccountConfig(_StrictModel):
         )
 
 
-class HHGlobalConfig(_StrictModel):
-    """Shared account runtime settings."""
-
-    timezone: str = Field(default="Europe/Moscow", min_length=1)
-
-
 class HHAccountsConfig(_StrictModel):
-    """Versioned N-account/N-resume runtime topology."""
+    """Versioned N-account/N-resume source topology."""
 
     schema_version: Literal[1]
-    runtime_mode: RuntimeMode = RuntimeMode.OBSERVE
-    global_settings: HHGlobalConfig = Field(default_factory=HHGlobalConfig, alias="global")
     accounts: tuple[HHAccountConfig, ...] = Field(min_length=1)
-
-    @field_validator("runtime_mode", mode="before")
-    @classmethod
-    def parse_runtime_mode(cls, value: Any) -> RuntimeMode:
-        """Use the single canonical fail-closed mode parser."""
-
-        if value is None:
-            return RuntimeMode.OBSERVE
-        if not isinstance(value, (str, RuntimeMode)):
-            raise ValueError("runtime_mode must be a string")
-        return RuntimeMode.parse(value)
 
     @model_validator(mode="after")
     def validate_account_keys(self) -> HHAccountsConfig:
-        """Require one stable account key per upstream profile."""
-
         keys = [account.key for account in self.accounts]
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
@@ -341,13 +283,9 @@ class HHAccountsConfig(_StrictModel):
 
     @property
     def enabled_accounts(self) -> tuple[HHAccountConfig, ...]:
-        """Return only accounts participating in planning and dispatch."""
-
         return tuple(account for account in self.accounts if account.enabled)
 
     def resolve_account(self, account_key: str) -> HHAccountConfig:
-        """Resolve one enabled account without falling back to another profile."""
-
         for account in self.enabled_accounts:
             if account.key == account_key:
                 if not account.enabled_bindings:
@@ -358,8 +296,6 @@ class HHAccountsConfig(_StrictModel):
         raise HHConfigError(f"enabled HH account not found: {account_key!r}")
 
     def validate_query_sets(self, discovery: DiscoveryConfig) -> None:
-        """Reject every unknown query-set reference, including disabled entries."""
-
         known = set(discovery.query_sets)
         unknown: list[str] = []
         for account in self.accounts:
@@ -374,8 +310,6 @@ class HHAccountsConfig(_StrictModel):
 
 
 def _load_toml(path: str | Path) -> dict[str, Any]:
-    """Read a TOML document with a stable domain error."""
-
     resolved = Path(path)
     try:
         with resolved.open("rb") as handle:
@@ -386,8 +320,6 @@ def _load_toml(path: str | Path) -> dict[str, Any]:
 
 
 def load_discovery_config(path: str | Path) -> DiscoveryConfig:
-    """Load and strictly validate the discovery catalog."""
-
     try:
         return DiscoveryConfig.model_validate(_load_toml(path))
     except ValidationError as exc:
@@ -399,8 +331,6 @@ def load_accounts_config(
     *,
     discovery: DiscoveryConfig | None = None,
 ) -> HHAccountsConfig:
-    """Load accounts and optionally validate all discovery references."""
-
     try:
         accounts = HHAccountsConfig.model_validate(_load_toml(path))
     except ValidationError as exc:
@@ -411,8 +341,6 @@ def load_accounts_config(
 
 
 def accounts_config_path_from_env() -> Path:
-    """Return the runtime account-config pointer."""
-
     return Path(
         os.getenv(
             "CAREEROPS_HH_ACCOUNTS_CONFIG",
@@ -422,8 +350,6 @@ def accounts_config_path_from_env() -> Path:
 
 
 def discovery_config_path_from_env() -> Path:
-    """Return the committed discovery-catalog pointer."""
-
     return Path(
         os.getenv(
             "CAREEROPS_HH_DISCOVERY_CONFIG",
