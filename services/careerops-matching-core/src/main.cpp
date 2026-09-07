@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -57,9 +58,22 @@ std::string ListenAddress() {
   return configured;
 }
 
-}  // namespace
+int RunHealthcheck(const std::string& target) {
+  auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
+  auto stub = matching::MatchingCoreControl::NewStub(channel);
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
 
-int main() {
+  matching::HealthRequest request;
+  matching::HealthResponse response;
+  const grpc::Status status = stub->Health(&context, request, &response);
+  if (!status.ok() || response.status() != matching::HealthResponse::SERVING) {
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
+}
+
+int RunServer() {
   const std::string listen_address = ListenAddress();
   MatchingCoreControlService service;
 
@@ -76,4 +90,17 @@ int main() {
   std::cout << kServiceName << " listening on " << listen_address << '\n';
   server->Wait();
   return EXIT_SUCCESS;
+}
+
+}
+
+int main(int argc, char** argv) {
+  if (argc == 1) {
+    return RunServer();
+  }
+  if (argc == 2 && std::string(argv[1]) == "--healthcheck") {
+    return RunHealthcheck(ListenAddress());
+  }
+  std::cerr << "usage: careerops-matching-core [--healthcheck]\n";
+  return EXIT_FAILURE;
 }

@@ -17,6 +17,15 @@ services:
       - ALL
     tmpfs:
       - /tmp:size=32m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - careerops-matching-core
+        - --healthcheck
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     logging:
       driver: json-file
       options:
