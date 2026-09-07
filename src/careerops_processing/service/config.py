@@ -1,4 +1,4 @@
-"""Runtime configuration for the standalone careerops-processing service."""
+"""Runtime configuration для отдельного careerops-processing сервиса"""
 
 from __future__ import annotations
 
@@ -10,14 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProcessingRuntimeConfig(BaseModel):
-    """Environment-backed runtime configuration with no embedded credentials."""
+    """Environment-backed runtime configuration без встроенных секретов"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     postgres_dsn: str = Field(min_length=1)
     s3_endpoint_url: str = Field(min_length=1)
+    s3_access_key: str = Field(min_length=1)
+    s3_secret_key: str = Field(min_length=1)
+    s3_region: str = Field(min_length=1)
     normalized_bucket: str = Field(min_length=1)
     artifacts_bucket: str = Field(min_length=1)
+    artifacts_prefix: str = Field(min_length=1)
+    policy_dir: str = Field(min_length=1)
     reranker_url: str = Field(min_length=1)
     matching_core_target: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
@@ -28,7 +33,7 @@ class ProcessingRuntimeConfig(BaseModel):
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
-            raise ValueError("service URL must start with http:// or https://")
+            raise ValueError("service URL должен начинаться с http:// или https://")
         return value
 
     @field_validator("normalized_bucket", "artifacts_bucket")
@@ -36,7 +41,7 @@ class ProcessingRuntimeConfig(BaseModel):
     def validate_bucket_name(cls, value: str) -> str:
         stripped = value.strip()
         if not stripped:
-            raise ValueError("bucket name must not be blank")
+            raise ValueError("bucket name не должен быть пустым")
         return stripped
 
     @classmethod
@@ -49,20 +54,33 @@ class ProcessingRuntimeConfig(BaseModel):
         def required(name: str) -> str:
             value = env.get(name, "").strip()
             if not value:
-                raise ValueError(f"missing required environment variable: {name}")
+                raise ValueError(f"не задана обязательная переменная окружения: {name}")
             return value
 
         raw_port = env.get("CAREEROPS_PROCESSING_HEALTH_PORT", "18081").strip()
         try:
             health_port = int(raw_port)
         except ValueError as exc:
-            raise ValueError("CAREEROPS_PROCESSING_HEALTH_PORT must be an integer") from exc
+            raise ValueError("CAREEROPS_PROCESSING_HEALTH_PORT должен быть integer") from exc
 
         return cls(
             postgres_dsn=required("CAREEROPS_PROCESSING_POSTGRES_DSN"),
             s3_endpoint_url=required("CAREEROPS_PROCESSING_S3_ENDPOINT_URL"),
+            s3_access_key=required("CAREEROPS_PROCESSING_S3_ACCESS_KEY"),
+            s3_secret_key=required("CAREEROPS_PROCESSING_S3_SECRET_KEY"),
+            s3_region=env.get("CAREEROPS_PROCESSING_S3_REGION", "us-east-1").strip()
+            or "us-east-1",
             normalized_bucket=required("CAREEROPS_PROCESSING_NORMALIZED_BUCKET"),
             artifacts_bucket=required("CAREEROPS_PROCESSING_ARTIFACTS_BUCKET"),
+            artifacts_prefix=env.get(
+                "CAREEROPS_PROCESSING_ARTIFACTS_PREFIX",
+                "processing",
+            ).strip("/")
+            or "processing",
+            policy_dir=env.get(
+                "CAREEROPS_PROCESSING_POLICY_DIR",
+                "/app/config/processing/target_policies",
+            ).strip(),
             reranker_url=required("CAREEROPS_PROCESSING_RERANKER_URL"),
             matching_core_target=required("CAREEROPS_PROCESSING_MATCHING_CORE_TARGET"),
             worker_id=env.get("CAREEROPS_PROCESSING_WORKER_ID", socket.gethostname()).strip()
@@ -73,13 +91,17 @@ class ProcessingRuntimeConfig(BaseModel):
         )
 
     def safe_summary(self) -> dict[str, object]:
-        """Return non-secret runtime wiring for diagnostics."""
+        """Возвращает non-secret wiring для диагностики"""
 
         return {
             "postgres_configured": bool(self.postgres_dsn),
             "s3_endpoint_url": self.s3_endpoint_url,
+            "s3_credentials_configured": bool(self.s3_access_key and self.s3_secret_key),
+            "s3_region": self.s3_region,
             "normalized_bucket": self.normalized_bucket,
             "artifacts_bucket": self.artifacts_bucket,
+            "artifacts_prefix": self.artifacts_prefix,
+            "policy_dir": self.policy_dir,
             "reranker_url": self.reranker_url,
             "matching_core_target": self.matching_core_target,
             "worker_id": self.worker_id,

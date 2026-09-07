@@ -1,4 +1,4 @@
-"""Pinned Processing v2 implementation/model version bundles."""
+"""Pinned version bundles для Processing v2"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from .common import FrozenModel, NonEmptyStr, VersionId
 
 
 class JinaVersionBundle(FrozenModel):
-    """All inputs that may change listwise Jina outputs."""
+    """Все параметры, способные изменить listwise output Jina"""
 
     model_id: NonEmptyStr
     model_revision: NonEmptyStr
@@ -23,10 +23,11 @@ class JinaVersionBundle(FrozenModel):
 
 
 class ProcessingVersionBundle(FrozenModel):
-    """Versions that define deterministic semantics of one processing evaluation."""
+    """Версии, определяющие детерминированную семантику processing evaluation"""
 
     pipeline_version: VersionId
     dictionary_version: VersionId
+    filter_version: VersionId
     requirement_extraction_version: VersionId
     evidence_version: VersionId
     qualification_version: VersionId

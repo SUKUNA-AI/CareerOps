@@ -1,5 +1,11 @@
-"""Public immutable contracts for the CareerOPS Processing v2 boundary."""
+"""Public immutable contracts для CareerOPS Processing v2 boundary"""
 
+from .artifacts import (
+    FILTER_TRACE_SCHEMA_VERSION,
+    FilterTraceArtifact,
+    ProcessingArtifactKind,
+    ProcessingArtifactRef,
+)
 from .common import (
     DataQualityStatus,
     EntityType,
@@ -50,10 +56,12 @@ __all__ = [
     "EntityType",
     "ExperienceEntry",
     "ExperienceRange",
+    "FILTER_TRACE_SCHEMA_VERSION",
     "FilterDecision",
     "FilterEvidence",
     "FilterOutcome",
     "FilterPolicy",
+    "FilterTraceArtifact",
     "INITIAL_REASON_CODES",
     "JinaVersionBundle",
     "LanguageEntry",
@@ -62,6 +70,8 @@ __all__ = [
     "NormalizedRef",
     "NormalizedResume",
     "NormalizedVacancy",
+    "ProcessingArtifactKind",
+    "ProcessingArtifactRef",
     "ProcessingInputManifest",
     "ProcessingVersionBundle",
     "ProjectEntry",

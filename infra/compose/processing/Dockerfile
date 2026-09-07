@@ -9,6 +9,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY config/processing/target_policies ./config/processing/target_policies
 
 RUN pip install --no-cache-dir . && \
     groupadd --system careerops && \
