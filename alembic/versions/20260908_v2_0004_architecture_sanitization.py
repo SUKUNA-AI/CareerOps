@@ -2,7 +2,7 @@
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import context, op
 
 revision = "20260908_v2_0004"
 down_revision = "20260907_v2_0003"
@@ -141,8 +141,9 @@ def _add_normalized_ref_columns(table_name: str) -> None:
 
 
 def upgrade() -> None:
-    _assert_no_dead_search_tasks()
-    _assert_no_application_recovery_rows()
+    if not context.is_offline_mode():
+        _assert_no_dead_search_tasks()
+        _assert_no_application_recovery_rows()
 
     op.drop_constraint(
         "ck_source_tasks_task_kind",
