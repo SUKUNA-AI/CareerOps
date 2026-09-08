@@ -10,6 +10,8 @@ def _env() -> dict[str, str]:
     return {
         "CAREEROPS_PROCESSING_POSTGRES_DSN": "postgresql://careerops@10.42.0.1/careerops",
         "CAREEROPS_PROCESSING_S3_ENDPOINT_URL": "http://10.42.0.1:8333",
+        "CAREEROPS_PROCESSING_S3_ACCESS_KEY": "test-access",
+        "CAREEROPS_PROCESSING_S3_SECRET_KEY": "test-secret",
         "CAREEROPS_PROCESSING_NORMALIZED_BUCKET": "careerops-lake",
         "CAREEROPS_PROCESSING_ARTIFACTS_BUCKET": "careerops-artifacts",
         "CAREEROPS_PROCESSING_RERANKER_URL": "http://10.42.0.1:18082",
@@ -25,6 +27,8 @@ def test_processing_runtime_config_from_env() -> None:
     assert config.health_port == 18081
     assert config.matching_core_target == "127.0.0.1:50051"
     assert config.reranker_url == "http://10.42.0.1:18082"
+    assert config.s3_region == "us-east-1"
+    assert config.artifacts_prefix == "processing"
 
 
 def test_processing_runtime_config_requires_semantic_dependencies() -> None:
@@ -39,7 +43,7 @@ def test_processing_runtime_config_rejects_bad_port() -> None:
     env = _env()
     env["CAREEROPS_PROCESSING_HEALTH_PORT"] = "not-an-int"
 
-    with pytest.raises(ValueError, match="HEALTH_PORT must be an integer"):
+    with pytest.raises(ValueError, match="CAREEROPS_PROCESSING_HEALTH_PORT"):
         ProcessingRuntimeConfig.from_env(env)
 
 
@@ -48,8 +52,13 @@ def test_processing_runtime_config_is_strict() -> None:
         ProcessingRuntimeConfig(
             postgres_dsn="postgresql://careerops@10.42.0.1/careerops",
             s3_endpoint_url="http://10.42.0.1:8333",
+            s3_access_key="test-access",
+            s3_secret_key="test-secret",
+            s3_region="us-east-1",
             normalized_bucket="careerops-lake",
             artifacts_bucket="careerops-artifacts",
+            artifacts_prefix="processing",
+            policy_dir="/app/config/processing/target_policies",
             reranker_url="http://10.42.0.1:18082",
             matching_core_target="127.0.0.1:50051",
             worker_id="core-processing-1",
@@ -58,9 +67,14 @@ def test_processing_runtime_config_is_strict() -> None:
         )
 
 
-def test_processing_runtime_safe_summary_does_not_expose_dsn() -> None:
+def test_processing_runtime_safe_summary_does_not_expose_secrets() -> None:
     config = ProcessingRuntimeConfig.from_env(_env())
     summary = config.safe_summary()
 
     assert summary["postgres_configured"] is True
+    assert summary["s3_credentials_configured"] is True
     assert "postgres_dsn" not in summary
+    assert "s3_access_key" not in summary
+    assert "s3_secret_key" not in summary
+    assert "test-access" not in summary.values()
+    assert "test-secret" not in summary.values()

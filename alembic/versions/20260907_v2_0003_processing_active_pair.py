@@ -2,7 +2,7 @@
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import context, op
 
 revision = "20260907_v2_0003"
 down_revision = "20260906_v2_0002"
@@ -33,16 +33,17 @@ def _duplicate_active_pairs() -> list[tuple[int, int, int]]:
 
 
 def upgrade() -> None:
-    duplicates = _duplicate_active_pairs()
-    if duplicates:
-        details = ", ".join(
-            f"vacancy_id={vacancy_id}/binding_id={binding_id}/active_count={active_count}"
-            for vacancy_id, binding_id, active_count in duplicates
-        )
-        raise RuntimeError(
-            "cannot enforce one active Processing job per pair: duplicate active Processing "
-            f"job pairs exist before migration: {details}"
-        )
+    if not context.is_offline_mode():
+        duplicates = _duplicate_active_pairs()
+        if duplicates:
+            details = ", ".join(
+                f"vacancy_id={vacancy_id}/binding_id={binding_id}/active_count={active_count}"
+                for vacancy_id, binding_id, active_count in duplicates
+            )
+            raise RuntimeError(
+                "cannot enforce one active Processing job per pair: duplicate active Processing "
+                f"job pairs exist before migration: {details}"
+            )
 
     op.create_index(
         "uq_processing_jobs_active_pair",

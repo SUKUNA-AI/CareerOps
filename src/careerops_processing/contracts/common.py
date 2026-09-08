@@ -43,7 +43,7 @@ class ValueState(StrEnum):
 T = TypeVar("T")
 
 
-class SourceValue(FrozenModel, Generic[T]):
+class SourceValue(FrozenModel, Generic[T]):  # noqa: UP046
     """Source-backed value без схлопывания missing/unknown в falsey значение"""
 
     state: ValueState

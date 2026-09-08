@@ -1,4 +1,4 @@
-"""PostgreSQL-реализация durable queue contract Processing v2"""
+"""PostgreSQL implementation of the Processing v2 durable queue contract."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from ..queue import (
 
 
 class PostgresProcessingJobStore:
-    """Единственный SQL owner lifecycle semantics careerops_v2.processing_jobs"""
+    """Single SQL owner for careerops_v2.processing_jobs lifecycle semantics."""
 
     def __init__(self, conn: AsyncConnection[Any]) -> None:
         if not conn.autocommit:
@@ -29,7 +29,7 @@ class PostgresProcessingJobStore:
         self._conn = conn
 
     async def reconcile_current(self, spec: ProcessingWorkSpec) -> UUID:
-        """Гарантирует exact current work и fence старой active work для пары"""
+        """Ensure exact current work exists and fence older active work for the pair."""
 
         job_id = uuid4()
         async with self._conn.transaction():
@@ -62,7 +62,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN 'pending'
                         ELSE processing_jobs.status
@@ -71,7 +71,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN now()
                         ELSE processing_jobs.next_attempt_at
@@ -80,7 +80,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.finished_at
@@ -89,7 +89,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.error_category
@@ -98,7 +98,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.result_artifact_uri
@@ -107,7 +107,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_owner
@@ -116,7 +116,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_token
@@ -125,7 +125,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.leased_at
@@ -134,7 +134,7 @@ class PostgresProcessingJobStore:
                         WHEN processing_jobs.status = 'cancelled'
                          AND (
                              processing_jobs.error_category = 'superseded'
-                             OR processing_jobs.error_category LIKE 'reconciliation.%'
+                             OR processing_jobs.error_category LIKE 'reconciliation.%%'
                          )
                         THEN NULL
                         ELSE processing_jobs.lease_expires_at
@@ -164,7 +164,7 @@ class PostgresProcessingJobStore:
         *,
         reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int:
-        """Fence всех active jobs пары, которая вышла из authoritative desired state"""
+        """Fence every active job for a pair that left authoritative desired state."""
 
         normalized_reason = self._non_empty(reason, "withdraw reason")
         if not normalized_reason.startswith(RECONCILIATION_CANCEL_PREFIX):
@@ -467,7 +467,7 @@ class PostgresProcessingJobStore:
         self._require_one(cursor.rowcount, job.id)
 
     async def _cancel_competing_active(self, spec: ProcessingWorkSpec) -> None:
-        """Отменяет active work, exact identity которой отличается от desired spec"""
+        """Cancel active work whose exact identity differs from the desired spec."""
 
         await self._conn.execute(
             """

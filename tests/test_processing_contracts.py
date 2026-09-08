@@ -15,8 +15,8 @@ from careerops_processing.contracts import (
     RawObservationRef,
     SourceValue,
     TargetPolicy,
-    validate_bundle_for_ref,
     ValueState,
+    validate_bundle_for_ref,
 )
 
 HASH_A = "a" * 64
@@ -77,6 +77,7 @@ def manifest() -> ProcessingInputManifest:
         versions=ProcessingVersionBundle(
             pipeline_version="processing-v2",
             dictionary_version="careerops-dictionary-2026-09",
+            filter_version="filter-v1",
             requirement_extraction_version="requirements-v1",
             evidence_version="evidence-v1",
             qualification_version="qualification-v1",
