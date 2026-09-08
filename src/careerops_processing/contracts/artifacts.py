@@ -16,6 +16,8 @@ FILTER_TRACE_SCHEMA_VERSION = "careerops.processing.filter-trace.v1"
 class ProcessingArtifactKind(StrEnum):
     INPUT_MANIFEST = "input_manifest"
     FILTER_TRACE = "filter_trace"
+    REQUIREMENT_SET = "requirement_set"
+    RESUME_EVIDENCE_SET = "resume_evidence_set"
 
 
 class ProcessingArtifactRef(FrozenModel):
