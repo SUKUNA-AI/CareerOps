@@ -447,39 +447,39 @@ def extract_resume_evidence(
                 )
             )
 
-    for index, entry in enumerate(resume.experience_entries):
+    for index, experience_entry in enumerate(resume.experience_entries):
         evidence.extend(
             _experience_evidence(
-                entry,
+                experience_entry,
                 index=index,
                 evidence_version=evidence_version,
                 known_subjects=known_subjects,
             )
         )
 
-    for index, entry in enumerate(resume.projects):
+    for index, project_entry in enumerate(resume.projects):
         evidence.extend(
             _project_evidence(
-                entry,
+                project_entry,
                 index=index,
                 evidence_version=evidence_version,
                 known_subjects=known_subjects,
             )
         )
 
-    for index, entry in enumerate(resume.education):
+    for index, education_entry in enumerate(resume.education):
         evidence.extend(
             _education_evidence(
-                entry,
+                education_entry,
                 index=index,
                 evidence_version=evidence_version,
             )
         )
 
-    for index, entry in enumerate(resume.languages):
+    for index, language_entry in enumerate(resume.languages):
         evidence.append(
             _language_evidence(
-                entry,
+                language_entry,
                 index=index,
                 evidence_version=evidence_version,
             )
