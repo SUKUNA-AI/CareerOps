@@ -83,37 +83,37 @@ def _add_normalized_ref_columns(table_name: str) -> None:
     op.add_column(table_name, sa.Column("processing_ready", sa.Boolean()), schema="careerops_v2")
 
     op.create_check_constraint(
-        f"ck_{table_name}_normalized_raw_sha256",
+        op.f(f"ck_{table_name}_normalized_raw_sha256"),
         table_name,
         "raw_sha256 IS NULL OR raw_sha256 ~ '^[0-9a-f]{64}$'",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_normalized_sha256",
+        op.f(f"ck_{table_name}_normalized_sha256"),
         table_name,
         "normalized_sha256 IS NULL OR normalized_sha256 ~ '^[0-9a-f]{64}$'",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_semantic_content_hash",
+        op.f(f"ck_{table_name}_semantic_content_hash"),
         table_name,
         "semantic_content_hash IS NULL OR semantic_content_hash ~ '^[0-9a-f]{64}$'",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_normalized_uri",
+        op.f(f"ck_{table_name}_normalized_uri"),
         table_name,
         "normalized_uri IS NULL OR normalized_uri LIKE 's3://%'",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_dq_status",
+        op.f(f"ck_{table_name}_dq_status"),
         table_name,
         "dq_status IS NULL OR dq_status IN ('clean', 'warning', 'blocked')",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_normalized_ref_complete",
+        op.f(f"ck_{table_name}_normalized_ref_complete"),
         table_name,
         "(raw_sha256 IS NULL AND normalized_uri IS NULL AND normalized_sha256 IS NULL "
         "AND semantic_content_hash IS NULL AND normalized_schema_version IS NULL "
@@ -127,13 +127,13 @@ def _add_normalized_ref_columns(table_name: str) -> None:
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_normalized_ref_requires_current",
+        op.f(f"ck_{table_name}_normalized_ref_requires_current"),
         table_name,
         "normalized_uri IS NULL OR materialization_state = 'current'",
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        f"ck_{table_name}_processing_ready_not_blocked",
+        op.f(f"ck_{table_name}_processing_ready_not_blocked"),
         table_name,
         "processing_ready IS DISTINCT FROM TRUE OR dq_status <> 'blocked'",
         schema="careerops_v2",
@@ -146,26 +146,26 @@ def upgrade() -> None:
         _assert_no_application_recovery_rows()
 
     op.drop_constraint(
-        "ck_source_tasks_task_kind",
+        op.f("ck_source_tasks_task_kind"),
         "source_tasks",
         schema="careerops_v2",
         type_="check",
     )
     op.create_check_constraint(
-        "ck_source_tasks_task_kind",
+        op.f("ck_source_tasks_task_kind"),
         "source_tasks",
         "task_kind IN ('search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch')",
         schema="careerops_v2",
     )
 
     op.drop_constraint(
-        "ck_applications_recovery_provenance",
+        op.f("ck_applications_recovery_provenance"),
         "applications",
         schema="careerops_v2",
         type_="check",
     )
     op.drop_constraint(
-        "uq_applications_recovery_source_recovery_record_key",
+        op.f("uq_applications_recovery_source_recovery_record_key"),
         "applications",
         schema="careerops_v2",
         type_="unique",
@@ -186,7 +186,7 @@ def downgrade() -> None:
     for table_name in reversed(_NORMALIZED_TABLES):
         for suffix in reversed(_NORMALIZED_CONSTRAINTS):
             op.drop_constraint(
-                f"ck_{table_name}_{suffix}",
+                op.f(f"ck_{table_name}_{suffix}"),
                 table_name,
                 schema="careerops_v2",
                 type_="check",
@@ -220,13 +220,13 @@ def downgrade() -> None:
         schema="careerops_v2",
     )
     op.create_unique_constraint(
-        "uq_applications_recovery_source_recovery_record_key",
+        op.f("uq_applications_recovery_source_recovery_record_key"),
         "applications",
         ["recovery_source", "recovery_record_key"],
         schema="careerops_v2",
     )
     op.create_check_constraint(
-        "ck_applications_recovery_provenance",
+        op.f("ck_applications_recovery_provenance"),
         "applications",
         "(imported_from_legacy AND recovery_source IS NOT NULL "
         "AND length(btrim(recovery_source)) > 0 AND recovery_record_key IS NOT NULL "
@@ -238,13 +238,13 @@ def downgrade() -> None:
     )
 
     op.drop_constraint(
-        "ck_source_tasks_task_kind",
+        op.f("ck_source_tasks_task_kind"),
         "source_tasks",
         schema="careerops_v2",
         type_="check",
     )
     op.create_check_constraint(
-        "ck_source_tasks_task_kind",
+        op.f("ck_source_tasks_task_kind"),
         "source_tasks",
         "task_kind IN ('search', 'search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch')",
         schema="careerops_v2",
