@@ -23,8 +23,9 @@ services:
         - python
         - -c
         - >-
-          import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:18081/healthz', timeout=2).read()
+          import os, urllib.request;
+          port = os.getenv('CAREEROPS_PROCESSING_HEALTH_PORT', '18081');
+          urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2).read()
       interval: 15s
       timeout: 3s
       retries: 3

@@ -1,36 +1,76 @@
-# careerops-processing container
+# Контейнер careerops-processing
 
-This is the standalone Processing v2 orchestration service deployed on `core`.
-It is intentionally separate from Spark, the Jina reranker and the deterministic
-C++ matching core.
+`careerops-processing` — отдельный runtime Processing v2 на `core`.
 
-Ownership:
+На стадии P2-04 сервис владеет оркестрацией pair-specific jobs и публикацией воспроизводимых артефактов P2-03/P2-04. Spark, HH transport, Jina и вычислительная логика `careerops-matching-core` остаются отдельными границами.
 
-- PostgreSQL job/current-state orchestration;
-- S3 normalized/artifact reads and writes;
-- requirement/evidence workflow in later P2 stages;
-- calls the reranker on `edge`;
-- calls `careerops-matching-core` on core loopback;
-- publishes match results and application candidates.
+## Текущая ответственность
 
-It does not own Spark normalization, HH transport, Jina model execution or native
-matching mathematics.
+Сервис:
 
-The container uses host networking so it can reach both the direct edge/core LAN and
-the matching core bound to `127.0.0.1:50051`. Its own liveness endpoint defaults to
-`127.0.0.1:18081/healthz`, so it is not exposed to the LAN.
+- читает durable Processing queue из PostgreSQL
+- загружает pinned `ProcessingInputManifest`
+- загружает pinned `NormalizedVacancy` и `NormalizedResume` из S3
+- выполняет P2-03 filter
+- получает или строит `RequirementSet` и `ResumeEvidenceSet`
+- переиспользует semantic artifacts через PostgreSQL registry
+- публикует immutable content-addressed Processing artifacts в S3
+- публикует `P204ResultArtifact` для конкретного job
 
-Runtime configuration lives in `/etc/careerops/processing/env`; the repository contains
-only `env.example`. S3 credentials use standard AWS environment variables and are never
-part of Processing manifests or logs.
+На стадии P2-04 сервис **не**:
 
-P2-01 exposes a permanent service shell and liveness surface. `/readyz` remains 503 until
-P2-02 attaches the real queue worker lifecycle; this prevents deployment tooling from
-mistaking a contract-only process for a functioning Processing worker.
+- вызывает Jina reranker
+- вызывает `careerops-matching-core`
+- публикует финальные match decisions
+- создаёт application candidates
+- выполняет Application Owner actions
 
-Build/check:
+Эти зависимости должны добавляться вместе с P2-05/P2-06/P2-07, а не заранее.
+
+## Сеть
+
+Контейнер использует host networking, чтобы обращаться к PostgreSQL и SeaweedFS по текущей LAN-топологии.
+
+Health endpoint по умолчанию слушает только loopback:
+
+```text
+127.0.0.1:18081
+```
+
+Endpoints:
+
+```text
+/healthz  liveness процесса
+/readyz   готовность полностью собранного ProcessingWorker
+```
+
+Docker healthcheck использует `/readyz`. Контейнер считается готовым только после открытия PostgreSQL/S3 dependencies и создания рабочего `ProcessingWorker`.
+
+## Конфигурация
+
+Runtime env хранится на узле в:
+
+```text
+/etc/careerops/processing/env
+```
+
+Шаблон находится в `infra/compose/processing/env.example`.
+
+P2-04 использует собственные переменные `CAREEROPS_PROCESSING_S3_*`; стандартные `AWS_ACCESS_KEY_ID` и `AWS_SECRET_ACCESS_KEY` этим runtime не читаются.
+
+Jina URL и matching-core target до P2-05/P2-06 не требуются.
+
+## Сборка и проверка
 
 ```bash
 docker compose -f infra/compose/processing/compose.yml build
 python -m careerops_processing check-config
+docker compose -f infra/compose/processing/compose.yml up -d
+```
+
+После запуска:
+
+```bash
+curl -fsS http://127.0.0.1:18081/healthz
+curl -fsS http://127.0.0.1:18081/readyz
 ```

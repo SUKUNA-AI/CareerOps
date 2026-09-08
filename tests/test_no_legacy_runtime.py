@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,27 @@ FORBIDDEN_SOURCE_TOKENS = (
     "submit_application_with_test(",
 )
 
+FORBIDDEN_RETIRED_NAMING = (
+    "legacy",
+    "materializer",
+    "scheduler",
+    "mvp",
+    "recovery",
+)
+
+FORBIDDEN_STANDALONE_RUNTIME_NAMING = (
+    re.compile(r"\bobserve\b", re.IGNORECASE),
+    re.compile(r"\bapply\b", re.IGNORECASE),
+)
+
+FORBIDDEN_P204_VERSION_TOKENS = (
+    "careerops.processing.requirement-set.v1",
+    "careerops.processing.resume-evidence-set.v1",
+    "careerops.processing.p2-04-result.v1",
+    "requirements-v1",
+    "evidence-v1",
+)
+
 
 def test_retired_runtime_paths_are_absent() -> None:
     remaining = [path for path in REMOVED_RUNTIME_PATHS if (PROJECT_ROOT / path).exists()]
@@ -66,6 +88,44 @@ def test_source_tree_has_no_retired_runtime_imports_or_write_api() -> None:
     for path in (PROJECT_ROOT / "src").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for token in (*FORBIDDEN_RUNTIME_IMPORTS, *FORBIDDEN_SOURCE_TOKENS):
+            if token in text:
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
+    assert offenders == []
+
+
+def test_active_source_tree_has_no_retired_architecture_naming() -> None:
+    offenders: list[str] = []
+    for path in (PROJECT_ROOT / "src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8").casefold()
+        for token in FORBIDDEN_RETIRED_NAMING:
+            if token in text:
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
+    assert offenders == []
+
+
+def test_active_source_tree_has_no_standalone_observe_or_apply_naming() -> None:
+    offenders: list[str] = []
+    for path in (PROJECT_ROOT / "src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for pattern in FORBIDDEN_STANDALONE_RUNTIME_NAMING:
+            if pattern.search(text):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)}: {pattern.pattern}")
+    assert offenders == []
+
+
+def test_current_p204_sources_and_normative_docs_have_no_v1_contracts() -> None:
+    paths = [
+        *(PROJECT_ROOT / "src" / "careerops_processing").rglob("*.py"),
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "docs" / "processing" / "P2-04.md",
+        PROJECT_ROOT / "tests" / "test_processing_p204.py",
+        PROJECT_ROOT / "tests" / "test_processing_p204_hardening.py",
+        PROJECT_ROOT / "tests" / "test_processing_semantic_registry_postgres.py",
+    ]
+    offenders: list[str] = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for token in FORBIDDEN_P204_VERSION_TOKENS:
             if token in text:
                 offenders.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
     assert offenders == []

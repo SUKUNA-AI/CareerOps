@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -11,6 +15,10 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from careerops_processing.contracts import (
+    FILTER_TRACE_SCHEMA_VERSION,
+    P204_RESULT_SCHEMA_VERSION,
+    REQUIREMENT_SET_SCHEMA_VERSION,
+    RESUME_EVIDENCE_SET_SCHEMA_VERSION,
     BindingSnapshot,
     DataQualityReport,
     DataQualityStatus,
@@ -21,8 +29,10 @@ from careerops_processing.contracts import (
     EvidenceKind,
     EvidenceStrength,
     ExperienceEntry,
+    ExperienceRange,
     FilterDecision,
     FilterOutcome,
+    Location,
     NormalizedRef,
     NormalizedResume,
     NormalizedVacancy,
@@ -34,11 +44,14 @@ from careerops_processing.contracts import (
     ProjectEntry,
     RawObservationRef,
     Requirement,
+    RequirementContext,
     RequirementGroup,
     RequirementGroupOperator,
     RequirementImportance,
     RequirementKind,
+    RequirementModality,
     RequirementSet,
+    RequirementThresholdMetric,
     ResumeEvidenceSet,
     SemanticPolarity,
     SemanticSourceRef,
@@ -48,13 +61,16 @@ from careerops_processing.contracts import (
     TargetPolicy,
     TextBlock,
     ValueState,
+    WorkPreferences,
 )
 from careerops_processing.core import extract_requirements, extract_resume_evidence
+from careerops_processing.core.text_semantics import subjects_from_statement
 from careerops_processing.executor import P204Executor
 from careerops_processing.infrastructure import (
     ProcessingArtifactPublisher,
     ProcessingArtifactStore,
     ProcessingArtifactStoreSettings,
+    S3ProcessingInputLoader,
 )
 from careerops_processing.queue import (
     RECONCILIATION_WITHDRAWN,
@@ -63,6 +79,11 @@ from careerops_processing.queue import (
     ProcessingPairKey,
     ProcessingWorkSpec,
 )
+from careerops_processing.semantic_cache import (
+    P204SemanticArtifactResolver,
+    SemanticArtifactKey,
+)
+from careerops_processing.service.config import ProcessingRuntimeConfig
 from careerops_processing.worker import ProcessingWorker
 
 HASH_A = "a" * 64
@@ -114,6 +135,12 @@ def _vacancy(
     title: str = "Data Engineer",
     text_blocks: tuple[TextBlock, ...] = (),
     key_skills: tuple[SourceLabel, ...] = (),
+    experience: SourceValue[ExperienceRange] | None = None,
+    employment: tuple[SourceLabel, ...] = (),
+    schedules: tuple[SourceLabel, ...] = (),
+    work_formats: tuple[SourceLabel, ...] = (),
+    location: SourceValue[Location] | None = None,
+    relocation_facts: tuple[str, ...] = (),
 ) -> NormalizedVacancy:
     return NormalizedVacancy(
         schema_version="careerops.hh.vacancy.normalized.v1",
@@ -128,12 +155,12 @@ def _vacancy(
         employer=_known(Employer(name="Example")),
         professional_roles=(),
         key_skills=key_skills,
-        experience=_missing(),
-        employment=(),
-        schedules=(),
-        work_formats=(),
-        location=_missing(),
-        relocation_facts=(),
+        experience=experience or _missing(),
+        employment=employment,
+        schedules=schedules,
+        work_formats=work_formats,
+        location=location or _missing(),
+        relocation_facts=relocation_facts,
         salary=_missing(),
         archived=_known(False),
         closed_for_applicants=_known(False),
@@ -147,10 +174,18 @@ def _vacancy(
     )
 
 
-def _resume() -> NormalizedResume:
-    experience_block = _text_block(
-        block_id="exp-1",
-        text="Разработал Kafka consumer\nНе работал с Kubernetes",
+def _resume(
+    *,
+    skill_set: tuple[SourceLabel, ...] = (SourceLabel(key="kafka", label="Kafka"),),
+    about: str = "Команда использовала Spark",
+    experience_blocks: tuple[TextBlock, ...] | None = None,
+    include_preferences: bool = False,
+) -> NormalizedResume:
+    blocks = experience_blocks or (
+        _text_block(
+            block_id="exp-1",
+            text="Разработал Kafka consumer\nНе работал с Kubernetes",
+        ),
     )
     project_block = _text_block(
         block_id="project-1",
@@ -167,8 +202,8 @@ def _resume() -> NormalizedResume:
         raw=_raw(HASH_B),
         semantic_content_hash=HASH_D,
         headline=_known("Data Engineer"),
-        skill_set=(SourceLabel(key="kafka", label="Kafka"),),
-        about=_known("Команда использовала Spark"),
+        skill_set=skill_set,
+        about=_known(about),
         experience_entries=(
             ExperienceEntry(
                 entry_id="exp-entry-1",
@@ -177,7 +212,7 @@ def _resume() -> NormalizedResume:
                 start_date=_known(date(2024, 1, 1)),
                 end_date=_known(date(2025, 1, 1)),
                 currently_active=_known(False),
-                description_blocks=(experience_block,),
+                description_blocks=blocks,
             ),
         ),
         projects=(
@@ -192,10 +227,21 @@ def _resume() -> NormalizedResume:
         ),
         education=(),
         languages=(),
-        location=_missing(),
-        work_preferences=_missing(),
-        relocation=_missing(),
-        business_trips=_missing(),
+        location=_known(Location(area_name="Москва")) if include_preferences else _missing(),
+        work_preferences=(
+            _known(
+                WorkPreferences(
+                    locations=("Москва",),
+                    work_formats=("remote",),
+                    employment=("full",),
+                    schedules=("full_day",),
+                )
+            )
+            if include_preferences
+            else _missing()
+        ),
+        relocation=_known(False) if include_preferences else _missing(),
+        business_trips=_known(True) if include_preferences else _missing(),
         total_experience_years=_known(Decimal("2.0")),
         dq=DataQualityReport(
             status=DataQualityStatus.CLEAN,
@@ -258,8 +304,8 @@ def _manifest(*, frontend_exclusion: bool = False) -> ProcessingInputManifest:
             pipeline_version="processing-v2",
             dictionary_version="careerops-dictionary-2026-09",
             filter_version="filter-v1",
-            requirement_extraction_version="requirements-v1",
-            evidence_version="evidence-v1",
+            requirement_extraction_version="requirements-v2",
+            evidence_version="evidence-v2",
             qualification_version="qualification-v1",
             scoring_version="scoring-v1",
             calibration_version="calibration-unset",
@@ -281,17 +327,70 @@ def _requirement(requirement_id: str) -> Requirement:
     )
 
 
+def _artifact_schema(kind: ProcessingArtifactKind) -> str:
+    return {
+        ProcessingArtifactKind.FILTER_TRACE: FILTER_TRACE_SCHEMA_VERSION,
+        ProcessingArtifactKind.REQUIREMENT_SET: REQUIREMENT_SET_SCHEMA_VERSION,
+        ProcessingArtifactKind.RESUME_EVIDENCE_SET: RESUME_EVIDENCE_SET_SCHEMA_VERSION,
+        ProcessingArtifactKind.P2_04_RESULT: P204_RESULT_SCHEMA_VERSION,
+    }[kind]
+
+
 def _artifact_ref(kind: ProcessingArtifactKind, suffix: str) -> ProcessingArtifactRef:
+    digest = hashlib.sha256(suffix.encode("utf-8")).hexdigest()
     return ProcessingArtifactRef(
         kind=kind,
-        schema_version=f"schema-{suffix}",
-        uri=f"s3://careerops-artifacts/processing/{suffix}/{'f' * 64}.json",
-        sha256="f" * 64,
+        schema_version=_artifact_schema(kind),
+        uri=f"s3://careerops-artifacts/processing/{suffix}/{digest}.json",
+        sha256=digest,
         size_bytes=10,
     )
 
 
-def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
+def test_requirement_graph_rejects_invalid_operators_and_multiple_ownership() -> None:
+    with pytest.raises(ValidationError, match="ANY"):
+        RequirementGroup(
+            group_id="one",
+            operator=RequirementGroupOperator.ANY,
+            requirement_ids=("req-1",),
+        )
+
+    with pytest.raises(ValidationError, match="condition"):
+        RequirementGroup(
+            group_id="conditional",
+            operator=RequirementGroupOperator.CONDITIONAL,
+            requirement_ids=("req-1",),
+        )
+
+    requirement = _requirement("req-1")
+    with pytest.raises(ValidationError, match="exactly one"):
+        RequirementSet(
+            source_key="hh",
+            source_entity_id="vacancy-42",
+            semantic_content_hash=HASH_C,
+            normalized_schema_version="vacancy-v1",
+            normalization_version="normalizer-v1",
+            dictionary_version="dict-v1",
+            extraction_version="requirements-v2",
+            requirements=(requirement,),
+            groups=(
+                RequirementGroup(
+                    group_id="root",
+                    operator=RequirementGroupOperator.ALL,
+                    requirement_ids=("req-1",),
+                    child_group_ids=("child",),
+                ),
+                RequirementGroup(
+                    group_id="child",
+                    operator=RequirementGroupOperator.ALL,
+                    requirement_ids=("req-1",),
+                ),
+            ),
+            root_group_id="root",
+        )
+
+
+def test_requirement_graph_rejects_duplicate_ids_and_cycles() -> None:
     duplicate = _requirement("req-1")
     with pytest.raises(ValidationError, match="unique"):
         RequirementSet(
@@ -301,7 +400,7 @@ def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
             normalized_schema_version="vacancy-v1",
             normalization_version="normalizer-v1",
             dictionary_version="dict-v1",
-            extraction_version="requirements-v1",
+            extraction_version="requirements-v2",
             requirements=(duplicate, duplicate),
             groups=(
                 RequirementGroup(
@@ -313,7 +412,7 @@ def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
             root_group_id="root",
         )
 
-    with pytest.raises(ValidationError, match="acyclic"):
+    with pytest.raises(ValidationError, match="root requirement group"):
         RequirementSet(
             source_key="hh",
             source_entity_id="vacancy-42",
@@ -321,7 +420,7 @@ def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
             normalized_schema_version="vacancy-v1",
             normalization_version="normalizer-v1",
             dictionary_version="dict-v1",
-            extraction_version="requirements-v1",
+            extraction_version="requirements-v2",
             requirements=(_requirement("req-1"),),
             groups=(
                 RequirementGroup(
@@ -332,7 +431,7 @@ def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
                 ),
                 RequirementGroup(
                     group_id="child",
-                    operator=RequirementGroupOperator.ANY,
+                    operator=RequirementGroupOperator.ALL,
                     child_group_ids=("root",),
                 ),
             ),
@@ -340,7 +439,7 @@ def test_requirement_set_rejects_duplicate_ids_and_cycles() -> None:
         )
 
 
-def test_requirement_extractor_preserves_logic_and_semantics() -> None:
+def test_requirement_extractor_preserves_logic_thresholds_and_negation() -> None:
     block = _text_block(
         block_id="requirements",
         heading="Требования",
@@ -349,40 +448,45 @@ def test_requirement_extractor_preserves_logic_and_semantics() -> None:
             "Python или Scala, опыт от 3 лет\n"
             "Kafka будет плюсом\n"
             "Если работа с потоками: Spark обязателен\n"
-            "Kubernetes не требуется"
+            "Kubernetes не требуется\n"
+            "Использование Windows запрещено"
         ),
     )
     result = extract_requirements(
-        _vacancy(text_blocks=(block,)),
-        extraction_version="requirements-v1",
+        _vacancy(
+            text_blocks=(block,),
+            key_skills=(
+                SourceLabel(key="kubernetes", label="Kubernetes"),
+                SourceLabel(key="windows", label="Windows"),
+            ),
+        ),
+        extraction_version="requirements-v2",
     )
 
-    any_groups = [
-        group
-        for group in result.groups
-        if group.operator is RequirementGroupOperator.ANY
-    ]
-    assert len(any_groups) == 1
-    any_requirements = {
+    any_group = next(
+        group for group in result.groups if group.operator is RequirementGroupOperator.ANY
+    )
+    alternatives = {
         item.requirement_id: item
         for item in result.requirements
-        if item.requirement_id in any_groups[0].requirement_ids
+        if item.requirement_id in any_group.requirement_ids
     }
     assert {
         subject.normalized
-        for item in any_requirements.values()
+        for item in alternatives.values()
         for subject in item.subjects
     } == {"python", "scala"}
-    assert {item.minimum_experience_years for item in any_requirements.values()} == {
-        Decimal("3")
-    }
+    assert all(item.threshold is not None for item in alternatives.values())
+    assert {
+        item.threshold.minimum for item in alternatives.values() if item.threshold is not None
+    } == {Decimal("3")}
     assert all(
-        item.importance is RequirementImportance.MANDATORY
-        for item in any_requirements.values()
+        item.context is RequirementContext.QUALIFICATION for item in alternatives.values()
     )
 
-    kafka = next(item for item in result.requirements if "Kafka" in item.statement)
+    kafka = next(item for item in result.requirements if item.statement == "Kafka будет плюсом")
     assert kafka.importance is RequirementImportance.PREFERRED
+    assert kafka.modality is RequirementModality.PREFERRED
 
     conditional = next(
         group
@@ -392,9 +496,81 @@ def test_requirement_extractor_preserves_logic_and_semantics() -> None:
     assert conditional.condition == "работа с потоками"
 
     kubernetes = next(
-        item for item in result.requirements if "Kubernetes" in item.statement
+        item for item in result.requirements if item.statement == "Kubernetes не требуется"
     )
-    assert kubernetes.polarity is SemanticPolarity.NEGATIVE
+    assert kubernetes.modality is RequirementModality.NOT_REQUIRED
+    assert kubernetes.importance is RequirementImportance.OPTIONAL
+    assert kubernetes.polarity is SemanticPolarity.POSITIVE
+
+    windows = next(
+        item for item in result.requirements if item.statement == "Использование Windows запрещено"
+    )
+    assert windows.modality is RequirementModality.PROHIBITED
+    assert windows.importance is RequirementImportance.MANDATORY
+    assert windows.polarity is SemanticPolarity.NEGATIVE
+
+
+def test_requirement_extractor_uses_structured_vacancy_fields() -> None:
+    vacancy = _vacancy(
+        experience=_known(
+            ExperienceRange(
+                source_code="between1And3",
+                minimum_years=Decimal("1"),
+                maximum_years=Decimal("3"),
+            )
+        ),
+        employment=(SourceLabel(key="full", label="Полная занятость"),),
+        schedules=(SourceLabel(key="fullDay", label="Полный день"),),
+        work_formats=(SourceLabel(key="remote", label="Удаленно"),),
+        location=_known(Location(area_name="Москва")),
+        relocation_facts=("Переезд не требуется",),
+    )
+    result = extract_requirements(vacancy, extraction_version="requirements-v2")
+
+    experience = next(
+        item
+        for item in result.requirements
+        if item.kind is RequirementKind.EXPERIENCE
+    )
+    assert experience.threshold is not None
+    assert experience.threshold.metric is RequirementThresholdMetric.EXPERIENCE_YEARS
+    assert experience.threshold.minimum == Decimal("1")
+    assert experience.threshold.maximum is None
+    assert experience.source_refs[0].source_path == "experience"
+
+    work_conditions = {
+        item.statement
+        for item in result.requirements
+        if item.kind is RequirementKind.WORK_CONDITION
+    }
+    assert {"Полная занятость", "Полный день", "Удаленно", "Москва"} <= work_conditions
+
+
+def test_subject_matching_uses_token_boundaries_and_aliases() -> None:
+    false_matches = subjects_from_statement(
+        "Работал с Django и MongoDB на Linux",
+        known_subjects=("Go", "C", "R"),
+    )
+    assert {item.normalized for item in false_matches}.isdisjoint({"go", "c", "r"})
+
+    exact = subjects_from_statement(
+        "Разработка на C++ и ASP.NET Core, раньше CSharp",
+        known_subjects=("C", "C++", ".NET", "C#"),
+    )
+    assert {item.normalized for item in exact} == {"c++", ".net", "c#"}
+
+
+def test_requirement_dedup_merges_provenance_without_source_based_identity() -> None:
+    vacancy = _vacancy(
+        text_blocks=(
+            _text_block(block_id="a", text="Python", heading="Требования", ordinal=0),
+            _text_block(block_id="b", text="Python", heading="Требования", ordinal=1),
+        )
+    )
+    result = extract_requirements(vacancy, extraction_version="requirements-v2")
+    python_requirements = [item for item in result.requirements if item.statement == "Python"]
+    assert len(python_requirements) == 1
+    assert len(python_requirements[0].source_refs) == 2
 
 
 def test_requirement_extraction_is_deterministic_and_versioned() -> None:
@@ -407,9 +583,9 @@ def test_requirement_extraction_is_deterministic_and_versioned() -> None:
             ),
         )
     )
-    first = extract_requirements(vacancy, extraction_version="requirements-v1")
-    replay = extract_requirements(vacancy, extraction_version="requirements-v1")
-    changed = extract_requirements(vacancy, extraction_version="requirements-v2")
+    first = extract_requirements(vacancy, extraction_version="requirements-v2")
+    replay = extract_requirements(vacancy, extraction_version="requirements-v2")
+    changed = extract_requirements(vacancy, extraction_version="requirements-v3")
 
     assert first == replay
     assert [item.requirement_id for item in first.requirements] != [
@@ -417,8 +593,15 @@ def test_requirement_extraction_is_deterministic_and_versioned() -> None:
     ]
 
 
-def test_resume_evidence_preserves_scope_polarity_strength_and_time() -> None:
-    result = extract_resume_evidence(_resume(), evidence_version="evidence-v1")
+def test_resume_evidence_preserves_scope_polarity_strength_time_and_preferences() -> None:
+    result = extract_resume_evidence(
+        _resume(include_preferences=True),
+        evidence_version="evidence-v2",
+    )
+
+    headline = next(item for item in result.evidence if item.kind is EvidenceKind.HEADLINE)
+    assert headline.statement == "Data Engineer"
+    assert headline.strength is EvidenceStrength.MENTION
 
     skill = next(item for item in result.evidence if item.kind is EvidenceKind.SKILL)
     assert skill.strength is EvidenceStrength.MENTION
@@ -444,18 +627,35 @@ def test_resume_evidence_preserves_scope_polarity_strength_and_time() -> None:
     )
     assert negative.polarity is SemanticPolarity.NEGATIVE
 
-    project = next(
-        item for item in result.evidence if item.statement == "Создал ETL pipeline на Python"
+    location = next(item for item in result.evidence if item.kind is EvidenceKind.LOCATION)
+    assert location.statement == "Москва"
+    assert location.context is EvidenceContext.CURRENT_LOCATION
+
+    relocation = next(item for item in result.evidence if item.statement == "Не готов к переезду")
+    assert relocation.polarity is SemanticPolarity.NEGATIVE
+    trips = next(item for item in result.evidence if item.statement == "Готов к командировкам")
+    assert trips.polarity is SemanticPolarity.POSITIVE
+
+
+def test_resume_evidence_dedup_merges_multiple_source_refs() -> None:
+    blocks = (
+        _text_block(block_id="a", text="Разработал Kafka consumer", ordinal=0),
+        _text_block(block_id="b", text="Разработал Kafka consumer", ordinal=1),
     )
-    assert project.kind is EvidenceKind.PROJECT
-    assert project.context is EvidenceContext.PROJECT
+    result = extract_resume_evidence(
+        _resume(experience_blocks=blocks),
+        evidence_version="evidence-v2",
+    )
+    direct = [item for item in result.evidence if item.statement == "Разработал Kafka consumer"]
+    assert len(direct) == 1
+    assert len(direct[0].source_refs) == 2
 
 
 def test_resume_evidence_is_deterministic_and_versioned() -> None:
     resume = _resume()
-    first = extract_resume_evidence(resume, evidence_version="evidence-v1")
-    replay = extract_resume_evidence(resume, evidence_version="evidence-v1")
-    changed = extract_resume_evidence(resume, evidence_version="evidence-v2")
+    first = extract_resume_evidence(resume, evidence_version="evidence-v2")
+    replay = extract_resume_evidence(resume, evidence_version="evidence-v2")
+    changed = extract_resume_evidence(resume, evidence_version="evidence-v3")
 
     assert first == replay
     assert [item.evidence_id for item in first.evidence] != [
@@ -519,16 +719,12 @@ async def test_p204_artifacts_are_content_addressed_and_idempotent() -> None:
     requirements = extract_requirements(
         _vacancy(
             text_blocks=(
-                _text_block(
-                    block_id="requirements",
-                    heading="Требования",
-                    text="Python",
-                ),
+                _text_block(block_id="requirements", heading="Требования", text="Python"),
             )
         ),
-        extraction_version="requirements-v1",
+        extraction_version="requirements-v2",
     )
-    evidence = extract_resume_evidence(_resume(), evidence_version="evidence-v1")
+    evidence = extract_resume_evidence(_resume(), evidence_version="evidence-v2")
 
     req_ref = await publisher.publish_requirement_set(requirements)
     req_replay_ref = await publisher.publish_requirement_set(requirements)
@@ -536,10 +732,90 @@ async def test_p204_artifacts_are_content_addressed_and_idempotent() -> None:
 
     assert req_ref == req_replay_ref
     assert req_ref.kind is ProcessingArtifactKind.REQUIREMENT_SET
+    assert req_ref.schema_version == REQUIREMENT_SET_SCHEMA_VERSION
     assert evidence_ref.kind is ProcessingArtifactKind.RESUME_EVIDENCE_SET
+    assert evidence_ref.schema_version == RESUME_EVIDENCE_SET_SCHEMA_VERSION
     assert req_ref.sha256 in req_ref.uri
     assert evidence_ref.sha256 in evidence_ref.uri
     assert client.put_count == 2
+
+
+class _MemoryRegistry:
+    def __init__(self) -> None:
+        self.refs: dict[str, ProcessingArtifactRef] = {}
+        self.locks: dict[str, asyncio.Lock] = {}
+
+    @asynccontextmanager
+    async def lock(self, key: SemanticArtifactKey) -> AsyncIterator[None]:
+        lock = self.locks.setdefault(key.cache_key(), asyncio.Lock())
+        async with lock:
+            yield
+
+    async def get(self, key: SemanticArtifactKey) -> ProcessingArtifactRef | None:
+        return self.refs.get(key.cache_key())
+
+    async def put(
+        self,
+        key: SemanticArtifactKey,
+        ref: ProcessingArtifactRef,
+    ) -> ProcessingArtifactRef:
+        existing = self.refs.setdefault(key.cache_key(), ref)
+        if existing != ref:
+            raise AssertionError("semantic cache collision")
+        return existing
+
+
+class _SemanticPublisher:
+    def __init__(self) -> None:
+        self.requirement_publish_count = 0
+        self.evidence_publish_count = 0
+        self.verified: list[ProcessingArtifactRef] = []
+
+    async def publish_requirement_set(
+        self,
+        requirement_set: RequirementSet,
+    ) -> ProcessingArtifactRef:
+        del requirement_set
+        self.requirement_publish_count += 1
+        await asyncio.sleep(0.01)
+        return _artifact_ref(ProcessingArtifactKind.REQUIREMENT_SET, "requirements")
+
+    async def publish_resume_evidence_set(
+        self,
+        evidence_set: ResumeEvidenceSet,
+    ) -> ProcessingArtifactRef:
+        del evidence_set
+        self.evidence_publish_count += 1
+        await asyncio.sleep(0.01)
+        return _artifact_ref(ProcessingArtifactKind.RESUME_EVIDENCE_SET, "evidence")
+
+    async def verify_artifact(self, ref: ProcessingArtifactRef) -> None:
+        self.verified.append(ref)
+
+
+@pytest.mark.asyncio
+async def test_semantic_resolver_builds_each_semantic_version_once_under_concurrency() -> None:
+    registry = _MemoryRegistry()
+    publisher = _SemanticPublisher()
+    resolver = P204SemanticArtifactResolver(registry=registry, publisher=publisher)
+    vacancy = _vacancy(text_blocks=(_text_block(block_id="r", text="Python"),))
+    resume = _resume()
+
+    requirement_refs = await asyncio.gather(
+        *(
+            resolver.resolve_requirements(vacancy, extraction_version="requirements-v2")
+            for _ in range(4)
+        )
+    )
+    evidence_refs = await asyncio.gather(
+        *(resolver.resolve_evidence(resume, evidence_version="evidence-v2") for _ in range(4))
+    )
+
+    assert len(set(requirement_refs)) == 1
+    assert len(set(evidence_refs)) == 1
+    assert publisher.requirement_publish_count == 1
+    assert publisher.evidence_publish_count == 1
+    assert len(registry.refs) == 2
 
 
 class _Loader:
@@ -566,10 +842,8 @@ class _Loader:
         return self.resume
 
 
-class _Publisher:
+class _PairPublisher:
     def __init__(self) -> None:
-        self.requirements: RequirementSet | None = None
-        self.evidence: ResumeEvidenceSet | None = None
         self.result: P204ResultArtifact | None = None
         self.filter_decision: FilterDecision | None = None
 
@@ -582,26 +856,38 @@ class _Publisher:
         self.filter_decision = decision
         return _artifact_ref(ProcessingArtifactKind.FILTER_TRACE, "filter")
 
-    async def publish_requirement_set(
-        self,
-        requirement_set: RequirementSet,
-    ) -> ProcessingArtifactRef:
-        self.requirements = requirement_set
-        return _artifact_ref(ProcessingArtifactKind.REQUIREMENT_SET, "requirements")
-
-    async def publish_resume_evidence_set(
-        self,
-        evidence_set: ResumeEvidenceSet,
-    ) -> ProcessingArtifactRef:
-        self.evidence = evidence_set
-        return _artifact_ref(ProcessingArtifactKind.RESUME_EVIDENCE_SET, "evidence")
-
     async def publish_p204_result(
         self,
         result: P204ResultArtifact,
     ) -> ProcessingArtifactRef:
         self.result = result
         return _artifact_ref(ProcessingArtifactKind.P2_04_RESULT, "p204")
+
+
+class _FixedSemanticResolver:
+    def __init__(self) -> None:
+        self.requirement_calls = 0
+        self.evidence_calls = 0
+
+    async def resolve_requirements(
+        self,
+        vacancy: NormalizedVacancy,
+        *,
+        extraction_version: str,
+    ) -> ProcessingArtifactRef:
+        del vacancy, extraction_version
+        self.requirement_calls += 1
+        return _artifact_ref(ProcessingArtifactKind.REQUIREMENT_SET, "requirements")
+
+    async def resolve_evidence(
+        self,
+        resume: NormalizedResume,
+        *,
+        evidence_version: str,
+    ) -> ProcessingArtifactRef:
+        del resume, evidence_version
+        self.evidence_calls += 1
+        return _artifact_ref(ProcessingArtifactKind.RESUME_EVIDENCE_SET, "evidence")
 
 
 def _job(manifest: ProcessingInputManifest) -> ProcessingJobRecord:
@@ -628,33 +914,36 @@ def _job(manifest: ProcessingInputManifest) -> ProcessingJobRecord:
 
 
 @pytest.mark.asyncio
-async def test_p204_executor_runs_keep_path_and_publishes_checkpoint() -> None:
+async def test_p204_executor_uses_semantic_resolver_for_keep() -> None:
     manifest = _manifest()
-    publisher = _Publisher()
+    publisher = _PairPublisher()
+    semantic_resolver = _FixedSemanticResolver()
     executor = P204Executor(
         loader=_Loader(manifest, _vacancy(), _resume()),
         publisher=publisher,
+        semantic_resolver=semantic_resolver,
     )
 
     execution = await executor.execute(_job(manifest))
 
     assert execution.result_artifact_uri is not None
-    assert execution.result_artifact_uri.endswith("/" + "f" * 64 + ".json")
     assert publisher.filter_decision is not None
     assert publisher.filter_decision.outcome is FilterOutcome.KEEP
-    assert publisher.requirements is not None
-    assert publisher.evidence is not None
     assert publisher.result is not None
     assert publisher.result.filter_outcome is FilterOutcome.KEEP
+    assert semantic_resolver.requirement_calls == 1
+    assert semantic_resolver.evidence_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_p204_executor_short_circuits_semantic_extraction_on_exclusion() -> None:
+async def test_p204_executor_short_circuits_semantics_on_exclusion() -> None:
     manifest = _manifest(frontend_exclusion=True)
-    publisher = _Publisher()
+    publisher = _PairPublisher()
+    semantic_resolver = _FixedSemanticResolver()
     executor = P204Executor(
         loader=_Loader(manifest, _vacancy(title="Frontend Developer"), _resume()),
         publisher=publisher,
+        semantic_resolver=semantic_resolver,
     )
 
     execution = await executor.execute(_job(manifest))
@@ -662,16 +951,23 @@ async def test_p204_executor_short_circuits_semantic_extraction_on_exclusion() -
     assert execution.result_artifact_uri is not None
     assert publisher.filter_decision is not None
     assert publisher.filter_decision.outcome is FilterOutcome.EXCLUDE_PROVEN
-    assert publisher.requirements is None
-    assert publisher.evidence is None
     assert publisher.result is not None
     assert publisher.result.requirement_set_ref is None
     assert publisher.result.resume_evidence_set_ref is None
+    assert semantic_resolver.requirement_calls == 0
+    assert semantic_resolver.evidence_calls == 0
 
 
-def test_p204_result_requires_semantic_artifacts_for_keep() -> None:
+def test_p204_result_requires_exact_semantic_artifact_schemas() -> None:
     manifest = _manifest()
-    with pytest.raises(ValidationError, match="KEEP"):
+    bad_requirement_ref = ProcessingArtifactRef(
+        kind=ProcessingArtifactKind.REQUIREMENT_SET,
+        schema_version="careerops.processing.requirement-set.unknown",
+        uri="s3://careerops-artifacts/bad.json",
+        sha256=HASH_A,
+        size_bytes=1,
+    )
+    with pytest.raises(ValidationError, match="schema version"):
         P204ResultArtifact(
             input_fingerprint=manifest.input_fingerprint(),
             manifest=manifest,
@@ -679,6 +975,11 @@ def test_p204_result_requires_semantic_artifacts_for_keep() -> None:
             filter_trace_ref=_artifact_ref(ProcessingArtifactKind.FILTER_TRACE, "filter"),
             requirement_extraction_version=manifest.versions.requirement_extraction_version,
             evidence_version=manifest.versions.evidence_version,
+            requirement_set_ref=bad_requirement_ref,
+            resume_evidence_set_ref=_artifact_ref(
+                ProcessingArtifactKind.RESUME_EVIDENCE_SET,
+                "evidence",
+            ),
         )
 
 
@@ -773,16 +1074,14 @@ async def test_processing_worker_executes_concrete_p204_executor() -> None:
     manifest = _manifest()
     job = _job(manifest)
     store = _WorkerStore(job)
-    publisher = _Publisher()
+    publisher = _PairPublisher()
+    semantic_resolver = _FixedSemanticResolver()
     executor = P204Executor(
         loader=_Loader(manifest, _vacancy(), _resume()),
         publisher=publisher,
+        semantic_resolver=semantic_resolver,
     )
-    worker = ProcessingWorker(
-        store=store,
-        executor=executor,
-        worker_id="worker-a",
-    )
+    worker = ProcessingWorker(store=store, executor=executor, worker_id="worker-a")
 
     assert await worker.run_one() is True
     assert store.result_uri is not None
@@ -811,10 +1110,6 @@ class _JsonStore:
 
 @pytest.mark.asyncio
 async def test_s3_input_loader_verifies_manifest_content_address() -> None:
-    import json
-
-    from careerops_processing.infrastructure import S3ProcessingInputLoader
-
     manifest = _manifest()
     payload = manifest.model_dump(mode="json")
     body = json.dumps(
@@ -843,3 +1138,21 @@ async def test_s3_input_loader_verifies_manifest_content_address() -> None:
         await bad_loader.load_manifest(
             f"s3://careerops-artifacts/processing/input_manifest/v1/{sha}.json"
         )
+
+
+def test_processing_runtime_config_has_no_future_stage_dependencies() -> None:
+    config = ProcessingRuntimeConfig.from_env(
+        {
+            "CAREEROPS_PROCESSING_POSTGRES_DSN": "postgresql://test:test@localhost/test",
+            "CAREEROPS_PROCESSING_S3_ENDPOINT_URL": "http://localhost:8333",
+            "CAREEROPS_PROCESSING_S3_ACCESS_KEY": "key",
+            "CAREEROPS_PROCESSING_S3_SECRET_KEY": "secret",
+            "CAREEROPS_PROCESSING_NORMALIZED_BUCKET": "careerops-lake",
+            "CAREEROPS_PROCESSING_ARTIFACTS_BUCKET": "careerops-artifacts",
+        }
+    )
+
+    assert config.worker_lease_seconds == 300
+    assert config.worker_idle_sleep_seconds == 1.0
+    assert not hasattr(config, "reranker_url")
+    assert not hasattr(config, "matching_core_target")

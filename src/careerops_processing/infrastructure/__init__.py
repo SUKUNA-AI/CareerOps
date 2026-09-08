@@ -9,10 +9,12 @@ from .artifacts import (
 from .input_loader import S3ProcessingInputLoader
 from .policy_repository import FileTargetPolicyRepository, TargetPolicyRepository
 from .postgres_jobs import PostgresProcessingJobStore
+from .postgres_semantic_cache import PostgresSemanticArtifactRegistry
 
 __all__ = [
     "FileTargetPolicyRepository",
     "PostgresProcessingJobStore",
+    "PostgresSemanticArtifactRegistry",
     "ProcessingArtifactIntegrityError",
     "ProcessingArtifactPublisher",
     "ProcessingArtifactStore",

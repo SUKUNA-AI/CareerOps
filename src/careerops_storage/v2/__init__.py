@@ -3,7 +3,12 @@
 from .applications import application_guards, applications
 from .domain import accounts, employers, profiles, resume_bindings, resumes, sources, vacancies
 from .metadata import SCHEMA, metadata
-from .processing import application_candidates, match_results, processing_jobs
+from .processing import (
+    application_candidates,
+    match_results,
+    processing_jobs,
+    processing_semantic_artifacts,
+)
 from .source_control import source_tasks, source_watermarks
 
 __all__ = [
@@ -16,6 +21,7 @@ __all__ = [
     "match_results",
     "metadata",
     "processing_jobs",
+    "processing_semantic_artifacts",
     "profiles",
     "resume_bindings",
     "resumes",

@@ -1,4 +1,4 @@
-"""Публикация артефактов Processing в content-addressed хранилище"""
+"""Публикация артефактов Processing в хранилище с адресацией по содержимому"""
 
 from __future__ import annotations
 
@@ -23,12 +23,13 @@ from careerops_processing.contracts.requirements import (
     REQUIREMENT_SET_SCHEMA_VERSION,
     RequirementSet,
 )
+from careerops_processing.semantic_cache import SemanticArtifactIntegrityError
 
-from .artifacts import ProcessingArtifactStore
+from .artifacts import ProcessingArtifactIntegrityError, ProcessingArtifactStore
 
 
 class ProcessingArtifactPublisher:
-    """Публикует Processing artifacts без указателей latest"""
+    """Публикует и проверяет неизменяемые артефакты Processing"""
 
     def __init__(self, store: ProcessingArtifactStore) -> None:
         self.store = store
@@ -64,21 +65,31 @@ class ProcessingArtifactPublisher:
         self,
         requirement_set: RequirementSet,
     ) -> ProcessingArtifactRef:
-        return await self.store.put_contract(
-            kind=ProcessingArtifactKind.REQUIREMENT_SET,
-            schema_version=REQUIREMENT_SET_SCHEMA_VERSION,
-            payload=requirement_set,
-        )
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.REQUIREMENT_SET,
+                schema_version=REQUIREMENT_SET_SCHEMA_VERSION,
+                payload=requirement_set,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise SemanticArtifactIntegrityError(
+                "RequirementSet нарушает целостность адресуемого по содержимому объекта"
+            ) from exc
 
     async def publish_resume_evidence_set(
         self,
         evidence_set: ResumeEvidenceSet,
     ) -> ProcessingArtifactRef:
-        return await self.store.put_contract(
-            kind=ProcessingArtifactKind.RESUME_EVIDENCE_SET,
-            schema_version=RESUME_EVIDENCE_SET_SCHEMA_VERSION,
-            payload=evidence_set,
-        )
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.RESUME_EVIDENCE_SET,
+                schema_version=RESUME_EVIDENCE_SET_SCHEMA_VERSION,
+                payload=evidence_set,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise SemanticArtifactIntegrityError(
+                "ResumeEvidenceSet нарушает целостность адресуемого по содержимому объекта"
+            ) from exc
 
     async def publish_p204_result(
         self,
@@ -89,3 +100,13 @@ class ProcessingArtifactPublisher:
             schema_version=P204_RESULT_SCHEMA_VERSION,
             payload=result,
         )
+
+    async def verify_artifact(self, ref: ProcessingArtifactRef) -> None:
+        """Проверяет существование и целостность артефакта по его ссылке"""
+
+        try:
+            await self.store.get_contract_json(ref)
+        except ProcessingArtifactIntegrityError as exc:
+            raise SemanticArtifactIntegrityError(
+                "сохранённый семантический артефакт нарушает целостность"
+            ) from exc
