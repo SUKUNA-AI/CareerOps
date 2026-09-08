@@ -1,4 +1,4 @@
-"""Canonical v2 metadata. Legacy runtime exports remain at careerops_storage."""
+"""Канонические PostgreSQL metadata и table contracts схемы v2"""
 
 from .applications import application_guards, applications
 from .domain import accounts, employers, profiles, resume_bindings, resumes, sources, vacancies

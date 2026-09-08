@@ -1,9 +1,8 @@
-"""Pure deterministic Python reference semantics for Processing v2.
+"""Эталонная детерминированная логика Processing v2 на Python
 
-This package stays free of PostgreSQL, S3, HTTP and model-serving concerns. It is the
-correctness/reference implementation used to define and test deterministic semantics.
-Measured production hot paths may later execute in the separate C++20
-`careerops-matching-core` service, which must prove parity against this reference layer.
+Пакет не зависит от PostgreSQL, S3, HTTP и model serving
+Он задаёт correctness semantics, с которыми должен сохранять parity отдельный
+C++20 сервис careerops-matching-core для измеренных hot paths
 """
 
 from .filtering import evaluate_filter

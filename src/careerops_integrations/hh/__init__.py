@@ -1,8 +1,8 @@
-"""Shared read-only HH transport primitives used by the v2 source adapter.
+"""Общие read-only примитивы HH transport для source adapter v2
 
-Filtering, materialization, scheduling and application orchestration do not live in
-this compatibility package. The vendored hh-applicant-tool remains the pinned
-upstream transport implementation and is intentionally untouched.
+Фильтрация, нормализация, orchestration и application side effects не принадлежат
+этому пакету. Vendored hh-applicant-tool остаётся pinned transport implementation
+и не изменяется в рамках обычного CareerOPS refactoring
 """
 
 from .driver import HHApplicantToolCLI, HHDriverError, ParamValue

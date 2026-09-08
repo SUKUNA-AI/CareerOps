@@ -1,4 +1,4 @@
-"""Namespaced reason-code contract shared by filtering, matching and policy."""
+"""Namespaced reason-code contract для filtering, matching и policy"""
 
 from __future__ import annotations
 

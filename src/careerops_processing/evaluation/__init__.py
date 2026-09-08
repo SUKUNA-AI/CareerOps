@@ -1,4 +1,4 @@
-"""Evaluation API для Processing v2"""
+"""API оценки качества для Processing v2"""
 
 from .filter_bootstrap import build_filter_bootstrap_corpus
 from .filter_gold import (

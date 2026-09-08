@@ -1,13 +1,13 @@
-"""Create lossless root HH source work without scheduling policy.
+"""Формирование корневой HH source generation без scheduling policy
 
-A generation is identified by an externally supplied UUID. Retrying an already
-seeded generation reuses its existing root tasks instead of re-reading current
-watermarks or configuration, so orchestration retries cannot change the scan
-boundary halfway through a generation.
+Generation определяется внешним UUID
+Повторный запуск уже созданной generation использует существующие root tasks и не
+перечитывает текущие watermark или конфигурацию, поэтому retry orchestration не может
+изменить границу сканирования посреди generation
 
-All selected queries become persistent SEARCH_PAGE tasks. Execution throughput is
-bounded later by the worker. Resume inventory sync is an independent root task in
-the same generation when explicitly requested.
+Все выбранные запросы превращаются в persistent SEARCH_PAGE tasks
+Пропускная способность ограничивается позже worker-ом
+Синхронизация списка резюме создаётся отдельной root task только когда она явно запрошена
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
-from psycopg import AsyncConnection
 
 from careerops_integrations.hh.configuration import (
     DiscoveryConfig,
@@ -34,7 +33,7 @@ from careerops_integrations.hh.configuration import (
     load_discovery_config,
 )
 
-from .service import V2PostgresSettings
+from .postgres import HHPostgresSettings, resolve_hh_account_id
 from .tasks import (
     SourceTaskKind,
     SourceTaskRepository,
@@ -44,14 +43,14 @@ from .tasks import (
 )
 from .watermarks import HHSearchWatermarkStore
 
-# Defensive corruption guard only. Normal paging stops at the source-reported page
-# count, the persisted publication watermark, or source exhaustion.
+# Только защитный предел от повреждённой pagination
+# Штатная остановка определяется source-reported pages, watermark или исчерпанием source
 _SOURCE_PAGE_SAFETY_CAP = 10_000
 _DEFAULT_WATERMARK_OVERLAP_SECONDS = 3600
 
 
 class SourceSeedKind(StrEnum):
-    """Root work families that orchestration may persist for one generation."""
+    """Наборы root work, которые orchestration может создать для одной generation"""
 
     SEARCH = "search"
     RESUMES = "resumes"
@@ -68,7 +67,7 @@ class SourceSeedKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class HHSourceGenerationPlan:
-    """Pure root-task plan before any PostgreSQL write."""
+    """План root tasks до записи в PostgreSQL"""
 
     generation_id: UUID
     account_key: str
@@ -83,7 +82,7 @@ class HHSourceGenerationPlan:
 
 @dataclass(frozen=True, slots=True)
 class HHSourceSeedSummary:
-    """Compact result of atomically ensuring one root generation in PostgreSQL."""
+    """Краткий результат атомарного создания root generation в PostgreSQL"""
 
     generation_id: str
     account_key: str
@@ -145,11 +144,12 @@ def build_source_generation_plan(
     watermarks: Mapping[str, datetime] | None = None,
     watermark_overlap_seconds: int = _DEFAULT_WATERMARK_OVERLAP_SECONDS,
 ) -> HHSourceGenerationPlan:
-    """Build all initial persistent work for one explicit observation generation.
+    """Строит все стартовые persistent tasks для одной observation generation
 
-    Every selected query starts at page zero. Subsequent pages are driven by the
-    source-reported page count and stop at the previous publication watermark with
-    overlap, or at source exhaustion. The safety cap only guards corrupt pagination.
+    Каждый выбранный query начинается с page=0
+    Последующие страницы создаются по source-reported page count и останавливаются по
+    предыдущему publication watermark с overlap либо по исчерпанию source
+    Safety cap нужен только как защита от повреждённой pagination
     """
 
     if generation_id.int == 0:
@@ -182,11 +182,11 @@ def build_source_generation_plan(
                 query_key=spec.key,
                 text=spec.text,
                 page=0,
+                max_pages=_SOURCE_PAGE_SAFETY_CAP,
                 area=_query_value(spec.area, defaults.area),
                 period=_query_value(spec.period, defaults.period),
                 order_by=defaults.order_by,
                 per_page=_query_value(spec.per_page, defaults.per_page),
-                max_pages=_SOURCE_PAGE_SAFETY_CAP,
             )
             search_tasks.append(
                 _watermarked_search_root(
@@ -215,36 +215,8 @@ def build_source_generation_plan(
     )
 
 
-async def _resolve_v2_account_id(
-    conn: AsyncConnection[Any],
-    *,
-    account_key: str,
-    profile_key: str,
-) -> int:
-    cursor = await conn.execute(
-        """
-        SELECT a.id
-        FROM careerops_v2.accounts AS a
-        JOIN careerops_v2.sources AS s ON s.id = a.source_id
-        JOIN careerops_v2.profiles AS p
-          ON p.account_id = a.id AND p.source_id = a.source_id
-        WHERE s.source_key = 'hh'
-          AND a.account_key = %s
-          AND p.profile_key = %s
-        """,
-        (account_key, profile_key),
-    )
-    rows = await cursor.fetchall()
-    if len(rows) != 1:
-        raise RuntimeError(
-            "expected exactly one v2 HH account/profile mapping for "
-            f"account={account_key!r}, profile={profile_key!r}; found {len(rows)}"
-        )
-    return int(rows[0][0])
-
-
 async def _existing_generation_counts(
-    conn: AsyncConnection[Any],
+    conn: Any,
     *,
     account_id: int,
     generation_id: UUID,
@@ -289,11 +261,12 @@ async def seed_source_generation(
     accounts_config: Path | None = None,
     discovery_config: Path | None = None,
 ) -> HHSourceSeedSummary:
-    """Atomically ensure all initial tasks for one externally identified generation.
+    """Атомарно создаёт стартовые tasks для явно заданной generation
 
-    This function only reads local configuration and writes PostgreSQL v2 control
-    state. It performs no HH or S3 calls. Existing generations are immutable: a
-    retry with the same UUID returns the previously seeded root set.
+    Функция читает только локальную конфигурацию и пишет control state в PostgreSQL v2
+    Вызовов HH или S3 здесь нет
+    Существующая generation immutable, поэтому retry с тем же UUID возвращает уже
+    созданный root set
     """
 
     accounts_path = accounts_config or accounts_config_path_from_env()
@@ -306,10 +279,10 @@ async def seed_source_generation(
         accounts = load_accounts_config(accounts_path)
 
     account = accounts.resolve_account(account_key.strip())
-    settings = V2PostgresSettings.from_env()
+    settings = HHPostgresSettings.from_env()
     conn = await psycopg.AsyncConnection.connect(settings.dsn, autocommit=True)
     try:
-        account_id = await _resolve_v2_account_id(
+        account_id = await resolve_hh_account_id(
             conn,
             account_key=account.key,
             profile_key=account.profile,
@@ -351,8 +324,8 @@ async def seed_source_generation(
             watermark_overlap_seconds=_watermark_overlap_seconds_from_env(),
         )
         repository = SourceTaskRepository(conn)
-        # Root seeding is all-or-nothing. On orchestration retry, ON CONFLICT returns
-        # existing task ids without resetting succeeded/deferred/claimed state.
+        # Root seeding выполняется целиком или не выполняется вообще
+        # При retry ON CONFLICT возвращает существующие task id и не сбрасывает их state
         async with conn.transaction():
             for task in plan.tasks:
                 await repository.enqueue(account_id=account_id, spec=task)

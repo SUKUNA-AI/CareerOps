@@ -1,4 +1,4 @@
-"""Immutable artifact contracts для Processing v2"""
+"""Контракты неизменяемых артефактов Processing v2"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class ProcessingArtifactKind(StrEnum):
 
 
 class ProcessingArtifactRef(FrozenModel):
-    """Content-addressed ссылка на immutable Processing artifact"""
+    """Content-addressed ссылка на неизменяемый артефакт Processing"""
 
     kind: ProcessingArtifactKind
     schema_version: VersionId
@@ -29,7 +29,7 @@ class ProcessingArtifactRef(FrozenModel):
 
 
 class FilterTraceArtifact(FrozenModel):
-    """Полный replayable trace решения P2-03"""
+    """Полный воспроизводимый trace решения P2-03"""
 
     schema_version: VersionId = FILTER_TRACE_SCHEMA_VERSION
     input_fingerprint: Sha256

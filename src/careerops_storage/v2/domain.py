@@ -1,4 +1,4 @@
-"""Identity registry, Spark-owned current objects and separately owned resume policy."""
+"""Identity registry, Spark-owned current objects и отдельно owned resume policy"""
 
 from sqlalchemy import (
     BigInteger,
@@ -17,7 +17,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, TIMESTAMP
 
-from .metadata import current_provenance, metadata, numeric_id, timestamps
+from .metadata import (
+    current_provenance,
+    metadata,
+    normalized_ref_provenance,
+    numeric_id,
+    timestamps,
+)
 
 sources = Table(
     "sources",
@@ -91,6 +97,7 @@ vacancies = Table(
     Column("closed_for_applicants", Boolean),
     Column("published_at", TIMESTAMP(timezone=True)),
     *current_provenance(),
+    *normalized_ref_provenance(),
     *timestamps(),
     ForeignKeyConstraint(["employer_id", "source_id"], [employers.c.id, employers.c.source_id]),
     UniqueConstraint("source_id", "source_vacancy_id"),
@@ -119,6 +126,7 @@ resumes = Table(
     Column("present_in_upstream", Boolean),
     Column("inactive_at", TIMESTAMP(timezone=True)),
     *current_provenance(),
+    *normalized_ref_provenance(),
     *timestamps(),
     ForeignKeyConstraint(
         ["profile_id", "account_id", "source_id"],

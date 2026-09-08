@@ -1,4 +1,4 @@
-"""Infrastructure adapters для отдельного Processing v2 сервиса"""
+"""Инфраструктурные адаптеры отдельного сервиса Processing v2"""
 
 from .artifact_publisher import ProcessingArtifactPublisher
 from .artifacts import (

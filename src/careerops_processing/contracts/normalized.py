@@ -1,4 +1,4 @@
-"""Final Spark-to-Processing normalized entity contracts."""
+"""Финальные normalized contracts между Spark и Processing"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .common import (
 
 
 class DataQualityReport(FrozenModel):
-    """Technical completeness of one normalized entity version."""
+    """Техническая полнота одной normalized entity version"""
 
     status: DataQualityStatus
     full_entity_available: bool
@@ -91,7 +91,7 @@ class Location(FrozenModel):
 
 
 class NormalizedVacancy(FrozenModel):
-    """Source facts normalized by Spark; no suitability decisions are allowed here."""
+    """Source facts, нормализованные Spark без suitability decisions"""
 
     schema_version: VersionId
     normalization_version: VersionId
@@ -197,7 +197,7 @@ class WorkPreferences(FrozenModel):
 
 
 class NormalizedResume(FrozenModel):
-    """Full normalized resume version consumed by Processing v2."""
+    """Полная normalized resume version, которую потребляет Processing v2"""
 
     schema_version: VersionId
     normalization_version: VersionId

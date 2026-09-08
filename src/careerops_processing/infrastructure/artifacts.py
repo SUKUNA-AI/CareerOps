@@ -1,4 +1,4 @@
-"""Content-addressed immutable artifact storage для Processing v2"""
+"""Неизменяемое content-addressed хранилище артефактов Processing v2"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ _SAFE_SEGMENT = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 
 class ProcessingArtifactIntegrityError(RuntimeError):
-    """Ошибка нарушения content-addressed artifact invariant"""
+    """Ошибка нарушения инварианта content-addressed артефактов"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +38,7 @@ class ProcessingArtifactStoreSettings:
 
 
 class ProcessingArtifactStore:
-    """Пишет immutable JSON bundles по SHA-256 content address"""
+    """Пишет неизменяемые JSON bundles по SHA-256 content address"""
 
     def __init__(
         self,

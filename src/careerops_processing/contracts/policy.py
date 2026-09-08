@@ -1,4 +1,4 @@
-"""Versioned binding and target-policy snapshots pinned into processing jobs."""
+"""Versioned snapshots binding и TargetPolicy, закреплённые за processing jobs"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _canonical_json(value: object) -> str:
 
 
 class TargetPolicy(FrozenModel):
-    """Immutable target policy snapshot; semantic schema is versioned independently."""
+    """Immutable snapshot target policy с независимо versioned semantic schema"""
 
     target_key: NonEmptyStr
     schema_version: VersionId
@@ -75,7 +75,7 @@ class TargetPolicy(FrozenModel):
 
 
 class BindingSnapshot(FrozenModel):
-    """Semantic pair identity pinned for one vacancy × resume evaluation."""
+    """Semantic pair identity одной evaluation vacancy × resume"""
 
     binding_key: NonEmptyStr
     binding_version: int
