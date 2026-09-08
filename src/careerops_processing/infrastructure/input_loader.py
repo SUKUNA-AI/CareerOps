@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -16,6 +17,18 @@ from careerops_processing.contracts import (
 from careerops_storage.s3 import S3JsonStore
 
 _SHA_FILE = re.compile(r"^(?P<sha>[0-9a-f]{64})\.json$")
+
+
+def _render_json(payload: object) -> str:
+    """Возвращает JSON boundary для strict Pydantic contracts"""
+
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 class S3ProcessingInputLoader:
@@ -44,7 +57,7 @@ class S3ProcessingInputLoader:
         expected_sha = self._manifest_sha_from_uri(uri)
         if object_ref.sha256 != expected_sha:
             raise ValueError("input manifest content hash не совпадает с URI")
-        return ProcessingInputManifest.model_validate(payload)
+        return ProcessingInputManifest.model_validate_json(_render_json(payload))
 
     async def load_vacancy(self, ref: NormalizedRef) -> NormalizedVacancy:
         if ref.entity_type is not EntityType.VACANCY:
@@ -52,7 +65,7 @@ class S3ProcessingInputLoader:
         payload, object_ref = await self._normalized_store.get_json_with_metadata(
             ref.normalized_uri
         )
-        bundle = NormalizedVacancy.model_validate(payload)
+        bundle = NormalizedVacancy.model_validate_json(_render_json(payload))
         validate_bundle_for_ref(
             ref,
             bundle,
@@ -66,7 +79,7 @@ class S3ProcessingInputLoader:
         payload, object_ref = await self._normalized_store.get_json_with_metadata(
             ref.normalized_uri
         )
-        bundle = NormalizedResume.model_validate(payload)
+        bundle = NormalizedResume.model_validate_json(_render_json(payload))
         validate_bundle_for_ref(
             ref,
             bundle,
