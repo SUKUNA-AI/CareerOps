@@ -1,4 +1,4 @@
-"""Runtime seam P2-03 → P2-04 для durable Processing worker"""
+"""Связь стадий P2-03 и P2-04 с постоянным Processing worker"""
 
 from __future__ import annotations
 
@@ -13,16 +13,15 @@ from .contracts import (
     P204ResultArtifact,
     ProcessingArtifactRef,
     ProcessingInputManifest,
-    RequirementSet,
-    ResumeEvidenceSet,
 )
-from .core import evaluate_filter, extract_requirements, extract_resume_evidence
+from .core import evaluate_filter
 from .queue import ProcessingJobRecord
+from .semantic_cache import SemanticArtifactResolutionError
 from .worker import ProcessingExecutionDisposition, ProcessingExecutionResult
 
 
 class ProcessingInputLoader(Protocol):
-    """Загружает pinned inputs и обязан проверить их identity и checksum"""
+    """Загружает зафиксированные входы и проверяет их identity и checksum"""
 
     async def load_manifest(self, uri: str) -> ProcessingInputManifest: ...
 
@@ -32,22 +31,12 @@ class ProcessingInputLoader(Protocol):
 
 
 class P204ArtifactPublisher(Protocol):
-    """Минимальная artifact boundary, необходимая executor до P2-04 включительно"""
+    """Публикует артефакты пары vacancy × resume до P2-04 включительно"""
 
     async def publish_filter_trace(
         self,
         manifest: ProcessingInputManifest,
         decision: FilterDecision,
-    ) -> ProcessingArtifactRef: ...
-
-    async def publish_requirement_set(
-        self,
-        requirement_set: RequirementSet,
-    ) -> ProcessingArtifactRef: ...
-
-    async def publish_resume_evidence_set(
-        self,
-        evidence_set: ResumeEvidenceSet,
     ) -> ProcessingArtifactRef: ...
 
     async def publish_p204_result(
@@ -56,17 +45,37 @@ class P204ArtifactPublisher(Protocol):
     ) -> ProcessingArtifactRef: ...
 
 
+class P204SemanticResolver(Protocol):
+    """Переиспользует семантические артефакты между vacancy × resume jobs"""
+
+    async def resolve_requirements(
+        self,
+        vacancy: NormalizedVacancy,
+        *,
+        extraction_version: str,
+    ) -> ProcessingArtifactRef: ...
+
+    async def resolve_evidence(
+        self,
+        resume: NormalizedResume,
+        *,
+        evidence_version: str,
+    ) -> ProcessingArtifactRef: ...
+
+
 class P204Executor:
-    """Исполняет текущий детерминированный Processing horizon P2-03 + P2-04"""
+    """Исполняет детерминированные стадии P2-03 и P2-04"""
 
     def __init__(
         self,
         *,
         loader: ProcessingInputLoader,
         publisher: P204ArtifactPublisher,
+        semantic_resolver: P204SemanticResolver,
     ) -> None:
         self._loader = loader
         self._publisher = publisher
+        self._semantic_resolver = semantic_resolver
 
     @staticmethod
     def _job_matches_manifest(
@@ -114,19 +123,16 @@ class P204Executor:
 
         if decision.outcome is FilterOutcome.KEEP:
             try:
-                requirements = extract_requirements(
+                requirement_ref = await self._semantic_resolver.resolve_requirements(
                     vacancy,
                     extraction_version=manifest.versions.requirement_extraction_version,
                 )
-                evidence = extract_resume_evidence(
+                evidence_ref = await self._semantic_resolver.resolve_evidence(
                     resume,
                     evidence_version=manifest.versions.evidence_version,
                 )
-            except ValueError:
-                return self._terminal("processing.p204.extraction_invalid")
-
-            requirement_ref = await self._publisher.publish_requirement_set(requirements)
-            evidence_ref = await self._publisher.publish_resume_evidence_set(evidence)
+            except SemanticArtifactResolutionError:
+                return self._terminal("processing.p204.semantic_artifact_invalid")
 
         result = P204ResultArtifact(
             input_fingerprint=manifest.input_fingerprint(),

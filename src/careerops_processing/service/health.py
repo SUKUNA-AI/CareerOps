@@ -1,4 +1,4 @@
-"""Минимальный постоянный liveness surface контейнера Processing worker"""
+"""HTTP liveness и readiness для контейнера careerops-processing"""
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVICE_NAME = "careerops-processing"
 SERVICE_PROTOCOL_VERSION = "processing-v2"
+
+
+class _ProcessingHealthServer(ThreadingHTTPServer):
+    ready_event: threading.Event
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -27,12 +31,22 @@ class _HealthHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/readyz":
+            server = self.server
+            if isinstance(server, _ProcessingHealthServer) and server.ready_event.is_set():
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "status": "ready",
+                        "service": SERVICE_NAME,
+                    },
+                )
+                return
             self._write_json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
                     "status": "not_ready",
                     "service": SERVICE_NAME,
-                    "reason": "processing_worker_not_attached",
+                    "reason": "processing_worker_not_ready",
                 },
             )
             return
@@ -52,10 +66,12 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 class HealthServer:
-    """Фоновый HTTP liveness server до подключения реального worker readiness"""
+    """Фоновый HTTP-сервер, состояние которого связано с готовностью worker"""
 
-    def __init__(self, host: str, port: int) -> None:
-        self._server = ThreadingHTTPServer((host, port), _HealthHandler)
+    def __init__(self, host: str, port: int, *, ready_event: threading.Event) -> None:
+        server = _ProcessingHealthServer((host, port), _HealthHandler)
+        server.ready_event = ready_event
+        self._server = server
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:

@@ -1,4 +1,4 @@
-"""Извлечение ResumeEvidenceSet из NormalizedResume"""
+"""Детерминированное извлечение ResumeEvidenceSet из NormalizedResume"""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from careerops_processing.contracts.normalized import (
     WorkPreferences,
 )
 from careerops_processing.contracts.semantics import (
+    SemanticPolarity,
     SemanticSourceRef,
     SemanticSubject,
     SemanticTimeSpan,
@@ -87,6 +88,33 @@ def _time_span(
     )
 
 
+def _evidence_identity(
+    *,
+    kind: EvidenceKind,
+    statement: str,
+    subjects: tuple[SemanticSubject, ...],
+    activity: str | None,
+    actor_scope: EvidenceActorScope,
+    context: EvidenceContext,
+    polarity: SemanticPolarity,
+    strength: EvidenceStrength,
+    time_span: SemanticTimeSpan | None,
+    evidence_version: str,
+) -> dict[str, object]:
+    return {
+        "kind": kind.value,
+        "subjects": [subject.normalized for subject in subjects],
+        "semantic_text": None if subjects else normalize_subject(statement),
+        "activity": activity,
+        "actor_scope": actor_scope.value,
+        "context": context.value,
+        "polarity": polarity.value,
+        "strength": strength.value,
+        "time_span": time_span.model_dump(mode="json") if time_span is not None else None,
+        "evidence_version": evidence_version,
+    }
+
+
 def _make_evidence(
     *,
     kind: EvidenceKind,
@@ -99,6 +127,7 @@ def _make_evidence(
     known_subjects: tuple[str, ...],
     time_span: SemanticTimeSpan | None = None,
     explicit_subject: SemanticSubject | None = None,
+    polarity_override: SemanticPolarity | None = None,
 ) -> ResumeEvidence:
     statement = normalize_space(statement)
     subjects = (
@@ -107,21 +136,19 @@ def _make_evidence(
         else subjects_from_statement(statement, known_subjects=known_subjects)
     )
     activity = detect_activity(statement)
-    polarity = detect_polarity(statement)
-    identity = {
-        "kind": kind.value,
-        "statement": statement.casefold(),
-        "subjects": [subject.normalized for subject in subjects],
-        "actor_scope": actor_scope.value,
-        "context": context.value,
-        "polarity": polarity.value,
-        "strength": strength.value,
-        "time_span": time_span.model_dump(mode="json") if time_span is not None else None,
-        "source_path": source_ref.source_path,
-        "entry_id": source_ref.entry_id,
-        "block_id": source_ref.block_id,
-        "evidence_version": evidence_version,
-    }
+    polarity = polarity_override or detect_polarity(statement)
+    identity = _evidence_identity(
+        kind=kind,
+        statement=statement,
+        subjects=subjects,
+        activity=activity,
+        actor_scope=actor_scope,
+        context=context,
+        polarity=polarity,
+        strength=strength,
+        time_span=time_span,
+        evidence_version=evidence_version,
+    )
     return ResumeEvidence(
         evidence_id=stable_semantic_id("ev", identity),
         kind=kind,
@@ -135,6 +162,15 @@ def _make_evidence(
         time_span=time_span,
         source_refs=(source_ref,),
     )
+
+
+def _known_subjects(resume: NormalizedResume) -> tuple[str, ...]:
+    values: list[str] = []
+    for skill in resume.skill_set:
+        values.append(skill.key)
+        if skill.label is not None:
+            values.append(skill.label)
+    return tuple(dict.fromkeys(values))
 
 
 def _skill_evidence(skill: SourceLabel, index: int, evidence_version: str) -> ResumeEvidence:
@@ -339,11 +375,7 @@ def _language_evidence(
         evidence_version=evidence_version,
         context=EvidenceContext.LANGUAGE,
         actor_scope=EvidenceActorScope.SELF,
-        strength=(
-            EvidenceStrength.SUPPORTED
-            if level is not None
-            else EvidenceStrength.MENTION
-        ),
+        strength=EvidenceStrength.SUPPORTED if level is not None else EvidenceStrength.MENTION,
         known_subjects=(),
         explicit_subject=subject,
     )
@@ -368,10 +400,7 @@ def _preference_evidence(
                 _make_evidence(
                     kind=EvidenceKind.PREFERENCE,
                     statement=item,
-                    source_ref=_field_ref(
-                        f"work_preferences.{field_name}[{index}]",
-                        item,
-                    ),
+                    source_ref=_field_ref(f"work_preferences.{field_name}[{index}]", item),
                     evidence_version=evidence_version,
                     context=EvidenceContext.PREFERENCE,
                     actor_scope=EvidenceActorScope.SELF,
@@ -381,6 +410,31 @@ def _preference_evidence(
                 )
             )
     return result
+
+
+def _boolean_preference_evidence(
+    *,
+    value: bool,
+    source_path: str,
+    subject_name: str,
+    positive_statement: str,
+    negative_statement: str,
+    evidence_version: str,
+) -> ResumeEvidence:
+    statement = positive_statement if value else negative_statement
+    subject = SemanticSubject(text=subject_name, normalized=normalize_subject(subject_name))
+    return _make_evidence(
+        kind=EvidenceKind.PREFERENCE,
+        statement=statement,
+        source_ref=_field_ref(source_path, statement),
+        evidence_version=evidence_version,
+        context=EvidenceContext.PREFERENCE,
+        actor_scope=EvidenceActorScope.SELF,
+        strength=EvidenceStrength.DIRECT,
+        known_subjects=(),
+        explicit_subject=subject,
+        polarity_override=(SemanticPolarity.POSITIVE if value else SemanticPolarity.NEGATIVE),
+    )
 
 
 def _total_experience_evidence(
@@ -403,16 +457,13 @@ def _total_experience_evidence(
     )
 
 
-def _deduplicate_evidence(items: list[ResumeEvidence]) -> list[ResumeEvidence]:
-    by_id: dict[str, ResumeEvidence] = {}
-    for item in items:
-        existing = by_id.get(item.evidence_id)
-        if existing is None:
-            by_id[item.evidence_id] = item
-            continue
-        refs = tuple(dict.fromkeys((*existing.source_refs, *item.source_refs)))
-        by_id[item.evidence_id] = existing.model_copy(update={"source_refs": refs})
-    return list(by_id.values())
+def _merge_evidence(items: dict[str, ResumeEvidence], item: ResumeEvidence) -> None:
+    existing = items.get(item.evidence_id)
+    if existing is None:
+        items[item.evidence_id] = item
+        return
+    refs = tuple(dict.fromkeys((*existing.source_refs, *item.source_refs)))
+    items[item.evidence_id] = existing.model_copy(update={"source_refs": refs})
 
 
 def extract_resume_evidence(
@@ -420,17 +471,36 @@ def extract_resume_evidence(
     *,
     evidence_version: str,
 ) -> ResumeEvidenceSet:
-    """Строит ResumeEvidenceSet один раз на immutable resume version"""
+    """Строит ResumeEvidenceSet один раз для одной semantic resume version"""
 
-    known_subjects = tuple(skill.label or skill.key for skill in resume.skill_set)
-    evidence: list[ResumeEvidence] = []
+    known_subjects = _known_subjects(resume)
+    evidence: dict[str, ResumeEvidence] = {}
+
+    if resume.headline.value is not None:
+        headline = resume.headline.value
+        subject = SemanticSubject(text=headline, normalized=normalize_subject(headline))
+        _merge_evidence(
+            evidence,
+            _make_evidence(
+                kind=EvidenceKind.HEADLINE,
+                statement=headline,
+                source_ref=_field_ref("headline", headline),
+                evidence_version=evidence_version,
+                context=EvidenceContext.SUMMARY,
+                actor_scope=EvidenceActorScope.SELF,
+                strength=EvidenceStrength.MENTION,
+                known_subjects=(),
+                explicit_subject=subject,
+            ),
+        )
 
     for index, skill in enumerate(resume.skill_set):
-        evidence.append(_skill_evidence(skill, index, evidence_version))
+        _merge_evidence(evidence, _skill_evidence(skill, index, evidence_version))
 
     if resume.about.value is not None:
         for index, statement in enumerate(split_statements(resume.about.value)):
-            evidence.append(
+            _merge_evidence(
+                evidence,
                 _make_evidence(
                     kind=EvidenceKind.SUMMARY,
                     statement=statement,
@@ -444,64 +514,110 @@ def extract_resume_evidence(
                     ),
                     strength=EvidenceStrength.DIRECT,
                     known_subjects=known_subjects,
-                )
+                ),
             )
 
     for index, experience_entry in enumerate(resume.experience_entries):
-        evidence.extend(
-            _experience_evidence(
-                experience_entry,
-                index=index,
-                evidence_version=evidence_version,
-                known_subjects=known_subjects,
-            )
-        )
+        for item in _experience_evidence(
+            experience_entry,
+            index=index,
+            evidence_version=evidence_version,
+            known_subjects=known_subjects,
+        ):
+            _merge_evidence(evidence, item)
 
     for index, project_entry in enumerate(resume.projects):
-        evidence.extend(
-            _project_evidence(
-                project_entry,
-                index=index,
-                evidence_version=evidence_version,
-                known_subjects=known_subjects,
-            )
-        )
+        for item in _project_evidence(
+            project_entry,
+            index=index,
+            evidence_version=evidence_version,
+            known_subjects=known_subjects,
+        ):
+            _merge_evidence(evidence, item)
 
     for index, education_entry in enumerate(resume.education):
-        evidence.extend(
-            _education_evidence(
-                education_entry,
-                index=index,
-                evidence_version=evidence_version,
-            )
-        )
+        for item in _education_evidence(
+            education_entry,
+            index=index,
+            evidence_version=evidence_version,
+        ):
+            _merge_evidence(evidence, item)
 
     for index, language_entry in enumerate(resume.languages):
-        evidence.append(
+        _merge_evidence(
+            evidence,
             _language_evidence(
                 language_entry,
                 index=index,
                 evidence_version=evidence_version,
-            )
+            ),
         )
 
-    if resume.work_preferences.value is not None:
-        evidence.extend(
-            _preference_evidence(
-                resume.work_preferences.value,
-                evidence_version=evidence_version,
+    if resume.location.value is not None:
+        location = resume.location.value
+        location_text = location.area_name or location.address
+        if location_text is not None:
+            subject = SemanticSubject(
+                text=location_text,
+                normalized=normalize_subject(location_text),
             )
+            _merge_evidence(
+                evidence,
+                _make_evidence(
+                    kind=EvidenceKind.LOCATION,
+                    statement=location_text,
+                    source_ref=_field_ref("location", location_text),
+                    evidence_version=evidence_version,
+                    context=EvidenceContext.CURRENT_LOCATION,
+                    actor_scope=EvidenceActorScope.SELF,
+                    strength=EvidenceStrength.DIRECT,
+                    known_subjects=(),
+                    explicit_subject=subject,
+                ),
+            )
+
+    if resume.work_preferences.value is not None:
+        for item in _preference_evidence(
+            resume.work_preferences.value,
+            evidence_version=evidence_version,
+        ):
+            _merge_evidence(evidence, item)
+
+    if resume.relocation.value is not None:
+        _merge_evidence(
+            evidence,
+            _boolean_preference_evidence(
+                value=resume.relocation.value,
+                source_path="relocation",
+                subject_name="relocation",
+                positive_statement="Готов к переезду",
+                negative_statement="Не готов к переезду",
+                evidence_version=evidence_version,
+            ),
+        )
+
+    if resume.business_trips.value is not None:
+        _merge_evidence(
+            evidence,
+            _boolean_preference_evidence(
+                value=resume.business_trips.value,
+                source_path="business_trips",
+                subject_name="business_trips",
+                positive_statement="Готов к командировкам",
+                negative_statement="Не готов к командировкам",
+                evidence_version=evidence_version,
+            ),
         )
 
     if resume.total_experience_years.value is not None:
-        evidence.append(
+        _merge_evidence(
+            evidence,
             _total_experience_evidence(
                 resume.total_experience_years.value,
                 evidence_version=evidence_version,
-            )
+            ),
         )
 
-    evidence = _deduplicate_evidence(evidence)
     return ResumeEvidenceSet(
         source_key=resume.source_key,
         account_key=resume.account_key,
@@ -511,5 +627,5 @@ def extract_resume_evidence(
         normalization_version=resume.normalization_version,
         dictionary_version=resume.dictionary_version,
         evidence_version=evidence_version,
-        evidence=tuple(evidence),
+        evidence=tuple(evidence.values()),
     )

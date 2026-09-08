@@ -7,11 +7,13 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from .common import FrozenModel, S3Uri, Sha256, VersionId
+from .evidence import RESUME_EVIDENCE_SET_SCHEMA_VERSION
 from .filtering import FilterDecision, FilterOutcome
 from .manifest import ProcessingInputManifest
+from .requirements import REQUIREMENT_SET_SCHEMA_VERSION
 
 FILTER_TRACE_SCHEMA_VERSION = "careerops.processing.filter-trace.v1"
-P204_RESULT_SCHEMA_VERSION = "careerops.processing.p2-04-result.v1"
+P204_RESULT_SCHEMA_VERSION = "careerops.processing.p2-04-result.v2"
 
 
 class ProcessingArtifactKind(StrEnum):
@@ -23,7 +25,7 @@ class ProcessingArtifactKind(StrEnum):
 
 
 class ProcessingArtifactRef(FrozenModel):
-    """Content-addressed ссылка на неизменяемый артефакт Processing"""
+    """Ссылка на неизменяемый артефакт с адресацией по содержимому"""
 
     kind: ProcessingArtifactKind
     schema_version: VersionId
@@ -33,7 +35,7 @@ class ProcessingArtifactRef(FrozenModel):
 
 
 class FilterTraceArtifact(FrozenModel):
-    """Полный воспроизводимый trace решения P2-03"""
+    """Полная воспроизводимая трассировка решения P2-03"""
 
     schema_version: VersionId = FILTER_TRACE_SCHEMA_VERSION
     input_fingerprint: Sha256
@@ -51,7 +53,7 @@ class FilterTraceArtifact(FrozenModel):
 
 
 class P204ResultArtifact(FrozenModel):
-    """Финальный воспроизводимый checkpoint текущего runtime horizon P2-03 + P2-04"""
+    """Воспроизводимая контрольная точка стадий P2-03 и P2-04"""
 
     schema_version: VersionId = P204_RESULT_SCHEMA_VERSION
     input_fingerprint: Sha256
@@ -69,6 +71,8 @@ class P204ResultArtifact(FrozenModel):
             raise ValueError("input_fingerprint не совпадает с manifest")
         if self.filter_trace_ref.kind is not ProcessingArtifactKind.FILTER_TRACE:
             raise ValueError("filter_trace_ref должен ссылаться на FILTER_TRACE")
+        if self.filter_trace_ref.schema_version != FILTER_TRACE_SCHEMA_VERSION:
+            raise ValueError("filter_trace_ref имеет неподдерживаемую schema version")
         if self.requirement_extraction_version != (
             self.manifest.versions.requirement_extraction_version
         ):
@@ -81,11 +85,18 @@ class P204ResultArtifact(FrozenModel):
                 raise ValueError("KEEP P2-04 result требует requirement и evidence artifacts")
             if self.requirement_set_ref.kind is not ProcessingArtifactKind.REQUIREMENT_SET:
                 raise ValueError("requirement_set_ref имеет неверный artifact kind")
+            if self.requirement_set_ref.schema_version != REQUIREMENT_SET_SCHEMA_VERSION:
+                raise ValueError("requirement_set_ref имеет неподдерживаемую schema version")
             if (
                 self.resume_evidence_set_ref.kind
                 is not ProcessingArtifactKind.RESUME_EVIDENCE_SET
             ):
                 raise ValueError("resume_evidence_set_ref имеет неверный artifact kind")
+            if (
+                self.resume_evidence_set_ref.schema_version
+                != RESUME_EVIDENCE_SET_SCHEMA_VERSION
+            ):
+                raise ValueError("resume_evidence_set_ref имеет неподдерживаемую schema version")
             return self
 
         if self.requirement_set_ref is not None or self.resume_evidence_set_ref is not None:

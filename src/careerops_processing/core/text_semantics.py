@@ -1,4 +1,4 @@
-"""Детерминированные текстовые helpers для P2-04"""
+"""Детерминированные текстовые правила P2-04"""
 
 from __future__ import annotations
 
@@ -7,8 +7,13 @@ import json
 import re
 import unicodedata
 from collections.abc import Iterable
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from careerops_processing.contracts.requirements import (
+    RequirementImportance,
+    RequirementModality,
+)
 from careerops_processing.contracts.semantics import SemanticPolarity, SemanticSubject
 
 _WS = re.compile(r"\s+")
@@ -17,7 +22,7 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-ZА-ЯЁ])")
 _ALT_WORD = re.compile(r"\s+(?:или|or)\s+", re.IGNORECASE)
 _COMPACT_TECH = re.compile(r"[A-Za-zА-Яа-яЁё0-9+#.]", re.UNICODE)
 
-_NEGATION_PATTERNS = (
+_EVIDENCE_NEGATION_PATTERNS = (
     re.compile(
         r"\bне\s+(?:работал|работала|работали|использовал|"
         r"использовала|использовали)\s+(?:с|со)\b",
@@ -28,8 +33,25 @@ _NEGATION_PATTERNS = (
     re.compile(r"\bnot\s+worked\s+with\b", re.I),
     re.compile(r"\bno\s+experience\s+with\b", re.I),
     re.compile(r"\bwithout\s+experience\b", re.I),
-    re.compile(r"\bnot\s+required\b", re.I),
-    re.compile(r"\bне\s+требуется\b", re.I),
+)
+
+_NOT_REQUIRED_MARKERS = (
+    "не требуется",
+    "не обязателен",
+    "не обязательна",
+    "не обязательно",
+    "not required",
+    "not mandatory",
+    "no need",
+)
+
+_PROHIBITED_MARKERS = (
+    "запрещено",
+    "не допускается",
+    "нельзя",
+    "must not",
+    "prohibited",
+    "not allowed",
 )
 
 _MIN_YEARS_PATTERNS = (
@@ -92,27 +114,26 @@ _TEAM_MARKERS = (
 
 _ACTIVITY_PATTERNS = (
     re.compile(
-        r"\b(?:разработал|разработала|разрабатывал|"
-        r"разрабатывала|реализовал|реализовала|внедрил|"
-        r"внедрила|настроил|настроила|поддерживал|"
-        r"поддерживала|оптимизировал|оптимизировала|"
-        r"проектировал|проектировала|использовал|использовала|писал|"
-        r"писала|создал|создала|управлял|управляла|анализировал|"
-        r"анализировала|работал|работала)\b",
+        r"\b(?:разработал|разработала|разрабатывать|разрабатывал|"
+        r"разрабатывала|реализовал|реализовала|реализовывать|внедрил|"
+        r"внедрила|внедрять|настроил|настроила|настраивать|поддерживал|"
+        r"поддерживала|поддерживать|оптимизировал|оптимизировала|"
+        r"оптимизировать|проектировал|проектировала|проектировать|"
+        r"использовал|использовала|использовать|писал|писала|писать|"
+        r"создал|создала|создавать|управлял|управляла|управлять|"
+        r"анализировал|анализировала|анализировать|работал|работала|работать)\b",
         re.I,
     ),
     re.compile(
-        r"\b(?:developed|implemented|built|operated|configured|maintained|optimized|designed|"
-        r"used|wrote|created|managed|analyzed|worked)\b",
+        r"\b(?:developed|develop|implemented|implement|built|build|operated|operate|"
+        r"configured|configure|maintained|maintain|optimized|optimize|designed|design|"
+        r"used|use|wrote|write|created|create|managed|manage|analyzed|analyze|worked|work)\b",
         re.I,
     ),
 )
 
 _SUBJECT_PREFIXES = (
-    re.compile(
-        r"^(?:опыт\s+(?:работы|разработки)?\s*(?:с|со|в)?\s*)",
-        re.I,
-    ),
+    re.compile(r"^(?:опыт\s+(?:работы|разработки)?\s*(?:с|со|в)?\s*)", re.I),
     re.compile(r"^(?:experience\s+(?:working\s+)?with\s+)", re.I),
     re.compile(r"^(?:знание|знания|knowledge\s+of)\s+", re.I),
     re.compile(r"^(?:владение|proficiency\s+in)\s+", re.I),
@@ -120,15 +141,22 @@ _SUBJECT_PREFIXES = (
     re.compile(r"^(?:no\s+experience\s+with\s+)", re.I),
 )
 
+_SUBJECT_ALIAS_GROUPS = (
+    frozenset({"c++", "cpp"}),
+    frozenset({"c#", "csharp"}),
+    frozenset({".net", "dotnet"}),
+    frozenset({"postgresql", "postgres"}),
+    frozenset({"kubernetes", "k8s"}),
+)
 
+
+@dataclass(frozen=True, slots=True)
 class RequirementSignal:
-    """Легкий internal value object для modality detection"""
+    """Результат определения обязательности и отрицательной семантики требования"""
 
-    __slots__ = ("importance", "modality")
-
-    def __init__(self, importance: str, modality: str) -> None:
-        self.importance = importance
-        self.modality = modality
+    importance: RequirementImportance
+    modality: RequirementModality
+    polarity: SemanticPolarity
 
 
 def normalize_space(value: str) -> str:
@@ -136,9 +164,13 @@ def normalize_space(value: str) -> str:
 
 
 def normalize_subject(value: str) -> str:
-    value = unicodedata.normalize("NFKC", value)
-    value = normalize_space(value).casefold()
-    return value.strip(" ,;:.()[]{}")
+    """Нормализует subject, сохраняя значимые префиксы вроде `.NET`"""
+
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalize_space(normalized).casefold().strip(" ,;:()[]{}")
+    while normalized.endswith(".") and len(normalized) > 1:
+        normalized = normalized[:-1].rstrip()
+    return normalized
 
 
 def stable_semantic_id(prefix: str, payload: object) -> str:
@@ -154,7 +186,7 @@ def stable_semantic_id(prefix: str, payload: object) -> str:
 
 
 def detect_polarity(value: str) -> SemanticPolarity:
-    if any(pattern.search(value) for pattern in _NEGATION_PATTERNS):
+    if any(pattern.search(value) for pattern in _EVIDENCE_NEGATION_PATTERNS):
         return SemanticPolarity.NEGATIVE
     return SemanticPolarity.POSITIVE
 
@@ -166,13 +198,41 @@ def detect_requirement_signal(
     heading: str | None = None,
 ) -> RequirementSignal:
     combined = " ".join(part for part in (heading, section_hint, value) if part).casefold()
+    if any(marker in combined for marker in _NOT_REQUIRED_MARKERS):
+        return RequirementSignal(
+            RequirementImportance.OPTIONAL,
+            RequirementModality.NOT_REQUIRED,
+            SemanticPolarity.POSITIVE,
+        )
+    if any(marker in combined for marker in _PROHIBITED_MARKERS):
+        return RequirementSignal(
+            RequirementImportance.MANDATORY,
+            RequirementModality.PROHIBITED,
+            SemanticPolarity.NEGATIVE,
+        )
     if any(marker in combined for marker in _OPTIONAL_MARKERS):
-        return RequirementSignal("optional", "optional")
+        return RequirementSignal(
+            RequirementImportance.OPTIONAL,
+            RequirementModality.OPTIONAL,
+            SemanticPolarity.POSITIVE,
+        )
     if any(marker in combined for marker in _PREFERRED_MARKERS):
-        return RequirementSignal("preferred", "preferred")
+        return RequirementSignal(
+            RequirementImportance.PREFERRED,
+            RequirementModality.PREFERRED,
+            SemanticPolarity.POSITIVE,
+        )
     if any(marker in combined for marker in _REQUIRED_MARKERS):
-        return RequirementSignal("mandatory", "required")
-    return RequirementSignal("unknown", "unknown")
+        return RequirementSignal(
+            RequirementImportance.MANDATORY,
+            RequirementModality.REQUIRED,
+            SemanticPolarity.POSITIVE,
+        )
+    return RequirementSignal(
+        RequirementImportance.UNKNOWN,
+        RequirementModality.UNKNOWN,
+        SemanticPolarity.POSITIVE,
+    )
 
 
 def extract_minimum_years(value: str) -> Decimal | None:
@@ -194,7 +254,14 @@ def strip_experience_fragment(value: str) -> str:
 def strip_requirement_markers(value: str) -> str:
     result = normalize_space(_BULLET.sub("", value))
     lowered = result.casefold()
-    for marker in (*_PREFERRED_MARKERS, *_OPTIONAL_MARKERS, *_REQUIRED_MARKERS):
+    markers = (
+        *_NOT_REQUIRED_MARKERS,
+        *_PROHIBITED_MARKERS,
+        *_PREFERRED_MARKERS,
+        *_OPTIONAL_MARKERS,
+        *_REQUIRED_MARKERS,
+    )
+    for marker in markers:
         marker_index = lowered.find(marker)
         if marker_index == 0:
             result = normalize_space(result[len(marker) :].lstrip(" :-—–"))
@@ -205,7 +272,7 @@ def strip_requirement_markers(value: str) -> str:
     result = strip_experience_fragment(result)
     for pattern in _SUBJECT_PREFIXES:
         result = normalize_space(pattern.sub("", result))
-    return result.strip(" ,;:.()[]{}")
+    return result.strip(" ,;:()[]{}")
 
 
 def split_statements(
@@ -273,22 +340,55 @@ def split_alternatives(value: str) -> tuple[str, ...]:
     return (normalized,)
 
 
+def _aliases_for(subject: str) -> tuple[str, ...]:
+    normalized = normalize_subject(subject)
+    for group in _SUBJECT_ALIAS_GROUPS:
+        if normalized in group:
+            return tuple(sorted(group))
+    return (normalized,)
+
+
+def _is_subject_extension(character: str) -> bool:
+    return character.isalnum() or character in "_+#."
+
+
+def _contains_subject(statement: str, subject: str) -> bool:
+    normalized_statement = normalize_subject(statement)
+    for alias in _aliases_for(subject):
+        if not alias:
+            continue
+        start = 0
+        while True:
+            index = normalized_statement.find(alias, start)
+            if index < 0:
+                break
+            end = index + len(alias)
+            before = normalized_statement[index - 1] if index > 0 else ""
+            after = normalized_statement[end] if end < len(normalized_statement) else ""
+            first_is_word = alias[0].isalnum() or alias[0] == "_"
+            last_is_word = alias[-1].isalnum() or alias[-1] == "_"
+            before_ok = not first_is_word or not before or not _is_subject_extension(before)
+            after_ok = not last_is_word or not after or not _is_subject_extension(after)
+            if before_ok and after_ok:
+                return True
+            start = index + 1
+    return False
+
+
 def subjects_from_statement(
     statement: str,
     *,
     known_subjects: Iterable[str] = (),
 ) -> tuple[SemanticSubject, ...]:
-    normalized_statement = normalize_subject(statement)
     found: dict[str, SemanticSubject] = {}
     for known in known_subjects:
         normalized_known = normalize_subject(known)
-        if not normalized_known:
+        if not normalized_known or not _contains_subject(statement, known):
             continue
-        if normalized_known in normalized_statement:
-            found[normalized_known] = SemanticSubject(
-                text=normalize_space(known),
-                normalized=normalized_known,
-            )
+        found[normalized_known] = SemanticSubject(
+            text=normalize_space(known),
+            normalized=normalized_known,
+        )
     if found:
         return tuple(found[key] for key in sorted(found))
 

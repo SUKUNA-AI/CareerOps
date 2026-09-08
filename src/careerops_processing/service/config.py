@@ -1,4 +1,4 @@
-"""Runtime configuration для отдельного careerops-processing сервиса"""
+"""Настройки запуска отдельного сервиса careerops-processing"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProcessingRuntimeConfig(BaseModel):
-    """Environment-backed runtime configuration без встроенных секретов"""
+    """Настройки текущего P2-04 без зависимостей будущих стадий"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -22,14 +22,13 @@ class ProcessingRuntimeConfig(BaseModel):
     normalized_bucket: str = Field(min_length=1)
     artifacts_bucket: str = Field(min_length=1)
     artifacts_prefix: str = Field(min_length=1)
-    policy_dir: str = Field(min_length=1)
-    reranker_url: str = Field(min_length=1)
-    matching_core_target: str = Field(min_length=1)
     worker_id: str = Field(min_length=1)
+    worker_lease_seconds: int = Field(ge=3)
+    worker_idle_sleep_seconds: float = Field(gt=0)
     health_host: str = Field(min_length=1)
     health_port: int = Field(ge=1, le=65535)
 
-    @field_validator("s3_endpoint_url", "reranker_url")
+    @field_validator("s3_endpoint_url")
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
@@ -57,11 +56,19 @@ class ProcessingRuntimeConfig(BaseModel):
                 raise ValueError(f"не задана обязательная переменная окружения: {name}")
             return value
 
-        raw_port = env.get("CAREEROPS_PROCESSING_HEALTH_PORT", "18081").strip()
-        try:
-            health_port = int(raw_port)
-        except ValueError as exc:
-            raise ValueError("CAREEROPS_PROCESSING_HEALTH_PORT должен быть integer") from exc
+        def integer(name: str, default: str) -> int:
+            raw = env.get(name, default).strip()
+            try:
+                return int(raw)
+            except ValueError as exc:
+                raise ValueError(f"{name} должен быть integer") from exc
+
+        def floating(name: str, default: str) -> float:
+            raw = env.get(name, default).strip()
+            try:
+                return float(raw)
+            except ValueError as exc:
+                raise ValueError(f"{name} должен быть number") from exc
 
         return cls(
             postgres_dsn=required("CAREEROPS_PROCESSING_POSTGRES_DSN"),
@@ -77,21 +84,23 @@ class ProcessingRuntimeConfig(BaseModel):
                 "processing",
             ).strip("/")
             or "processing",
-            policy_dir=env.get(
-                "CAREEROPS_PROCESSING_POLICY_DIR",
-                "/app/config/processing/target_policies",
-            ).strip(),
-            reranker_url=required("CAREEROPS_PROCESSING_RERANKER_URL"),
-            matching_core_target=required("CAREEROPS_PROCESSING_MATCHING_CORE_TARGET"),
             worker_id=env.get("CAREEROPS_PROCESSING_WORKER_ID", socket.gethostname()).strip()
             or socket.gethostname(),
+            worker_lease_seconds=integer(
+                "CAREEROPS_PROCESSING_WORKER_LEASE_SECONDS",
+                "300",
+            ),
+            worker_idle_sleep_seconds=floating(
+                "CAREEROPS_PROCESSING_WORKER_IDLE_SLEEP_SECONDS",
+                "1.0",
+            ),
             health_host=env.get("CAREEROPS_PROCESSING_HEALTH_HOST", "127.0.0.1").strip()
             or "127.0.0.1",
-            health_port=health_port,
+            health_port=integer("CAREEROPS_PROCESSING_HEALTH_PORT", "18081"),
         )
 
     def safe_summary(self) -> dict[str, object]:
-        """Возвращает non-secret wiring для диагностики"""
+        """Возвращает настройки подключения без секретов"""
 
         return {
             "postgres_configured": bool(self.postgres_dsn),
@@ -101,10 +110,9 @@ class ProcessingRuntimeConfig(BaseModel):
             "normalized_bucket": self.normalized_bucket,
             "artifacts_bucket": self.artifacts_bucket,
             "artifacts_prefix": self.artifacts_prefix,
-            "policy_dir": self.policy_dir,
-            "reranker_url": self.reranker_url,
-            "matching_core_target": self.matching_core_target,
             "worker_id": self.worker_id,
+            "worker_lease_seconds": self.worker_lease_seconds,
+            "worker_idle_sleep_seconds": self.worker_idle_sleep_seconds,
             "health_host": self.health_host,
             "health_port": self.health_port,
         }

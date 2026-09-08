@@ -1,4 +1,4 @@
-"""Контракты durable queue для CareerOPS Processing v2"""
+"""Контракты постоянной очереди CareerOPS Processing v2"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _require_non_empty(value: str, name: str) -> None:
 
 
 class ProcessingJobStatus(StrEnum):
-    """Operational states, общие с careerops_v2.processing_jobs"""
+    """Рабочие состояния, общие с careerops_v2.processing_jobs"""
 
     PENDING = "pending"
     CLAIMED = "claimed"
@@ -41,12 +41,12 @@ class ProcessingJobStatus(StrEnum):
 
 
 class ProcessingJobLeaseLost(RuntimeError):
-    """Worker больше не владеет lease и не имеет права менять job"""
+    """Worker больше не владеет lease и не имеет права менять задачу"""
 
 
 @dataclass(frozen=True, slots=True, order=True)
 class ProcessingPairKey:
-    """PostgreSQL identity одной decision unit vacancy × binding"""
+    """Идентификатор одной единицы решения vacancy × binding в PostgreSQL"""
 
     vacancy_id: int
     binding_id: int
@@ -58,7 +58,7 @@ class ProcessingPairKey:
 
 @dataclass(frozen=True, slots=True)
 class ProcessingWorkSpec:
-    """Точная desired evaluation vacancy × binding до enqueue в durable queue"""
+    """Точная постановка работы vacancy × binding перед помещением в очередь"""
 
     vacancy_id: int
     binding_id: int
@@ -108,7 +108,7 @@ class ProcessingWorkSpec:
 
 @dataclass(frozen=True, slots=True)
 class ProcessingJobRecord:
-    """Claimed Processing job с текущим fencing lease"""
+    """Захваченная задача Processing с текущим fencing lease"""
 
     id: UUID
     vacancy_id: int
@@ -131,7 +131,7 @@ class ProcessingJobRecord:
 
 
 class ProcessingJobStore(Protocol):
-    """Возможности durable queue, которыми владеет Processing orchestration"""
+    """Операции постоянной очереди, которыми пользуется Processing"""
 
     async def reconcile_current(self, spec: ProcessingWorkSpec) -> UUID: ...
 

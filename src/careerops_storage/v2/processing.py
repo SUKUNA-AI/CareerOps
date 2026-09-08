@@ -1,4 +1,4 @@
-"""Версионированная Processing work queue и текущие decisions/candidates"""
+"""Версионированная очередь Processing и текущее состояние решений"""
 
 from sqlalchemy import (
     BigInteger,
@@ -71,6 +71,57 @@ Index(
     ),
 )
 Index("ix_processing_jobs_binding", processing_jobs.c.binding_id)
+
+processing_semantic_artifacts = Table(
+    "processing_semantic_artifacts",
+    metadata,
+    Column("cache_key", Text, primary_key=True),
+    Column("artifact_kind", Text, nullable=False),
+    Column("source_key", Text, nullable=False),
+    Column("source_entity_id", Text, nullable=False),
+    Column("account_key", Text),
+    Column("semantic_content_hash", Text, nullable=False),
+    Column("normalized_schema_version", Text, nullable=False),
+    Column("normalization_version", Text, nullable=False),
+    Column("dictionary_version", Text, nullable=False),
+    Column("semantic_version", Text, nullable=False),
+    Column("artifact_schema_version", Text, nullable=False),
+    Column("artifact_uri", Text, nullable=False),
+    Column("artifact_sha256", Text, nullable=False),
+    Column("artifact_size_bytes", BigInteger, nullable=False),
+    *timestamps(),
+    CheckConstraint("cache_key ~ '^[0-9a-f]{64}$'", name="cache_key"),
+    CheckConstraint(
+        "artifact_kind IN ('requirement_set', 'resume_evidence_set')",
+        name="artifact_kind",
+    ),
+    CheckConstraint("semantic_content_hash ~ '^[0-9a-f]{64}$'", name="semantic_content_hash"),
+    CheckConstraint("artifact_sha256 ~ '^[0-9a-f]{64}$'", name="artifact_sha256"),
+    CheckConstraint("artifact_uri LIKE 's3://%'", name="artifact_uri"),
+    CheckConstraint("artifact_size_bytes > 0", name="artifact_size_bytes"),
+    CheckConstraint(
+        "length(btrim(source_key)) > 0 "
+        "AND length(btrim(source_entity_id)) > 0 "
+        "AND length(btrim(normalized_schema_version)) > 0 "
+        "AND length(btrim(normalization_version)) > 0 "
+        "AND length(btrim(dictionary_version)) > 0 "
+        "AND length(btrim(semantic_version)) > 0 "
+        "AND length(btrim(artifact_schema_version)) > 0",
+        name="non_empty_identity",
+    ),
+    CheckConstraint(
+        "(artifact_kind = 'requirement_set' AND account_key IS NULL) OR "
+        "(artifact_kind = 'resume_evidence_set' AND account_key IS NOT NULL "
+        "AND length(btrim(account_key)) > 0)",
+        name="account_scope",
+    ),
+)
+Index(
+    "ix_processing_semantic_artifacts_source",
+    processing_semantic_artifacts.c.artifact_kind,
+    processing_semantic_artifacts.c.source_key,
+    processing_semantic_artifacts.c.source_entity_id,
+)
 
 match_results = Table(
     "match_results",

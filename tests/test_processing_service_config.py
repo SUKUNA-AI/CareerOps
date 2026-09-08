@@ -14,8 +14,6 @@ def _env() -> dict[str, str]:
         "CAREEROPS_PROCESSING_S3_SECRET_KEY": "test-secret",
         "CAREEROPS_PROCESSING_NORMALIZED_BUCKET": "careerops-lake",
         "CAREEROPS_PROCESSING_ARTIFACTS_BUCKET": "careerops-artifacts",
-        "CAREEROPS_PROCESSING_RERANKER_URL": "http://10.42.0.1:18082",
-        "CAREEROPS_PROCESSING_MATCHING_CORE_TARGET": "127.0.0.1:50051",
         "CAREEROPS_PROCESSING_WORKER_ID": "core-processing-1",
     }
 
@@ -25,18 +23,18 @@ def test_processing_runtime_config_from_env() -> None:
 
     assert config.health_host == "127.0.0.1"
     assert config.health_port == 18081
-    assert config.matching_core_target == "127.0.0.1:50051"
-    assert config.reranker_url == "http://10.42.0.1:18082"
     assert config.s3_region == "us-east-1"
     assert config.artifacts_prefix == "processing"
+    assert config.worker_id == "core-processing-1"
+    assert config.worker_lease_seconds == 300
+    assert config.worker_idle_sleep_seconds == 1.0
 
 
-def test_processing_runtime_config_requires_semantic_dependencies() -> None:
-    env = _env()
-    del env["CAREEROPS_PROCESSING_RERANKER_URL"]
+def test_processing_runtime_config_does_not_require_future_stage_dependencies() -> None:
+    config = ProcessingRuntimeConfig.from_env(_env())
 
-    with pytest.raises(ValueError, match="CAREEROPS_PROCESSING_RERANKER_URL"):
-        ProcessingRuntimeConfig.from_env(env)
+    assert not hasattr(config, "reranker_url")
+    assert not hasattr(config, "matching_core_target")
 
 
 def test_processing_runtime_config_rejects_bad_port() -> None:
@@ -58,10 +56,9 @@ def test_processing_runtime_config_is_strict() -> None:
             normalized_bucket="careerops-lake",
             artifacts_bucket="careerops-artifacts",
             artifacts_prefix="processing",
-            policy_dir="/app/config/processing/target_policies",
-            reranker_url="http://10.42.0.1:18082",
-            matching_core_target="127.0.0.1:50051",
             worker_id="core-processing-1",
+            worker_lease_seconds=300,
+            worker_idle_sleep_seconds=1.0,
             health_host="127.0.0.1",
             health_port="18081",  # type: ignore[arg-type]
         )
