@@ -1,42 +1,74 @@
 # careerops-matching-core
 
-`careerops-matching-core` is the standalone C++20 deterministic compute service for
-Processing v2. It is deployed on `core` next to `careerops-processing`, not on `edge`.
+`careerops-matching-core` — отдельный C++20 сервис детерминированных вычислений для Processing v2
 
-The service is intentionally stateless. It never owns PostgreSQL, S3, Spark, Jina,
-job leases, retries, artifact publication or HH/application side effects. Python
-Processing owns orchestration and sends typed batches after semantic reranking.
+Он разворачивается на `core` рядом с `careerops-processing`, а не на `edge`
+
+Сервис намеренно stateless и не владеет:
+
+- PostgreSQL
+- S3
+- Spark
+- Jina
+- job leases
+- retries
+- публикацией артефактов
+- HH или application side effects
+
+Python Processing владеет orchestration и после semantic reranking передаёт в matching-core типизированные batch requests
 
 ## Transport
 
-The production service boundary is gRPC + Protobuf. The permanent control protocol lives at:
+Production boundary сервиса — gRPC + Protobuf
 
-`proto/careerops/matching_core/v1/control.proto`
+Постоянный control protocol находится в:
 
-P2-01 implements only `Health` and `GetCapabilities`. The final evaluation protocol is
-added only after Requirement/ResumeEvidence and post-Jina qualification inputs are frozen;
-this avoids publishing a fake first-generation wire contract that would immediately become
-legacy.
+```text
+proto/careerops/matching_core/v1/control.proto
+```
 
-Expected future compute ownership includes:
+На текущем этапе реализованы только:
 
-- deterministic role/technology feature processing;
-- experience interval compatibility;
-- requirement-group evaluation;
-- evidence aggregation and conflict handling;
-- support bounds and mandatory coverage;
-- deterministic scoring/policy fan-out;
-- batched vacancy × resume evaluation.
+- `Health`
+- `GetCapabilities`
 
-The service must remain pure compute: request in, deterministic response out.
+Полный evaluation protocol будет добавлен только после фиксации контрактов `Requirement`, `ResumeEvidence` и post-Jina qualification inputs
+
+Это не позволяет закрепить временный wire contract, который пришлось бы сразу ломать на следующем этапе Processing
+
+Будущий compute ownership включает:
+
+- deterministic обработку role/technology features
+- совместимость experience intervals
+- evaluation requirement groups
+- aggregation evidence и обработку конфликтов
+- support bounds и mandatory coverage
+- deterministic scoring и policy fan-out
+- batched vacancy × resume evaluation
+
+Инвариант сервиса:
+
+```text
+typed request
+↓
+deterministic compute
+↓
+typed response
+```
 
 ## Network boundary
 
-The default listen address is `127.0.0.1:50051`. Both Processing and matching-core use host
-networking on `core`, so the Python container reaches gRPC over host loopback. Do not bind the
-service to the LAN without separately designing transport authentication/TLS.
+Адрес по умолчанию:
 
-Override only when necessary:
+```text
+127.0.0.1:50051
+```
+
+`careerops-processing` и matching-core используют host networking на `core`, поэтому Python service обращается к gRPC через host loopback
+
+Не нужно открывать matching-core в LAN до отдельного проектирования transport authentication / TLS
+
+При необходимости адрес можно переопределить:
 
 ```bash
 CAREEROPS_MATCHING_CORE_LISTEN_ADDR=127.0.0.1:50051
@@ -48,5 +80,4 @@ CAREEROPS_MATCHING_CORE_LISTEN_ADDR=127.0.0.1:50051
 docker compose -f infra/compose/matching-core/compose.yml build
 ```
 
-The Docker build uses a Debian 13 build stage and copies only the binary plus its resolved
-runtime shared libraries into the final Debian 13 image.
+Docker build использует Debian 13 build stage и переносит в итоговый Debian 13 image только binary и необходимые runtime shared libraries

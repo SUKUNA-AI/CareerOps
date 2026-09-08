@@ -1,7 +1,7 @@
-"""Shared object-storage exports.
+"""Общие exports объектного хранилища
 
-Canonical PostgreSQL schema and table contracts live under ``careerops_storage.v2``.
-Legacy PostgreSQL runtime writers were removed during the Processing v2 cutover.
+Канонические PostgreSQL v2 schema и table contracts находятся в
+``careerops_storage.v2``. Этот пакет экспортирует только S3 primitives
 """
 
 from .s3 import S3JsonStore, S3ObjectRef, S3Settings

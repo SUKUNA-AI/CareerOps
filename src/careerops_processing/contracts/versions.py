@@ -1,4 +1,4 @@
-"""Pinned version bundles для Processing v2"""
+"""Зафиксированные наборы версий для Processing v2"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class JinaVersionBundle(FrozenModel):
 
 
 class ProcessingVersionBundle(FrozenModel):
-    """Версии, определяющие детерминированную семантику processing evaluation"""
+    """Версии, определяющие детерминированную семантику Processing evaluation"""
 
     pipeline_version: VersionId
     dictionary_version: VersionId

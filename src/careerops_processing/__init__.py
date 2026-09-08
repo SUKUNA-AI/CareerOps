@@ -1,7 +1,8 @@
-"""CareerOPS Processing v2: matching intelligence boundary.
+"""CareerOPS Processing v2 — граница matching intelligence
 
-Spark/Scala owns source normalization. This package consumes versioned normalized
-vacancy/resume inputs and owns filtering, evidence matching and deterministic policy.
+Spark владеет source normalization
+Этот пакет потребляет versioned normalized vacancy/resume inputs и владеет filtering,
+evidence matching и deterministic policy
 """
 
 from .contracts import ProcessingInputManifest

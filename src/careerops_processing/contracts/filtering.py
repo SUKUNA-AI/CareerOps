@@ -1,4 +1,4 @@
-"""Immutable contracts for the high-recall deterministic admission filter."""
+"""Immutable contracts high-recall deterministic admission filter"""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class WorkFormat(StrEnum):
 
 
 class FilterPolicy(FrozenModel):
-    """Typed filtering section embedded in one immutable TargetPolicy snapshot."""
+    """Типизированная filtering section одного immutable TargetPolicy snapshot"""
 
     schema_version: int = Field(default=1, ge=1, le=1)
     allowed_primary_roles: tuple[RoleFamily, ...] = ()
@@ -100,7 +100,7 @@ class FilterPolicy(FrozenModel):
 
 
 class FilterEvidence(FrozenModel):
-    """Exact source-backed fact that proves one exclusion rule."""
+    """Точный source-backed факт, доказывающий одно exclusion rule"""
 
     source_path: NonEmptyStr
     value: NonEmptyStr
@@ -109,7 +109,7 @@ class FilterEvidence(FrozenModel):
 
 
 class ProvenExclusion(FrozenModel):
-    """One stable rule firing with evidence and the policy version that authorized it."""
+    """Стабильное срабатывание rule с evidence и разрешившей его policy version"""
 
     rule_id: NonEmptyStr
     reason_code: ReasonCode
@@ -118,7 +118,7 @@ class ProvenExclusion(FrozenModel):
 
 
 class FilterDecision(FrozenModel):
-    """Admission result; KEEP means only that safe exclusion was not proven."""
+    """Результат admission, где KEEP означает только отсутствие доказанного exclusion"""
 
     outcome: FilterOutcome
     exclusions: tuple[ProvenExclusion, ...] = ()

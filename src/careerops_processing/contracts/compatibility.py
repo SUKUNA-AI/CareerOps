@@ -1,4 +1,4 @@
-"""Pure validation between external NormalizedRef pointers and loaded bundles."""
+"""Проверка соответствия внешнего NormalizedRef загруженному bundle"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def validate_bundle_for_ref(
     *,
     actual_normalized_sha256: Sha256,
 ) -> None:
-    """Reject a loaded bundle that does not exactly match its published current ref."""
+    """Отклоняет bundle, который не совпадает с опубликованным current ref"""
 
     expected_type = (
         EntityType.VACANCY if isinstance(bundle, NormalizedVacancy) else EntityType.RESUME

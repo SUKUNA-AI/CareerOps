@@ -1,4 +1,4 @@
-"""Enforce one active Processing job per vacancy × binding pair."""
+"""Гарантирует не более одного активного Processing job на vacancy × binding"""
 
 import sqlalchemy as sa
 

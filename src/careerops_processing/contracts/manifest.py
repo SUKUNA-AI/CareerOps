@@ -1,4 +1,4 @@
-"""Canonical processing input manifest and deterministic fingerprint."""
+"""Canonical input manifest Processing и его детерминированный fingerprint"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ MANIFEST_SCHEMA_VERSION = "careerops.processing.input-manifest.v1"
 
 
 class ProcessingInputManifest(FrozenModel):
-    """Exact immutable semantic input for one vacancy × resume processing job."""
+    """Точный immutable semantic input одной processing job vacancy × resume"""
 
     manifest_schema_version: VersionId = MANIFEST_SCHEMA_VERSION
     vacancy: NormalizedRef
@@ -56,7 +56,7 @@ class ProcessingInputManifest(FrozenModel):
         return self
 
     def canonical_json(self) -> str:
-        """Return the exact canonical JSON body used for input fingerprinting."""
+        """Возвращает exact canonical JSON, который участвует в input fingerprint"""
 
         return json.dumps(
             self.model_dump(mode="json"),
@@ -67,6 +67,6 @@ class ProcessingInputManifest(FrozenModel):
         )
 
     def input_fingerprint(self) -> Sha256:
-        """Hash semantic inputs only; no job id, claim time or artifact URI is included."""
+        """Хеширует только semantic inputs без job id, claim time и artifact URI"""
 
         return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()

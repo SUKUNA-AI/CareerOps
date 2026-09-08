@@ -1,4 +1,4 @@
-"""Versioned non-secret HH source topology and discovery TOML contracts."""
+"""Версионированные TOML-контракты топологии источника HH и discovery-каталога"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _QUERY_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class HHConfigError(ValueError):
-    """Report an invalid or unreadable HH TOML configuration."""
+    """Ошибка чтения или проверки TOML-конфигурации HH"""
 
 
 class _StrictModel(BaseModel):
@@ -24,7 +24,7 @@ class _StrictModel(BaseModel):
 
 
 class DiscoveryDefaults(_StrictModel):
-    """Source request defaults shared by the broad query catalog."""
+    """Параметры запросов по умолчанию для общего discovery-каталога"""
 
     area: int = Field(default=1, ge=1)
     period: int = Field(default=14, ge=1)
@@ -33,7 +33,7 @@ class DiscoveryDefaults(_StrictModel):
 
 
 class DiscoveryQuerySpec(_StrictModel):
-    """One stable, independently auditable HH search query."""
+    """Один стабильный и независимо проверяемый поисковый запрос HH"""
 
     key: str = Field(min_length=1)
     text: str = Field(min_length=1)
@@ -60,7 +60,7 @@ class DiscoveryQuerySpec(_StrictModel):
 
 
 class DiscoveryQuerySet(_StrictModel):
-    """Versioned ordered query set."""
+    """Версионированный упорядоченный набор поисковых запросов"""
 
     version: int = Field(default=1, ge=1)
     queries: tuple[DiscoveryQuerySpec, ...] = Field(min_length=1)
@@ -76,14 +76,14 @@ class DiscoveryQuerySet(_StrictModel):
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryQuery:
-    """One enabled query resolved with its owning set and source parameters."""
+    """Включённый запрос вместе с его набором и параметрами источника"""
 
     query_set_key: str
     spec: DiscoveryQuerySpec
 
 
 class DiscoveryConfig(_StrictModel):
-    """Complete committed broad-discovery catalog."""
+    """Полный закоммиченный каталог broad discovery"""
 
     schema_version: Literal[1]
     defaults: DiscoveryDefaults = Field(default_factory=DiscoveryDefaults)
@@ -136,7 +136,7 @@ class DiscoveryConfig(_StrictModel):
 
 
 class HHResumeBindingConfig(_StrictModel):
-    """Explicit binding from one stable HH resume identity to one target."""
+    """Явная привязка стабильного HH resume identity к одному target"""
 
     key: str = Field(min_length=1)
     source_resume_id: str = Field(min_length=1)
@@ -174,7 +174,7 @@ class HHResumeBindingConfig(_StrictModel):
 
 
 class HHAccountConfig(_StrictModel):
-    """One authenticated HH source profile with explicit resume bindings."""
+    """Один аутентифицированный профиль источника HH с явными resume bindings"""
 
     key: str = Field(min_length=1)
     profile: str = Field(min_length=1)
@@ -241,7 +241,7 @@ class HHAccountConfig(_StrictModel):
 
 
 class HHAccountsConfig(_StrictModel):
-    """Versioned N-account/N-resume source topology."""
+    """Версионированная топология N аккаунтов и N резюме источника HH"""
 
     schema_version: Literal[1]
     accounts: tuple[HHAccountConfig, ...] = Field(min_length=1)

@@ -1,4 +1,4 @@
-"""Small permanent liveness surface for the processing worker container."""
+"""Минимальный постоянный liveness surface контейнера Processing worker"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ SERVICE_PROTOCOL_VERSION = "processing-v2"
 class _HealthHandler(BaseHTTPRequestHandler):
     server_version = SERVICE_NAME
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_GET(self) -> None:  # noqa: N802 — API BaseHTTPRequestHandler
         if self.path == "/healthz":
             self._write_json(
                 HTTPStatus.OK,
@@ -52,7 +52,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 
 class HealthServer:
-    """Background HTTP liveness server; P2-02 will attach worker readiness state."""
+    """Фоновый HTTP liveness server до подключения реального worker readiness"""
 
     def __init__(self, host: str, port: int) -> None:
         self._server = ThreadingHTTPServer((host, port), _HealthHandler)

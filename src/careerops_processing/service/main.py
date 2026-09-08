@@ -1,4 +1,4 @@
-"""Executable shell for the standalone careerops-processing container."""
+"""Executable shell отдельного контейнера careerops-processing"""
 
 from __future__ import annotations
 

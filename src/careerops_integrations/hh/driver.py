@@ -1,4 +1,4 @@
-"""Read-only subprocess wrapper around the pinned hh-applicant-tool CLI."""
+"""Read-only subprocess wrapper вокруг pinned hh-applicant-tool CLI"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 
 class HHDriverError(RuntimeError):
-    """Report invalid output or failure from the upstream HH CLI."""
+    """Ошибка upstream HH CLI или его некорректного output"""
 
 
 ParamScalar = str | int | bool
@@ -20,11 +20,11 @@ ParamValue = ParamScalar | Sequence[ParamScalar]
 
 
 class HHApplicantToolCLI:
-    """Thin read-only wrapper around the vendored HH transport.
+    """Тонкий read-only wrapper вокруг vendored HH transport
 
-    CareerOPS source ingestion may issue GET requests only. Application-side
-    effects belong to the future application owner and must not leak into this
-    adapter compatibility boundary.
+    Source ingestion CareerOPS может выполнять только GET requests
+    Application-side effects принадлежат будущему Application Owner и не должны
+    протекать в эту adapter boundary
     """
 
     def __init__(
@@ -103,7 +103,7 @@ class HHApplicantToolCLI:
         *,
         params: dict[str, ParamValue] | None = None,
     ) -> dict[str, Any]:
-        """Issue exactly one GET through the upstream public call-api command."""
+        """Выполняет ровно один GET через upstream public command call-api"""
 
         normalized_endpoint = endpoint.strip().lstrip("/")
         if not normalized_endpoint:

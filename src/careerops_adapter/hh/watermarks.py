@@ -1,9 +1,10 @@
-"""Persistent publication watermarks for lossless HH search pagination.
+"""Persistent publication watermarks для lossless HH search pagination
 
-A watermark is advisory stop state, not source truth. It advances only after the
-terminal search-page task has already persisted its RAW object and child work. If a
-watermark update fails, the next generation simply re-reads more source pages; it
-must never skip work because control state moved ahead of durable ingestion.
+Watermark является advisory stop state, а не source truth
+Он двигается только после того, как terminal search-page task уже сохранила RAW object
+и child work
+Если обновление watermark падает, следующая generation просто перечитывает больше source pages
+Control state не должен обгонять durable ingestion и заставлять систему пропускать work
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ def _aware_utc(value: datetime, field: str) -> datetime:
 
 
 class HHSearchWatermarkStore:
-    """PostgreSQL v2 owner for account/profile/query publication watermarks."""
+    """PostgreSQL v2 owner publication watermarks account/profile/query"""
 
     def __init__(self, conn: AsyncConnection[Any]) -> None:
         if not conn.autocommit:
@@ -35,7 +36,7 @@ class HHSearchWatermarkStore:
         account_id: int,
         profile_key: str,
     ) -> dict[str, datetime]:
-        """Return the last safely committed publication watermark per query."""
+        """Возвращает последний safely committed publication watermark каждого query"""
 
         if account_id <= 0:
             raise ValueError("account_id must be positive")
@@ -78,7 +79,7 @@ class HHSearchWatermarkStore:
         generation_id: UUID,
         observed_at: datetime,
     ) -> None:
-        """Monotonically advance one query watermark after durable page success."""
+        """Монотонно двигает query watermark после durable успеха page"""
 
         if account_id <= 0:
             raise ValueError("account_id must be positive")

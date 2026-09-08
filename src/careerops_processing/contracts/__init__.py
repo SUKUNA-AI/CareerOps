@@ -1,4 +1,4 @@
-"""Public immutable contracts для CareerOPS Processing v2 boundary"""
+"""Публичные неизменяемые контракты границы CareerOPS Processing v2"""
 
 from .artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,

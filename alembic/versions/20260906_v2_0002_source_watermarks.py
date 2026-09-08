@@ -1,4 +1,4 @@
-"""Persist HH query publication watermarks for lossless adaptive paging."""
+"""Хранит HH publication watermarks для lossless adaptive paging"""
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql

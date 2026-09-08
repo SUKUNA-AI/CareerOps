@@ -45,7 +45,7 @@ class _PolicyFile(BaseModel):
 
 
 class FileTargetPolicyRepository:
-    """Читает immutable policy-файлы и проверяет их связь с current index"""
+    """Читает неизменяемые policy-файлы и проверяет их связь с текущим index"""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).resolve()

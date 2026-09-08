@@ -1,4 +1,4 @@
-"""Permanent worker lifecycle for durable Processing v2 jobs."""
+"""Lifecycle worker для durable Processing v2 jobs"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .queue import ProcessingJobLeaseLost, ProcessingJobRecord, ProcessingJobSto
 
 
 class ProcessingExecutionDisposition(StrEnum):
-    """Operational executor outcome before durable queue transition."""
+    """Результат executor до durable queue transition"""
 
     SUCCEEDED = "succeeded"
     DEFERRED = "deferred"
@@ -22,7 +22,7 @@ class ProcessingExecutionDisposition(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ProcessingExecutionResult:
-    """Typed executor result before the worker commits a queue transition."""
+    """Типизированный результат executor до commit queue transition"""
 
     disposition: ProcessingExecutionDisposition
     result_artifact_uri: str | None = None
@@ -59,7 +59,7 @@ class ProcessingExecutionResult:
 
 
 class ProcessingExecutor(Protocol):
-    """Business executor attached by later P2 stages to the permanent worker lifecycle."""
+    """Business executor, который следующие P2 stages подключают к worker lifecycle"""
 
     async def execute(self, job: ProcessingJobRecord) -> ProcessingExecutionResult: ...
 
@@ -80,7 +80,7 @@ class ProcessingWorkerPolicy:
 
 
 class ProcessingWorker:
-    """Claim, fence, heartbeat, execute and durably release Processing jobs."""
+    """Claim, fencing, heartbeat, execution и durable release Processing jobs"""
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class ProcessingWorker:
         self._policy = policy or ProcessingWorkerPolicy()
 
     async def run_one(self) -> bool:
-        """Process at most one job; return False when no due work exists."""
+        """Обрабатывает не больше одной job и возвращает False при отсутствии due work"""
 
         job = await self._store.claim_next(
             worker_id=self._worker_id,
@@ -162,7 +162,7 @@ class ProcessingWorker:
             await asyncio.gather(executor_task, heartbeat_task, return_exceptions=True)
 
     async def run_forever(self, stop: asyncio.Event) -> None:
-        """Drain durable work until shutdown; expected lease loss is not process-fatal."""
+        """Обрабатывает durable work до shutdown и не падает на ожидаемой потере lease"""
 
         while not stop.is_set():
             try:

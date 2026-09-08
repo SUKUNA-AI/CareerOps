@@ -1,4 +1,4 @@
-"""Убирает retired v2 schema и замыкает Spark → Processing NormalizedRef seam"""
+"""Убирает устаревшую v2 schema и замыкает границу Spark → Processing для NormalizedRef"""
 
 import sqlalchemy as sa
 
@@ -45,7 +45,7 @@ def _assert_no_dead_search_tasks() -> None:
         )
 
 
-def _assert_no_legacy_application_recovery() -> None:
+def _assert_no_application_recovery_rows() -> None:
     count = op.get_bind().execute(
         sa.text(
             """
@@ -60,7 +60,7 @@ def _assert_no_legacy_application_recovery() -> None:
     ).scalar_one()
     if int(count) != 0:
         raise RuntimeError(
-            "cannot remove retired application recovery columns: legacy recovery rows still exist"
+            "cannot remove retired application recovery columns: recovery rows still exist"
         )
 
 
@@ -142,7 +142,7 @@ def _add_normalized_ref_columns(table_name: str) -> None:
 
 def upgrade() -> None:
     _assert_no_dead_search_tasks()
-    _assert_no_legacy_application_recovery()
+    _assert_no_application_recovery_rows()
 
     op.drop_constraint(
         "ck_source_tasks_task_kind",
