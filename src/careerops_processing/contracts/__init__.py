@@ -1,4 +1,4 @@
-"""Публичные неизменяемые контракты границы CareerOPS Processing v2"""
+"""Публичные контракты границы CareerOPS Processing v2"""
 
 from .artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,
@@ -18,6 +18,15 @@ from .common import (
     ValueState,
 )
 from .compatibility import validate_bundle_for_ref
+from .evidence import (
+    RESUME_EVIDENCE_SET_SCHEMA_VERSION,
+    EvidenceActorScope,
+    EvidenceContext,
+    EvidenceKind,
+    EvidenceStrength,
+    ResumeEvidence,
+    ResumeEvidenceSet,
+)
 from .filtering import (
     FilterDecision,
     FilterEvidence,
@@ -45,6 +54,22 @@ from .normalized import (
 )
 from .policy import BindingSnapshot, TargetPolicy
 from .reasons import INITIAL_REASON_CODES, ReasonCode, ReasonNamespace
+from .requirements import (
+    REQUIREMENT_SET_SCHEMA_VERSION,
+    Requirement,
+    RequirementGroup,
+    RequirementGroupOperator,
+    RequirementImportance,
+    RequirementKind,
+    RequirementModality,
+    RequirementSet,
+)
+from .semantics import (
+    SemanticPolarity,
+    SemanticSourceRef,
+    SemanticSubject,
+    SemanticTimeSpan,
+)
 from .versions import JinaVersionBundle, ProcessingVersionBundle
 
 __all__ = [
@@ -54,6 +79,10 @@ __all__ = [
     "EducationEntry",
     "Employer",
     "EntityType",
+    "EvidenceActorScope",
+    "EvidenceContext",
+    "EvidenceKind",
+    "EvidenceStrength",
     "ExperienceEntry",
     "ExperienceRange",
     "FILTER_TRACE_SCHEMA_VERSION",
@@ -76,11 +105,26 @@ __all__ = [
     "ProcessingVersionBundle",
     "ProjectEntry",
     "ProvenExclusion",
+    "REQUIREMENT_SET_SCHEMA_VERSION",
+    "RESUME_EVIDENCE_SET_SCHEMA_VERSION",
     "RawObservationRef",
     "ReasonCode",
     "ReasonNamespace",
+    "Requirement",
+    "RequirementGroup",
+    "RequirementGroupOperator",
+    "RequirementImportance",
+    "RequirementKind",
+    "RequirementModality",
+    "RequirementSet",
+    "ResumeEvidence",
+    "ResumeEvidenceSet",
     "RoleFamily",
     "Salary",
+    "SemanticPolarity",
+    "SemanticSourceRef",
+    "SemanticSubject",
+    "SemanticTimeSpan",
     "SeniorityLevel",
     "SourceLabel",
     "SourceTextRef",
