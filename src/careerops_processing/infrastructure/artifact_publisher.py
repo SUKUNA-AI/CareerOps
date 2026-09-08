@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from careerops_processing.contracts.artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,
+    P204_RESULT_SCHEMA_VERSION,
     FilterTraceArtifact,
+    P204ResultArtifact,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
 )
@@ -76,4 +78,14 @@ class ProcessingArtifactPublisher:
             kind=ProcessingArtifactKind.RESUME_EVIDENCE_SET,
             schema_version=RESUME_EVIDENCE_SET_SCHEMA_VERSION,
             payload=evidence_set,
+        )
+
+    async def publish_p204_result(
+        self,
+        result: P204ResultArtifact,
+    ) -> ProcessingArtifactRef:
+        return await self.store.put_contract(
+            kind=ProcessingArtifactKind.P2_04_RESULT,
+            schema_version=P204_RESULT_SCHEMA_VERSION,
+            payload=result,
         )
