@@ -1,4 +1,4 @@
-"""PostgreSQL implementation of the Processing v2 durable queue contract."""
+"""PostgreSQL-реализация durable queue contract Processing v2"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from ..queue import (
 
 
 class PostgresProcessingJobStore:
-    """Single SQL owner for careerops_v2.processing_jobs lifecycle semantics."""
+    """Единственный SQL owner lifecycle semantics careerops_v2.processing_jobs"""
 
     def __init__(self, conn: AsyncConnection[Any]) -> None:
         if not conn.autocommit:
@@ -29,7 +29,7 @@ class PostgresProcessingJobStore:
         self._conn = conn
 
     async def reconcile_current(self, spec: ProcessingWorkSpec) -> UUID:
-        """Ensure exact current work exists and fence older active work for the pair."""
+        """Гарантирует exact current work и fence старой active work для пары"""
 
         job_id = uuid4()
         async with self._conn.transaction():
@@ -164,7 +164,7 @@ class PostgresProcessingJobStore:
         *,
         reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int:
-        """Fence every active job for a pair that left authoritative desired state."""
+        """Fence всех active jobs пары, которая вышла из authoritative desired state"""
 
         normalized_reason = self._non_empty(reason, "withdraw reason")
         if not normalized_reason.startswith(RECONCILIATION_CANCEL_PREFIX):
@@ -467,7 +467,7 @@ class PostgresProcessingJobStore:
         self._require_one(cursor.rowcount, job.id)
 
     async def _cancel_competing_active(self, spec: ProcessingWorkSpec) -> None:
-        """Cancel active work whose exact identity differs from the desired spec."""
+        """Отменяет active work, exact identity которой отличается от desired spec"""
 
         await self._conn.execute(
             """

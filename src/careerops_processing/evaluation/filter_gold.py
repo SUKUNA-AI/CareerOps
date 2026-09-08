@@ -1,4 +1,4 @@
-"""Gold evaluation для high-recall фильтра Processing v2"""
+"""Gold-набор и метрики для high-recall фильтра Processing v2"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class FilterGoldCorpusKind(StrEnum):
 
 
 class FilterGoldCase(FrozenModel):
-    """Один размеченный vacancy × target кейс на точных Processing contracts"""
+    """Один размеченный случай vacancy × target на точных контрактах Processing"""
 
     case_id: str = Field(min_length=1)
     expected_outcome: FilterOutcome
@@ -38,7 +38,7 @@ class FilterGoldCase(FrozenModel):
 
 
 class FilterGoldCorpus(FrozenModel):
-    """Версионированный corpus для измерения фильтра"""
+    """Версионированный корпус для измерения качества фильтра"""
 
     schema_version: str = "careerops.filter-gold-corpus.v1"
     corpus_id: str = Field(min_length=1)
@@ -59,7 +59,7 @@ class FilterGoldCaseResult(FrozenModel):
 
 
 class FilterGoldReport(FrozenModel):
-    """Детерминированный отчёт с отдельной метрикой false exclusion"""
+    """Детерминированный отчёт с отдельной метрикой ошибочного исключения"""
 
     schema_version: str = "careerops.filter-gold-report.v1"
     corpus_id: str

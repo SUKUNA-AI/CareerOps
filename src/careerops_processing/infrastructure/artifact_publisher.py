@@ -1,4 +1,4 @@
-"""Публикация replayable Processing artifacts поверх content-addressed store"""
+"""Публикация воспроизводимых артефактов Processing в content-addressed хранилище"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .artifacts import ProcessingArtifactStore
 
 
 class ProcessingArtifactPublisher:
-    """Пишет manifest и filter trace без mutable latest pointers"""
+    """Публикует manifest и filter trace без изменяемых указателей latest"""
 
     def __init__(self, store: ProcessingArtifactStore) -> None:
         self.store = store

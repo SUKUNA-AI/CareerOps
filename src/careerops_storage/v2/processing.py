@@ -1,4 +1,4 @@
-"""Versioned processing work and compact current decisions/candidates."""
+"""Версионированная Processing work queue и текущие decisions/candidates"""
 
 from sqlalchemy import (
     BigInteger,

@@ -1,4 +1,4 @@
-"""Execute claimed HH source tasks without filtering or domain materialization."""
+"""Выполнение claimed HH source tasks без filtering и domain materialization"""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class HHSourceFailurePolicy:
-    """Small transport retry policy; daily orchestration remains outside the adapter."""
+    """Retry policy transport-уровня без daily orchestration"""
 
     retry_delay: timedelta = timedelta(minutes=5)
     defer_delay: timedelta = timedelta(minutes=30)
@@ -66,7 +66,7 @@ class HHSourceFailurePolicy:
 
 
 class SourceTaskRunOutcome(StrEnum):
-    """Observable result of one claimed task execution."""
+    """Наблюдаемый результат выполнения одной claimed task"""
 
     SUCCEEDED = "succeeded"
     DEFERRED = "deferred"
@@ -76,7 +76,7 @@ class SourceTaskRunOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SourceTaskRunResult:
-    """Compact worker result; RAW details stay in S3 and source_tasks."""
+    """Краткий результат worker, RAW детали остаются в S3 и source_tasks"""
 
     task_id: UUID
     outcome: SourceTaskRunOutcome
@@ -218,11 +218,10 @@ def _page_watermark_state(
     previous_watermark: datetime | None,
     overlap_seconds: int,
 ) -> tuple[datetime | None, bool]:
-    """Return the newest page timestamp and whether the safe overlap boundary was seen.
+    """Возвращает новый page timestamp и факт достижения безопасной overlap boundary
 
-    A page with any missing/unparseable `published_at` value never proves the
-    boundary. In that case paging continues to source exhaustion rather than risking
-    a false stop.
+    Page с отсутствующим или неразбираемым `published_at` не доказывает достижение boundary
+    В таком случае pagination продолжается до исчерпания source, чтобы не получить false stop
     """
 
     timestamps = [_item_published_at(item) for item in items]
@@ -253,12 +252,12 @@ def _search_continuation(
         query_key=query_key,
         text=request.text,
         page=next_page,
+        max_pages=max_pages,
         area=request.area,
         period=request.period,
         order_by=request.order_by,
         per_page=request.per_page,
         professional_roles=request.professional_roles,
-        max_pages=max_pages,
         parent_task_id=task.id,
     )
     parameters = dict(base.parameters)
@@ -277,7 +276,7 @@ def _search_continuation(
 
 
 class HHSourceTaskExecutor:
-    """Run one claimed HH task: source call -> immutable RAW -> persistent children."""
+    """Выполняет claimed HH task: source call → immutable RAW → persistent children"""
 
     def __init__(
         self,
@@ -299,7 +298,7 @@ class HHSourceTaskExecutor:
         self._uuid_factory = uuid_factory
 
     async def run(self, task: SourceTaskRecord) -> SourceTaskRunResult:
-        """Execute one claimed task and persist its terminal/current queue state."""
+        """Выполняет claimed task и сохраняет её актуальный queue state"""
 
         await self._repository.mark_running(task)
         try:
@@ -332,9 +331,9 @@ class HHSourceTaskExecutor:
             result_artifact_uri=execution.raw_uri,
             children=execution.children,
         )
-        # Watermarks intentionally move only after task success and durable child
-        # creation. Failure here causes harmless re-reading in the next generation;
-        # it can never make the source cursor skip unpersisted work.
+        # Watermark двигается только после успешного task и durable создания children
+        # Ошибка здесь приводит только к повторному чтению в следующей generation
+        # Она не может заставить source cursor пропустить несохранённую работу
         if execution.watermark is not None:
             watermark = execution.watermark
             await self._watermarks.advance(
@@ -376,12 +375,6 @@ class HHSourceTaskExecutor:
                 return await self._resume_sync(task)
             case SourceTaskKind.RESUME_FETCH:
                 return await self._resume_fetch(task)
-            case SourceTaskKind.SEARCH:
-                raise HHTransportError(
-                    kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
-                    operation="source_task",
-                    message="search is an orchestration/root task and is not worker-executable",
-                )
         raise HHTransportError(
             kind=HHFailureKind.PERMANENT_SOURCE_ERROR,
             operation="source_task",

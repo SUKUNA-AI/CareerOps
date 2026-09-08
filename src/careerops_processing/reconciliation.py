@@ -1,4 +1,4 @@
-"""Lossless reconciliation of desired Processing work into durable jobs."""
+"""Lossless reconciliation desired Processing work в durable jobs"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .queue import RECONCILIATION_WITHDRAWN, ProcessingPairKey, ProcessingWorkSp
 
 
 class ProcessingReconciliationStore(Protocol):
-    """Minimal durable capabilities required by desired-state reconciliation."""
+    """Минимальные durable возможности для desired-state reconciliation"""
 
     async def reconcile_current(self, spec: ProcessingWorkSpec) -> UUID: ...
 
@@ -25,7 +25,7 @@ class ProcessingReconciliationStore(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ProcessingReconciliationResult:
-    """Observable result of one idempotent desired-state reconciliation pass."""
+    """Наблюдаемый результат одного idempotent reconciliation pass"""
 
     desired_pairs: int
     withdrawn_pairs: int
@@ -34,7 +34,7 @@ class ProcessingReconciliationResult:
 
 
 class ProcessingReconciler:
-    """Reconcile explicit desired work and explicit pair withdrawals."""
+    """Синхронизирует explicit desired work и explicit pair withdrawals"""
 
     def __init__(self, store: ProcessingReconciliationStore) -> None:
         self._store = store

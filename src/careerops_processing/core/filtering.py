@@ -1,7 +1,7 @@
-"""High-recall deterministic vacancy admission filter.
+"""High-recall deterministic admission filter вакансий
 
-The filter is asymmetric by design: it may prove an exclusion, but it never
-proves a match. Ambiguous or incomplete evidence therefore remains KEEP.
+Фильтр намеренно асимметричен: он может доказать exclusion, но никогда не доказывает match
+Неоднозначные или неполные evidence поэтому всегда остаются KEEP
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ def _rx(pattern: str) -> re.Pattern[str]:
     return re.compile(pattern)
 
 
-# These patterns are intentionally conservative. A title is allowed to prove a
-# foreign occupation only when the occupation itself is explicit. Generic
-# language/framework/research terms are not enough for EXCLUDE_PROVEN.
+# Patterns намеренно консервативны
+# Title может доказать чужую профессию только когда сама occupation указана явно
+# Общего языка, framework или research term недостаточно для EXCLUDE_PROVEN
 _ROLE_PATTERNS: dict[RoleFamily, tuple[re.Pattern[str], ...]] = {
     RoleFamily.ML_ENGINEERING: (
         _rx(r"\b(?:ml|machine learning)[\s-]*(?:engineer|developer)\b"),
@@ -621,7 +621,7 @@ def evaluate_filter(
     target_policy: TargetPolicy,
     resume: NormalizedResume | None = None,
 ) -> FilterDecision:
-    """Return KEEP unless at least one policy-backed exclusion is fully proven."""
+    """Возвращает KEEP, пока хотя бы одно policy-backed exclusion не доказано полностью"""
 
     policy = FilterPolicy.from_target_policy(target_policy)
     title = _known_title(vacancy)

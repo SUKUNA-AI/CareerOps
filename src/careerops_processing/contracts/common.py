@@ -1,4 +1,4 @@
-"""Shared immutable types for the Processing v2 service boundary."""
+"""Общие immutable типы границы сервиса Processing v2"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ VersionId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1
 
 
 class FrozenModel(BaseModel):
-    """Base model for immutable cross-component contracts."""
+    """Базовая модель immutable cross-component contracts"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -32,7 +32,7 @@ class EntityType(StrEnum):
 
 
 class ValueState(StrEnum):
-    """Presence/interpretation state for a source-backed value."""
+    """Состояние присутствия и интерпретации source-backed value"""
 
     KNOWN = "known"
     NOT_PROVIDED = "not_provided"
@@ -44,7 +44,7 @@ T = TypeVar("T")
 
 
 class SourceValue(FrozenModel, Generic[T]):
-    """A source-backed value that does not collapse missing/unknown into falsey data."""
+    """Source-backed value без схлопывания missing/unknown в falsey значение"""
 
     state: ValueState
     value: T | None = None
@@ -59,7 +59,7 @@ class SourceValue(FrozenModel, Generic[T]):
 
 
 class RawObservationRef(FrozenModel):
-    """Exact immutable RAW source observation used to produce normalized data."""
+    """Точная immutable RAW observation, из которой получены normalized data"""
 
     raw_uri: S3Uri
     raw_sha256: Sha256
@@ -83,7 +83,7 @@ class DataQualityStatus(StrEnum):
 
 
 class NormalizedRef(FrozenModel):
-    """Stable pointer to one exact normalized vacancy/resume version."""
+    """Стабильная ссылка на одну точную normalized version вакансии или резюме"""
 
     entity_type: EntityType
     source_key: NonEmptyStr
@@ -116,7 +116,7 @@ class NormalizedRef(FrozenModel):
 
 
 class SourceLabel(FrozenModel):
-    """A source or dictionary-backed code/label pair without matching semantics."""
+    """Source или dictionary-backed code/label без matching semantics"""
 
     key: NonEmptyStr
     label: NonEmptyStr | None = None
@@ -124,7 +124,7 @@ class SourceLabel(FrozenModel):
 
 
 class SourceTextRef(FrozenModel):
-    """Trace from normalized text back to the exact source location."""
+    """Связь normalized text с точным source location"""
 
     source_path: NonEmptyStr
     locator: NonEmptyStr
@@ -132,7 +132,7 @@ class SourceTextRef(FrozenModel):
 
 
 class TextBlock(FrozenModel):
-    """Meaningful source text unit with stable within-version provenance."""
+    """Значимый source text block со стабильным provenance внутри version"""
 
     block_id: NonEmptyStr
     text: NonEmptyStr

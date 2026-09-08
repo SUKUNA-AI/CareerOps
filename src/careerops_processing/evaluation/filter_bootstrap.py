@@ -1,4 +1,4 @@
-"""Bootstrap adversarial corpus для первого измерения high-recall фильтра"""
+"""Стартовый набор пограничных случаев для первого измерения high-recall фильтра"""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def _case(
 def build_filter_bootstrap_corpus(
     repository: TargetPolicyRepository,
 ) -> FilterGoldCorpus:
-    """Строит adversarial corpus без права использовать его как release gate"""
+    """Строит набор пограничных случаев без права использовать его как release gate"""
 
     keep = FilterOutcome.KEEP
     exclude = FilterOutcome.EXCLUDE_PROVEN

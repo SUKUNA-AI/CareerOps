@@ -1,4 +1,4 @@
-"""CLI для воспроизводимого запуска Processing evaluation corpus"""
+"""CLI для воспроизводимого запуска корпуса оценки Processing"""
 
 from __future__ import annotations
 
