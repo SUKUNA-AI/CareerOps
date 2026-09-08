@@ -2,7 +2,9 @@
 
 from .artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,
+    P204_RESULT_SCHEMA_VERSION,
     FilterTraceArtifact,
+    P204ResultArtifact,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
 )
@@ -99,6 +101,8 @@ __all__ = [
     "NormalizedRef",
     "NormalizedResume",
     "NormalizedVacancy",
+    "P204_RESULT_SCHEMA_VERSION",
+    "P204ResultArtifact",
     "ProcessingArtifactKind",
     "ProcessingArtifactRef",
     "ProcessingInputManifest",
