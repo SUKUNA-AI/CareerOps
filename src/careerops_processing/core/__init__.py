@@ -1,10 +1,16 @@
 """Эталонная детерминированная логика Processing v2 на Python
 
 Пакет не зависит от PostgreSQL, S3, HTTP и model serving
-Он задаёт correctness semantics, с которыми должен сохранять parity отдельный
-C++20 сервис careerops-matching-core для измеренных hot paths
+Он задает correctness semantics для отдельного C++20 сервиса
+careerops-matching-core на измеренных hot paths
 """
 
+from .evidence import extract_resume_evidence
 from .filtering import evaluate_filter
+from .requirements import extract_requirements
 
-__all__ = ["evaluate_filter"]
+__all__ = [
+    "evaluate_filter",
+    "extract_requirements",
+    "extract_resume_evidence",
+]
