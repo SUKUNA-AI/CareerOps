@@ -6,6 +6,7 @@ from .artifacts import (
     ProcessingArtifactStore,
     ProcessingArtifactStoreSettings,
 )
+from .input_loader import S3ProcessingInputLoader
 from .policy_repository import FileTargetPolicyRepository, TargetPolicyRepository
 from .postgres_jobs import PostgresProcessingJobStore
 
@@ -16,5 +17,6 @@ __all__ = [
     "ProcessingArtifactPublisher",
     "ProcessingArtifactStore",
     "ProcessingArtifactStoreSettings",
+    "S3ProcessingInputLoader",
     "TargetPolicyRepository",
 ]
