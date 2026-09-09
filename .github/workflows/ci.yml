@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - "ar/p2-*"
   pull_request:
     branches:
       - main

@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "SQLAlchemy>=2.0,<3",
     "alembic>=1.19,<2",
+    "httpx>=0.28,<1",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,10 @@ dev = [
     "pytest-cov>=6,<8",
     "ruff>=0.12,<1",
     "mypy>=1.17,<2",
+]
+reranker-runtime = [
+    "torch==2.8.0",
+    "transformers==4.57.3",
 ]
 matching-core-test = [
     "grpcio>=1.74,<2",
@@ -55,4 +60,8 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = ["hh_applicant_tool", "hh_applicant_tool.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "transformers", "transformers.*"]
 ignore_missing_imports = true

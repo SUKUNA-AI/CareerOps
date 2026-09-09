@@ -11,9 +11,11 @@ from .evidence import RESUME_EVIDENCE_SET_SCHEMA_VERSION
 from .filtering import FilterDecision, FilterOutcome
 from .manifest import ProcessingInputManifest
 from .requirements import REQUIREMENT_SET_SCHEMA_VERSION
+from .reranking import EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION
 
 FILTER_TRACE_SCHEMA_VERSION = "careerops.processing.filter-trace.v1"
 P204_RESULT_SCHEMA_VERSION = "careerops.processing.p2-04-result.v2"
+P205_RESULT_SCHEMA_VERSION = "careerops.processing.p2-05-result.v1"
 
 
 class ProcessingArtifactKind(StrEnum):
@@ -22,6 +24,8 @@ class ProcessingArtifactKind(StrEnum):
     REQUIREMENT_SET = "requirement_set"
     RESUME_EVIDENCE_SET = "resume_evidence_set"
     P2_04_RESULT = "p2_04_result"
+    EVIDENCE_CANDIDATE_SET = "evidence_candidate_set"
+    P2_05_RESULT = "p2_05_result"
 
 
 class ProcessingArtifactRef(FrozenModel):
@@ -101,4 +105,45 @@ class P204ResultArtifact(FrozenModel):
 
         if self.requirement_set_ref is not None or self.resume_evidence_set_ref is not None:
             raise ValueError("EXCLUDE_PROVEN P2-04 result не должен содержать P2-04 artifacts")
+        return self
+
+
+class P205ResultArtifact(FrozenModel):
+    """Воспроизводимая контрольная точка P2-05 поверх результата P2-04"""
+
+    schema_version: VersionId = P205_RESULT_SCHEMA_VERSION
+    input_fingerprint: Sha256
+    manifest: ProcessingInputManifest
+    filter_outcome: FilterOutcome
+    p2_04_result_ref: ProcessingArtifactRef
+    evidence_candidate_set_ref: ProcessingArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> P205ResultArtifact:
+        if self.input_fingerprint != self.manifest.input_fingerprint():
+            raise ValueError("input_fingerprint не совпадает с manifest")
+        if self.p2_04_result_ref.kind is not ProcessingArtifactKind.P2_04_RESULT:
+            raise ValueError("p2_04_result_ref имеет неверный artifact kind")
+        if self.p2_04_result_ref.schema_version != P204_RESULT_SCHEMA_VERSION:
+            raise ValueError("p2_04_result_ref имеет неподдерживаемую schema version")
+
+        if self.filter_outcome is FilterOutcome.KEEP:
+            if self.manifest.versions.jina is None:
+                raise ValueError("KEEP P2-05 result требует JinaVersionBundle в manifest")
+            if self.evidence_candidate_set_ref is None:
+                raise ValueError("KEEP P2-05 result требует evidence candidate artifact")
+            if (
+                self.evidence_candidate_set_ref.kind
+                is not ProcessingArtifactKind.EVIDENCE_CANDIDATE_SET
+            ):
+                raise ValueError("evidence_candidate_set_ref имеет неверный artifact kind")
+            if (
+                self.evidence_candidate_set_ref.schema_version
+                != EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION
+            ):
+                raise ValueError("evidence_candidate_set_ref имеет неподдерживаемую schema version")
+            return self
+
+        if self.evidence_candidate_set_ref is not None:
+            raise ValueError("EXCLUDE_PROVEN P2-05 result не должен содержать candidate artifact")
         return self

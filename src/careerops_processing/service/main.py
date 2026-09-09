@@ -8,18 +8,22 @@ import json
 import signal
 import threading
 from contextlib import AsyncExitStack
+from datetime import timedelta
 
 from psycopg import AsyncConnection
 
-from careerops_processing.executor import P204Executor
+from careerops_processing.executor import P204Executor, P205Executor
 from careerops_processing.infrastructure import (
+    HttpJinaRerankerClient,
     PostgresProcessingJobStore,
     PostgresSemanticArtifactRegistry,
+    ProcessingArtifactLoader,
     ProcessingArtifactPublisher,
     ProcessingArtifactStore,
     ProcessingArtifactStoreSettings,
     S3ProcessingInputLoader,
 )
+from careerops_processing.selector import EvidenceCandidateSelector
 from careerops_processing.semantic_cache import P204SemanticArtifactResolver
 from careerops_processing.worker import ProcessingWorker, ProcessingWorkerPolicy
 from careerops_storage.s3 import S3JsonStore, S3Settings
@@ -103,6 +107,12 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
             artifact_store = await stack.enter_async_context(
                 ProcessingArtifactStore(artifact_settings)
             )
+            reranker_client = await stack.enter_async_context(
+                HttpJinaRerankerClient(
+                    config.reranker_endpoint_url,
+                    timeout_seconds=config.reranker_timeout_seconds,
+                )
+            )
 
             publisher = ProcessingArtifactPublisher(artifact_store)
             loader = S3ProcessingInputLoader(
@@ -114,10 +124,19 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                 registry=semantic_registry,
                 publisher=publisher,
             )
-            executor = P204Executor(
+            p204 = P204Executor(
                 loader=loader,
                 publisher=publisher,
                 semantic_resolver=semantic_resolver,
+            )
+            executor = P205Executor(
+                p204=p204,
+                artifact_loader=ProcessingArtifactLoader(artifact_store),
+                publisher=publisher,
+                selector=EvidenceCandidateSelector(reranker_client),
+                unavailable_delay=timedelta(
+                    seconds=config.reranker_unavailable_delay_seconds
+                ),
             )
             worker = ProcessingWorker(
                 store=PostgresProcessingJobStore(queue_conn),
