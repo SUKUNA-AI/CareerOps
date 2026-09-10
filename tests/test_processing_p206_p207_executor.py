@@ -325,7 +325,8 @@ def _build_executor(
             scores={"ev-python": 0.01},
         ).model_copy(
             update={
-                "input_fingerprint": candidate_fingerprint or manifest.input_fingerprint()
+                "input_fingerprint": candidate_fingerprint or manifest.input_fingerprint(),
+                "jina": manifest.versions.jina,
             }
         )
 
