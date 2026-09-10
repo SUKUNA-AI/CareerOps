@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
+from support.processing import HASH_A
 
 from careerops_processing.contracts import (
     MatchDecision,
@@ -12,7 +13,6 @@ from careerops_processing.contracts import (
     ScoringComponent,
     SupportBounds,
 )
-from support.processing import HASH_A
 
 
 def _bounds(lower: str, upper: str) -> SupportBounds:

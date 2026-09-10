@@ -3,6 +3,17 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from support.processing import (
+    candidate_set,
+    evidence,
+    evidence_set,
+    prohibited_requirement,
+    qualify,
+    requirement,
+    requirement_set,
+    score,
+)
+
 from careerops_processing.contracts import (
     EvidenceActorScope,
     MatchDecision,
@@ -14,16 +25,6 @@ from careerops_processing.contracts import (
     RequirementThresholdMetric,
     SemanticPolarity,
     SemanticTimeSpan,
-)
-from support.processing import (
-    candidate_set,
-    evidence,
-    evidence_set,
-    prohibited_requirement,
-    qualify,
-    requirement,
-    requirement_set,
-    score,
 )
 
 

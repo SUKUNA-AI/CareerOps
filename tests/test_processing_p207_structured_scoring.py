@@ -3,6 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from support.processing import (
+    HASH_A,
+    HASH_B,
+    HASH_C,
+    HASH_D,
+    empty_qualification_set,
+    empty_requirement_set,
+    requirement,
+    requirement_set,
+    score,
+)
+
 from careerops_processing.contracts import (
     DataQualityStatus,
     MatchDecision,
@@ -19,17 +31,6 @@ from careerops_processing.contracts import (
     ValueState,
 )
 from careerops_processing.contracts.normalized import DataQualityReport, Employer, Location
-from support.processing import (
-    HASH_A,
-    HASH_B,
-    HASH_C,
-    HASH_D,
-    empty_qualification_set,
-    empty_requirement_set,
-    requirement,
-    requirement_set,
-    score,
-)
 
 
 def _known(value):

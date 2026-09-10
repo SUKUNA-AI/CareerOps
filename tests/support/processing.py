@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
-from decimal import Decimal
-from typing import Mapping
 
 from careerops_processing.contracts import (
     EvidenceActorScope,
