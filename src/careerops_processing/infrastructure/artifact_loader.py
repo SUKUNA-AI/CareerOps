@@ -9,11 +9,15 @@ from pydantic import BaseModel
 
 from careerops_processing.contracts import (
     EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
+    MATCH_DECISION_SCHEMA_VERSION,
+    REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION,
     REQUIREMENT_SET_SCHEMA_VERSION,
     RESUME_EVIDENCE_SET_SCHEMA_VERSION,
     EvidenceCandidateSet,
+    MatchDecisionBundle,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
+    RequirementQualificationSet,
     RequirementSet,
     ResumeEvidenceSet,
 )
@@ -98,4 +102,26 @@ class ProcessingArtifactLoader:
             expected_kind=ProcessingArtifactKind.EVIDENCE_CANDIDATE_SET,
             expected_schema_version=EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
             model=EvidenceCandidateSet,
+        )
+
+    async def load_requirement_qualification_set(
+        self,
+        ref: ProcessingArtifactRef,
+    ) -> RequirementQualificationSet:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.REQUIREMENT_QUALIFICATION_SET,
+            expected_schema_version=REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION,
+            model=RequirementQualificationSet,
+        )
+
+    async def load_match_decision(
+        self,
+        ref: ProcessingArtifactRef,
+    ) -> MatchDecisionBundle:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.MATCH_DECISION,
+            expected_schema_version=MATCH_DECISION_SCHEMA_VERSION,
+            model=MatchDecisionBundle,
         )

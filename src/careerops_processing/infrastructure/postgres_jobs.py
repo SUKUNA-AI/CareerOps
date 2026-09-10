@@ -164,7 +164,7 @@ class PostgresProcessingJobStore:
         *,
         reason: str = RECONCILIATION_WITHDRAWN,
     ) -> int:
-        """Fence every active job for a pair that left authoritative desired state."""
+        """Fence active work and invalidate current outputs for a withdrawn pair."""
 
         normalized_reason = self._non_empty(reason, "withdraw reason")
         if not normalized_reason.startswith(RECONCILIATION_CANCEL_PREFIX):
@@ -192,7 +192,25 @@ class PostgresProcessingJobStore:
                 """,
                 (normalized_reason, pair.vacancy_id, pair.binding_id),
             )
-            return cursor.rowcount
+            cancelled = cursor.rowcount
+            await self._conn.execute(
+                """
+                DELETE FROM careerops_v2.match_results
+                WHERE vacancy_id = %s AND binding_id = %s
+                """,
+                (pair.vacancy_id, pair.binding_id),
+            )
+            await self._conn.execute(
+                """
+                UPDATE careerops_v2.application_candidates
+                SET status = 'withdrawn', updated_at = now()
+                WHERE vacancy_id = %s
+                  AND binding_id = %s
+                  AND status <> 'withdrawn'
+                """,
+                (pair.vacancy_id, pair.binding_id),
+            )
+            return cancelled
 
     async def claim_next(
         self,

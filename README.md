@@ -38,15 +38,16 @@ NormalizedVacancy / NormalizedResume
               P2-05 Jina evidence selector
                           │
                           ▼
-                 EvidenceCandidateSet
+              P2-06 deterministic qualification
                           │
                           ▼
-                   будущий P2-06
-                   qualification C++
+              P2-07 scoring / policy decision
                           │
                           ▼
-                   будущий P2-07
-                scoring / policy decision
+             SKIP / REVIEW / APPLICATION_CANDIDATE
+                          │
+                          ▼
+               будущий Application Owner
 ```
 
 Spark владеет преобразованием RAW → normalized data
@@ -73,17 +74,20 @@ Processing не выполняет нормализацию и не меняет
 - отдельный HTTP boundary к Jina reranker runtime
 - отдельный GPU service `careerops-reranker`
 - runtime identity handshake для model/code/tokenizer/torch/transformers
+- P2-06 `RequirementQualificationSet`
+- P2-06 deterministic qualification с `MATCHED / NOT_EVIDENCED / UNKNOWN / CONTRADICTED`
+- P2-07 bounded scoring и `SKIP / REVIEW / APPLICATION_CANDIDATE`
+- fenced PostgreSQL current publication в `match_results` и `application_candidates`
+- stale-output invalidation при supersede/reconciliation/withdraw
 - content-addressed Processing artifacts в S3
-- production wiring `careerops-processing serve`
+- production wiring `careerops-processing serve` через P2-07
 - C++20 `careerops-matching-core` с gRPC control plane и health/capability contract
 
-Пока не реализованы как рабочие стадии Processing:
+Пока не реализован Application Owner, который будет владеть финальной отправкой отклика и внешними application guards
 
-- P2-06 deterministic qualification
-- P2-07 final scoring и policy decision
-- Application Owner
+P2-07 runtime/contracts реализованы, но production calibration намеренно остаётся `calibration-unset` до Gold Set. Поэтому автоматический `APPLICATION_CANDIDATE` пока является закрытым release gate, а не выдуманным набором thresholds/weights
 
-`careerops-matching-core` пока не публикует фиктивный evaluator: capability API явно сообщает, что evaluate methods недоступны
+`careerops-matching-core` пока не публикует фиктивный evaluator: capability API явно сообщает, что evaluate methods недоступны. Текущая P2-06 qualification реализована как deterministic Processing core и не зависит от незавершённого C++ evaluator
 
 ## Главные инварианты
 
@@ -219,6 +223,46 @@ Candidate pool сохраняет высокий recall: обычный requirem
 
 Пустой `ResumeEvidenceSet` фиксируется как `NO_EVIDENCE` без model call
 
+### P2-06 квалифицирует evidence детерминированно
+
+P2-06 использует только ranked candidates P2-05 и квалифицирует их по semantic identity, polarity, actor scope, evidence strength и time spans
+
+Evidence вне выбранного Jina top-k не может молча создать `MATCHED` или `CONTRADICTED` в обход P2-05
+
+Отрицательный вывод `NOT_EVIDENCED` требует exhaustive evidence check: pre-Jina pool должен покрывать весь `ResumeEvidenceSet`, а selected candidates должны исчерпывать этот pool. Если `top_k < |pool|`, отсутствие decisive evidence остаётся `UNKNOWN`; то же правило применяется к выводу о недостаточной длительности опыта
+
+Jina relevance score не используется как threshold для qualification
+
+```text
+MATCHED        → [1,1]
+CONTRADICTED   → [0,0]
+NOT_EVIDENCED  → [0,1]
+UNKNOWN        → [0,1]
+```
+
+`ALL` агрегируется через `min`, `ANY` через `max`. Неустранимый `CONDITIONAL` остаётся неопределённым, а недостаточная evidence duration не превращается в contradiction
+
+### P2-07 принимает bounded policy decision
+
+P2-07 использует qualification bounds и first-class structured compatibility components, включая role, seniority, work format и location
+
+`MANDATORY` и hard critical gate не смешиваются. Contradiction обычного `REQUIRED/MANDATORY` requirement влияет на `mandatory_coverage` и после calibration оценивается через versioned `mandatory_min_support`; до calibration такой случай остаётся `REVIEW`
+
+Доказанное нарушение `PROHIBITED` requirement является non-compensable hard gate и приводит к `SKIP`
+
+Если calibrated policy задаёт положительный вес сигналу, который для exact input нельзя построить, этот компонент остаётся `[0,100]`. Его вес не перераспределяется на доступные компоненты, поэтому отсутствие сигнала не может искусственно повысить conservative score
+
+До появления versioned calibration:
+
+```text
+calibration-unset
+→ APPLICATION_CANDIDATE запрещён
+→ violation PROHIBITED может дать SKIP
+→ остальные случаи REVIEW
+```
+
+После calibration candidate выдаётся только если conservative lower bounds проходят policy. Если даже upper bounds не проходят policy, результат `SKIP`; иначе `REVIEW`
+
 ### Runtime Jina полностью pin'ится
 
 Новый P2-05 manifest содержит `JinaVersionBundle`:
@@ -261,6 +305,16 @@ DEFERRED
 
 Нарушение runtime identity, response contract или pinned token budget является deterministic failure
 
+Deterministic content-addressed integrity/configuration failures в stage executors завершаются terminal failure; transport failures остаются retryable, а потеря lease продолжает работать как отдельный fencing signal
+
+### Current output защищён fencing
+
+P2-07 сначала публикует immutable artifacts и только потом обновляет PostgreSQL current projection
+
+Current publication требует действующую lease точной job identity. Supersede, reconciliation cancellation и explicit pair withdrawal инвалидируют старый `match_results` и withdraw соответствующий `application_candidates`
+
+Stale worker не может вернуть устаревший result в current state
+
 ## Production runtime Processing
 
 ```bash
@@ -279,27 +333,27 @@ PostgreSQL queue connection
         ProcessingWorker
                 │
                 ▼
-          P205Executor
+          P207Executor
           │
-          ├── P204Executor
-          │   ├── S3ProcessingInputLoader
-          │   ├── P2-03 filter
-          │   ├── P204SemanticArtifactResolver
-          │   │     └── separate PostgreSQL registry connection
-          │   └── ProcessingArtifactPublisher
+          ├── P206Executor
+          │   └── P205Executor
+          │       └── P204Executor
+          │           ├── S3ProcessingInputLoader
+          │           ├── P2-03 filter
+          │           └── P204SemanticArtifactResolver
           │
-          ├── ProcessingArtifactLoader
-          ├── EvidenceCandidateSelector
-          └── HttpJinaRerankerClient
-                    │
-                    ▼
-             careerops-reranker
-                    │
-                    ▼
-                Jina GPU
+          ├── ProcessingArtifactLoader / Publisher
+          ├── HttpJinaRerankerClient
+          │         │
+          │         ▼
+          │  careerops-reranker
+          │         │
+          │       Jina GPU
+          │
+          └── PostgresMatchPublicationStore
 ```
 
-Queue и semantic registry используют разные PostgreSQL connections, чтобы heartbeat lease продолжал работать во время extraction, S3 и model calls
+Queue, semantic registry и fenced current publication используют отдельные PostgreSQL connections, чтобы heartbeat lease не блокировался extraction, S3, model calls или current-result transaction
 
 Health endpoints:
 
@@ -316,6 +370,8 @@ Processing readiness означает, что зависимости и worker �
 
 PyTorch/Transformers не входят в обязательные зависимости основного Processing процесса. Для GPU runtime используется optional extra `reranker-runtime` и отдельный container из `infra/compose/reranker/`
 
+Текущий проверенный container profile использует PyTorch 2.14, CUDA 13.2, Transformers 4.57.3 и FP16. Model/code/tokenizer revision pin'ится отдельно через runtime env
+
 Reranker endpoints:
 
 ```text
@@ -326,9 +382,13 @@ Reranker endpoints:
 
 `/readyz` публикует фактическую runtime identity
 
+Triton JIT cache хранится отдельно от hardened `noexec /tmp` через `TRITON_CACHE_DIR`, чтобы скомпилированные runtime modules могли загружаться с executable persistent filesystem
+
+Подробный deployment runbook находится в `infra/compose/reranker/README.md`
+
 ## Processing runtime environment
 
-До P2-05 включительно Processing использует:
+Processing использует:
 
 ```text
 CAREEROPS_PROCESSING_POSTGRES_DSN
@@ -349,7 +409,7 @@ CAREEROPS_PROCESSING_HEALTH_HOST
 CAREEROPS_PROCESSING_HEALTH_PORT
 ```
 
-P2-05 не требует matching-core target. Эта настройка должна появиться только вместе с P2-06
+Текущая P2-06 qualification не требует matching-core target. C++ evaluator должен подключаться только после появления versioned evaluate capability, без изменения semantic contracts P2-06/P2-07
 
 Примеры находятся в `.env.example`, `infra/compose/processing/env.example` и `infra/compose/reranker/env.example`
 
@@ -406,6 +466,7 @@ src/
 
 - PostgreSQL durable queue
 - PostgreSQL semantic artifact registry
+- PostgreSQL fenced current result publication
 - S3 input/artifact stores
 - HTTP client reranker
 - `TargetPolicy` repository
@@ -430,11 +491,13 @@ alembic upgrade head
 
 `processing_semantic_artifacts` является индексом переиспользования P2-04 semantic artifacts, а не заменой S3
 
-P2-05 не добавляет новую PostgreSQL domain table: его pair-specific результаты хранятся как immutable artifacts и durable job result URI
+`match_results` хранит только current pair projection P2-07, а immutable decision trace остаётся в S3
+
+`application_candidates` является handoff projection и не означает, что отклик уже отправлен
 
 ## Артефакты Processing
 
-До P2-05 включительно публикуются:
+До P2-07 включительно публикуются:
 
 ```text
 INPUT_MANIFEST
@@ -444,6 +507,10 @@ RESUME_EVIDENCE_SET
 P2_04_RESULT
 EVIDENCE_CANDIDATE_SET
 P2_05_RESULT
+REQUIREMENT_QUALIFICATION_SET
+P2_06_RESULT
+MATCH_DECISION
+P2_07_RESULT
 ```
 
 Все артефакты неизменяемы и адресуются по SHA-256. Mutable `latest` pointers не используются
@@ -471,5 +538,8 @@ PostgreSQL integration tests требуют отдельный disposable local/
 - `docs/processing/P2-03-evaluation.md`
 - `docs/processing/P2-04.md`
 - `docs/processing/P2-05.md`
+- `docs/processing/P2-06.md`
+- `docs/processing/P2-07.md`
+- `infra/compose/reranker/README.md`
 
 `docs/architecture-reset/progress/**` содержит только исторические снимки разработки и не является нормативным описанием текущей архитектуры

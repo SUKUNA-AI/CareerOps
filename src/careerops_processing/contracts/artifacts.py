@@ -10,12 +10,16 @@ from .common import FrozenModel, S3Uri, Sha256, VersionId
 from .evidence import RESUME_EVIDENCE_SET_SCHEMA_VERSION
 from .filtering import FilterDecision, FilterOutcome
 from .manifest import ProcessingInputManifest
+from .qualification import REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION
 from .requirements import REQUIREMENT_SET_SCHEMA_VERSION
 from .reranking import EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION
+from .scoring import MATCH_DECISION_SCHEMA_VERSION
 
 FILTER_TRACE_SCHEMA_VERSION = "careerops.processing.filter-trace.v1"
 P204_RESULT_SCHEMA_VERSION = "careerops.processing.p2-04-result.v2"
 P205_RESULT_SCHEMA_VERSION = "careerops.processing.p2-05-result.v1"
+P206_RESULT_SCHEMA_VERSION = "careerops.processing.p2-06-result.v1"
+P207_RESULT_SCHEMA_VERSION = "careerops.processing.p2-07-result.v1"
 
 
 class ProcessingArtifactKind(StrEnum):
@@ -26,6 +30,10 @@ class ProcessingArtifactKind(StrEnum):
     P2_04_RESULT = "p2_04_result"
     EVIDENCE_CANDIDATE_SET = "evidence_candidate_set"
     P2_05_RESULT = "p2_05_result"
+    REQUIREMENT_QUALIFICATION_SET = "requirement_qualification_set"
+    P2_06_RESULT = "p2_06_result"
+    MATCH_DECISION = "match_decision"
+    P2_07_RESULT = "p2_07_result"
 
 
 class ProcessingArtifactRef(FrozenModel):
@@ -146,4 +154,65 @@ class P205ResultArtifact(FrozenModel):
 
         if self.evidence_candidate_set_ref is not None:
             raise ValueError("EXCLUDE_PROVEN P2-05 result не должен содержать candidate artifact")
+        return self
+
+
+class P206ResultArtifact(FrozenModel):
+    """Воспроизводимая контрольная точка deterministic qualification P2-06."""
+
+    schema_version: VersionId = P206_RESULT_SCHEMA_VERSION
+    input_fingerprint: Sha256
+    manifest: ProcessingInputManifest
+    filter_outcome: FilterOutcome
+    p2_05_result_ref: ProcessingArtifactRef
+    requirement_qualification_set_ref: ProcessingArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> P206ResultArtifact:
+        if self.input_fingerprint != self.manifest.input_fingerprint():
+            raise ValueError("input_fingerprint не совпадает с manifest")
+        if self.p2_05_result_ref.kind is not ProcessingArtifactKind.P2_05_RESULT:
+            raise ValueError("p2_05_result_ref имеет неверный artifact kind")
+        if self.p2_05_result_ref.schema_version != P205_RESULT_SCHEMA_VERSION:
+            raise ValueError("p2_05_result_ref имеет неподдерживаемую schema version")
+
+        if self.filter_outcome is FilterOutcome.KEEP:
+            ref = self.requirement_qualification_set_ref
+            if ref is None:
+                raise ValueError("KEEP P2-06 result требует qualification artifact")
+            if ref.kind is not ProcessingArtifactKind.REQUIREMENT_QUALIFICATION_SET:
+                raise ValueError("qualification ref имеет неверный artifact kind")
+            if ref.schema_version != REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION:
+                raise ValueError("qualification ref имеет неподдерживаемую schema version")
+            return self
+
+        if self.requirement_qualification_set_ref is not None:
+            raise ValueError(
+                "EXCLUDE_PROVEN P2-06 result не должен содержать qualification artifact"
+            )
+        return self
+
+
+class P207ResultArtifact(FrozenModel):
+    """Финальный immutable checkpoint Processing matching/scoring P2-07."""
+
+    schema_version: VersionId = P207_RESULT_SCHEMA_VERSION
+    input_fingerprint: Sha256
+    manifest: ProcessingInputManifest
+    filter_outcome: FilterOutcome
+    p2_06_result_ref: ProcessingArtifactRef
+    match_decision_ref: ProcessingArtifactRef
+
+    @model_validator(mode="after")
+    def validate_result(self) -> P207ResultArtifact:
+        if self.input_fingerprint != self.manifest.input_fingerprint():
+            raise ValueError("input_fingerprint не совпадает с manifest")
+        if self.p2_06_result_ref.kind is not ProcessingArtifactKind.P2_06_RESULT:
+            raise ValueError("p2_06_result_ref имеет неверный artifact kind")
+        if self.p2_06_result_ref.schema_version != P206_RESULT_SCHEMA_VERSION:
+            raise ValueError("p2_06_result_ref имеет неподдерживаемую schema version")
+        if self.match_decision_ref.kind is not ProcessingArtifactKind.MATCH_DECISION:
+            raise ValueError("match_decision_ref имеет неверный artifact kind")
+        if self.match_decision_ref.schema_version != MATCH_DECISION_SCHEMA_VERSION:
+            raise ValueError("match_decision_ref имеет неподдерживаемую schema version")
         return self

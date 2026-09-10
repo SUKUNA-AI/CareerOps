@@ -128,8 +128,8 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
 
     assert await service_main._serve_async(_config()) == 0
 
-    assert len(_FakeConnection.created) == 2
-    assert _FakeConnection.created[0] is not _FakeConnection.created[1]
+    assert len(_FakeConnection.created) == 3
+    assert len({id(connection) for connection in _FakeConnection.created}) == 3
     assert all(connection.autocommit for connection in _FakeConnection.created)
 
     reranker = _FakeRerankerClient.instance
@@ -148,4 +148,4 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     assert worker.ready_seen is True
     assert worker.kwargs["worker_id"] == "processing-test"
     assert worker.kwargs["store"].__class__.__name__ == "PostgresProcessingJobStore"
-    assert worker.kwargs["executor"].__class__.__name__ == "P205Executor"
+    assert worker.kwargs["executor"].__class__.__name__ == "P207Executor"

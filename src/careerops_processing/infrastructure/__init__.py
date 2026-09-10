@@ -10,12 +10,14 @@ from .artifacts import (
 from .input_loader import S3ProcessingInputLoader
 from .policy_repository import FileTargetPolicyRepository, TargetPolicyRepository
 from .postgres_jobs import PostgresProcessingJobStore
+from .postgres_match_publication import PostgresMatchPublicationStore
 from .postgres_semantic_cache import PostgresSemanticArtifactRegistry
 from .reranker_http import HttpJinaRerankerClient
 
 __all__ = [
     "FileTargetPolicyRepository",
     "HttpJinaRerankerClient",
+    "PostgresMatchPublicationStore",
     "PostgresProcessingJobStore",
     "PostgresSemanticArtifactRegistry",
     "ProcessingArtifactIntegrityError",
