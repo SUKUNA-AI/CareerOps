@@ -14,6 +14,7 @@ def _env() -> dict[str, str]:
         "CAREEROPS_PROCESSING_S3_SECRET_KEY": "test-secret",
         "CAREEROPS_PROCESSING_NORMALIZED_BUCKET": "careerops-lake",
         "CAREEROPS_PROCESSING_ARTIFACTS_BUCKET": "careerops-artifacts",
+        "CAREEROPS_PROCESSING_RERANKER_URL": "http://10.42.0.62:18082",
         "CAREEROPS_PROCESSING_WORKER_ID": "core-processing-1",
     }
 
@@ -25,16 +26,26 @@ def test_processing_runtime_config_from_env() -> None:
     assert config.health_port == 18081
     assert config.s3_region == "us-east-1"
     assert config.artifacts_prefix == "processing"
+    assert config.reranker_endpoint_url == "http://10.42.0.62:18082"
+    assert config.reranker_timeout_seconds == 60.0
+    assert config.reranker_unavailable_delay_seconds == 120.0
     assert config.worker_id == "core-processing-1"
     assert config.worker_lease_seconds == 300
     assert config.worker_idle_sleep_seconds == 1.0
 
 
-def test_processing_runtime_config_does_not_require_future_stage_dependencies() -> None:
+def test_processing_runtime_config_does_not_require_future_matching_core() -> None:
     config = ProcessingRuntimeConfig.from_env(_env())
 
-    assert not hasattr(config, "reranker_url")
     assert not hasattr(config, "matching_core_target")
+
+
+def test_processing_runtime_config_requires_reranker_at_p205() -> None:
+    env = _env()
+    del env["CAREEROPS_PROCESSING_RERANKER_URL"]
+
+    with pytest.raises(ValueError, match="CAREEROPS_PROCESSING_RERANKER_URL"):
+        ProcessingRuntimeConfig.from_env(env)
 
 
 def test_processing_runtime_config_rejects_bad_port() -> None:
@@ -56,6 +67,9 @@ def test_processing_runtime_config_is_strict() -> None:
             normalized_bucket="careerops-lake",
             artifacts_bucket="careerops-artifacts",
             artifacts_prefix="processing",
+            reranker_endpoint_url="http://10.42.0.62:18082",
+            reranker_timeout_seconds=60.0,
+            reranker_unavailable_delay_seconds=120.0,
             worker_id="core-processing-1",
             worker_lease_seconds=300,
             worker_idle_sleep_seconds=1.0,
@@ -70,6 +84,7 @@ def test_processing_runtime_safe_summary_does_not_expose_secrets() -> None:
 
     assert summary["postgres_configured"] is True
     assert summary["s3_credentials_configured"] is True
+    assert summary["reranker_endpoint_url"] == "http://10.42.0.62:18082"
     assert "postgres_dsn" not in summary
     assert "s3_access_key" not in summary
     assert "s3_secret_key" not in summary

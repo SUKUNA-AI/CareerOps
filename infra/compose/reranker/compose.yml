@@ -1,0 +1,43 @@
+name: careerops-reranker
+
+services:
+  reranker:
+    container_name: careerops-reranker
+    build:
+      context: ../../..
+      dockerfile: infra/compose/reranker/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/reranker/env
+    environment:
+      HF_HOME: /cache/huggingface
+      TRANSFORMERS_CACHE: /cache/huggingface
+    volumes:
+      - /var/lib/careerops/reranker-cache:/cache
+    gpus: all
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          port = os.getenv('CAREEROPS_RERANKER_PORT', '18082');
+          urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2).read()
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

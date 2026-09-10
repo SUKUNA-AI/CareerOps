@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProcessingRuntimeConfig(BaseModel):
-    """Настройки текущего P2-04 без зависимостей будущих стадий"""
+    """Настройки Processing runtime до P2-05 включительно"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -22,13 +22,16 @@ class ProcessingRuntimeConfig(BaseModel):
     normalized_bucket: str = Field(min_length=1)
     artifacts_bucket: str = Field(min_length=1)
     artifacts_prefix: str = Field(min_length=1)
+    reranker_endpoint_url: str = Field(min_length=1)
+    reranker_timeout_seconds: float = Field(gt=0)
+    reranker_unavailable_delay_seconds: float = Field(gt=0)
     worker_id: str = Field(min_length=1)
     worker_lease_seconds: int = Field(ge=3)
     worker_idle_sleep_seconds: float = Field(gt=0)
     health_host: str = Field(min_length=1)
     health_port: int = Field(ge=1, le=65535)
 
-    @field_validator("s3_endpoint_url")
+    @field_validator("s3_endpoint_url", "reranker_endpoint_url")
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
@@ -84,6 +87,15 @@ class ProcessingRuntimeConfig(BaseModel):
                 "processing",
             ).strip("/")
             or "processing",
+            reranker_endpoint_url=required("CAREEROPS_PROCESSING_RERANKER_URL"),
+            reranker_timeout_seconds=floating(
+                "CAREEROPS_PROCESSING_RERANKER_TIMEOUT_SECONDS",
+                "60",
+            ),
+            reranker_unavailable_delay_seconds=floating(
+                "CAREEROPS_PROCESSING_RERANKER_UNAVAILABLE_DELAY_SECONDS",
+                "120",
+            ),
             worker_id=env.get("CAREEROPS_PROCESSING_WORKER_ID", socket.gethostname()).strip()
             or socket.gethostname(),
             worker_lease_seconds=integer(
@@ -110,6 +122,9 @@ class ProcessingRuntimeConfig(BaseModel):
             "normalized_bucket": self.normalized_bucket,
             "artifacts_bucket": self.artifacts_bucket,
             "artifacts_prefix": self.artifacts_prefix,
+            "reranker_endpoint_url": self.reranker_endpoint_url,
+            "reranker_timeout_seconds": self.reranker_timeout_seconds,
+            "reranker_unavailable_delay_seconds": self.reranker_unavailable_delay_seconds,
             "worker_id": self.worker_id,
             "worker_lease_seconds": self.worker_lease_seconds,
             "worker_idle_sleep_seconds": self.worker_idle_sleep_seconds,

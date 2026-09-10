@@ -83,7 +83,6 @@ from careerops_processing.semantic_cache import (
     P204SemanticArtifactResolver,
     SemanticArtifactKey,
 )
-from careerops_processing.service.config import ProcessingRuntimeConfig
 from careerops_processing.worker import ProcessingWorker
 
 HASH_A = "a" * 64
@@ -1138,21 +1137,3 @@ async def test_s3_input_loader_verifies_manifest_content_address() -> None:
         await bad_loader.load_manifest(
             f"s3://careerops-artifacts/processing/input_manifest/v1/{sha}.json"
         )
-
-
-def test_processing_runtime_config_has_no_future_stage_dependencies() -> None:
-    config = ProcessingRuntimeConfig.from_env(
-        {
-            "CAREEROPS_PROCESSING_POSTGRES_DSN": "postgresql://test:test@localhost/test",
-            "CAREEROPS_PROCESSING_S3_ENDPOINT_URL": "http://localhost:8333",
-            "CAREEROPS_PROCESSING_S3_ACCESS_KEY": "key",
-            "CAREEROPS_PROCESSING_S3_SECRET_KEY": "secret",
-            "CAREEROPS_PROCESSING_NORMALIZED_BUCKET": "careerops-lake",
-            "CAREEROPS_PROCESSING_ARTIFACTS_BUCKET": "careerops-artifacts",
-        }
-    )
-
-    assert config.worker_lease_seconds == 300
-    assert config.worker_idle_sleep_seconds == 1.0
-    assert not hasattr(config, "reranker_url")
-    assert not hasattr(config, "matching_core_target")

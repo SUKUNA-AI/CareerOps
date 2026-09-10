@@ -6,8 +6,6 @@ CareerOPS — self-hosted платформа для сбора вакансий,
 
 ## Нормативная архитектура
 
-Текущая архитектура разделяет источник данных, RAW-хранилище, нормализацию, управляющее состояние и Processing
-
 ```text
 HH
 │
@@ -36,20 +34,28 @@ NormalizedVacancy / NormalizedResume
                           ▼
               P2-04 Requirements + Evidence
                           │
-                immutable semantic artifacts
+                          ▼
+              P2-05 Jina evidence selector
                           │
                           ▼
-                  следующие стадии
-                  P2-05 / P2-06 / P2-07
+                 EvidenceCandidateSet
+                          │
+                          ▼
+                   будущий P2-06
+                   qualification C++
+                          │
+                          ▼
+                   будущий P2-07
+                scoring / policy decision
 ```
 
-Spark является владельцем преобразования RAW → normalized data
+Spark владеет преобразованием RAW → normalized data
 
 Processing не выполняет нормализацию и не меняет Spark contracts
 
 ## Состояние реализации
 
-На текущем этапе реализованы:
+Реализованы:
 
 - read-only HH ingestion
 - immutable RAW в SeaweedFS S3
@@ -62,13 +68,17 @@ Processing не выполняет нормализацию и не меняет
 - P2-04 `RequirementSet`
 - P2-04 `ResumeEvidenceSet`
 - постоянное переиспользование P2-04 semantic artifacts через PostgreSQL registry
+- P2-05 `EvidenceCandidateSet`
+- P2-05 `P205ResultArtifact`
+- отдельный HTTP boundary к Jina reranker runtime
+- отдельный GPU service `careerops-reranker`
+- runtime identity handshake для model/code/tokenizer/torch/transformers
 - content-addressed Processing artifacts в S3
 - production wiring `careerops-processing serve`
 - C++20 `careerops-matching-core` с gRPC control plane и health/capability contract
 
 Пока не реализованы как рабочие стадии Processing:
 
-- P2-05 Jina evidence selection
 - P2-06 deterministic qualification
 - P2-07 final scoring и policy decision
 - Application Owner
@@ -86,8 +96,6 @@ Processing не выполняет нормализацию и не меняет
 PostgreSQL не заменяет RAW-слой
 
 ### Spark владеет normalized data
-
-Spark отвечает за:
 
 ```text
 RAW
@@ -124,7 +132,7 @@ Manifest фиксирует:
 
 Из manifest вычисляется детерминированный `input_fingerprint`
 
-Processing не должен читать произвольное «текущее» состояние после начала job
+Processing не должен читать произвольное текущее состояние после начала job
 
 ### Единица решения — vacancy × binding
 
@@ -140,7 +148,7 @@ vacancy A × resume 3
 
 ### P2-03 исключает только доказанную несовместимость
 
-P2-03 возвращает:
+P2-03 возвращает только:
 
 ```text
 KEEP
@@ -149,40 +157,18 @@ EXCLUDE_PROVEN
 
 Неопределённость остаётся `KEEP`
 
-Низкая уверенность, отсутствие текста или отсутствие evidence не являются доказанным исключением
-
 ### P2-04 не принимает match decision
 
-P2-04 строит две семантические проекции:
+P2-04 строит:
 
 ```text
 NormalizedVacancy → RequirementSet
 NormalizedResume  → ResumeEvidenceSet
 ```
 
-`RequirementSet` сохраняет логическую структуру требований, включая:
+`RequirementSet` сохраняет логическую структуру `ALL / ANY / CONDITIONAL`, importance, modality, polarity, activity, context, threshold и provenance
 
-- `ALL`
-- `ANY`
-- `CONDITIONAL`
-- importance
-- modality
-- polarity
-- activity
-- context
-- threshold
-- provenance
-
-`ResumeEvidenceSet` сохраняет:
-
-- subject
-- activity
-- actor scope
-- context
-- polarity
-- strength
-- time span
-- provenance
+`ResumeEvidenceSet` сохраняет subject, activity, actor scope, context, polarity, strength, time span и provenance
 
 P2-04 не выбирает evidence для конкретного requirement и не решает, подходит ли кандидат
 
@@ -192,44 +178,97 @@ P2-04 не выбирает evidence для конкретного requirement �
 
 `ResumeEvidenceSet` не пересчитывается для каждой vacancy
 
-PostgreSQL таблица:
+PostgreSQL таблица `careerops_v2.processing_semantic_artifacts` хранит semantic identity → `ProcessingArtifactRef`
 
-```text
-careerops_v2.processing_semantic_artifacts
-```
-
-хранит semantic identity → `ProcessingArtifactRef`
-
-Перед первой сборкой используется PostgreSQL advisory lock. Параллельные workers для одной semantic identity не выполняют extraction одновременно
+Перед первой сборкой используется PostgreSQL advisory lock
 
 Сами semantic artifacts остаются immutable и content-addressed в S3
 
-Если registry содержит ссылку, а S3 object потерян, P2-04 допускает только детерминированную пересборку с точным совпадением прежнего `ProcessingArtifactRef`
+### P2-05 — selector, а не judge
 
-### Ошибки данных и ошибки инфраструктуры различаются
+Для каждого requirement P2-05 детерминированно рендерит query и полный high-recall pool `ResumeEvidence`, затем вызывает отдельный Jina runtime
 
-Детерминированное нарушение semantic contract или artifact integrity приводит к terminal failure job
+P2-05 публикует только ordered evidence candidates:
 
-Временная ошибка PostgreSQL/S3 не маскируется под semantic failure и обрабатывается worker как retryable failure
+```text
+requirement_id
+→ evidence_id + rank + relevance_score
+```
 
-### Jina не будет судьёй соответствия
+Низкий relevance score сам по себе не означает несовместимость
 
-P2-05 должен использовать Jina только для выбора и ранжирования candidate evidence относительно requirements
+Jina не определяет:
 
-Низкий reranker score сам по себе не будет означать несовместимость
+```text
+MATCHED
+NOT_EVIDENCED
+UNKNOWN
+CONTRADICTED
+SKIP
+REVIEW
+APPLICATION_CANDIDATE
+```
 
-Финальные состояния `MATCHED / NOT_EVIDENCED / UNKNOWN / CONTRADICTED` относятся к P2-06, а `SKIP / REVIEW / APPLICATION_CANDIDATE` — к P2-07
+Первые четыре состояния принадлежат P2-06, последние три — P2-07
+
+### P2-05 не использует lexical prefilter перед Jina
+
+Candidate pool сохраняет высокий recall: обычный requirement получает весь `ResumeEvidenceSet`
+
+`NOT_REQUIRED` requirement не отправляется в reranker
+
+Пустой `ResumeEvidenceSet` фиксируется как `NO_EVIDENCE` без model call
+
+### Runtime Jina полностью pin'ится
+
+Новый P2-05 manifest содержит `JinaVersionBundle`:
+
+- model id/revision
+- custom code revision
+- tokenizer revision
+- backend
+- dtype/quantization
+- фактическую версию torch
+- фактическую версию transformers
+- rendering version
+- selection version
+- block protocol
+- token budget
+- top-k
+
+`careerops-reranker` не доверяет env для версий torch/transformers: они читаются из реально установленных Python distributions
+
+Каждый `/v1/rerank` request содержит expected runtime identity из manifest. Несовпадение runtime identity является deterministic protocol failure
+
+### Manifest cutover P2-04 → P2-05 явный
+
+Исторические P2-04 manifests без `JinaVersionBundle` остаются валидными для P2-04 replay
+
+P2-05 не выполняется для manifest без pinned Jina identity
+
+Новые P2-05 manifests должны содержать `JinaVersionBundle` до запуска P2-03. Поэтому identity остаётся частью input fingerprint независимо от результата filter
+
+### Ошибки модели и отсутствие evidence не смешиваются
+
+Временная недоступность reranker:
+
+```text
+DEFERRED
+→ retry later
+```
+
+Она не превращается в `NO_EVIDENCE` или отрицательный match
+
+Нарушение runtime identity, response contract или pinned token budget является deterministic failure
 
 ## Production runtime Processing
-
-Команды:
 
 ```bash
 python -m careerops_processing check-config
 python -m careerops_processing serve
 ```
 
-`serve` собирает рабочий runtime:
+`serve` собирает:
 
 ```text
 PostgreSQL queue connection
@@ -240,15 +279,27 @@ PostgreSQL queue connection
         ProcessingWorker
                 │
                 ▼
-          P204Executor
-          ├── S3ProcessingInputLoader
-          ├── P2-03 filter
-          ├── P204SemanticArtifactResolver
-          │     └── separate PostgreSQL registry connection
-          └── ProcessingArtifactPublisher
+          P205Executor
+          │
+          ├── P204Executor
+          │   ├── S3ProcessingInputLoader
+          │   ├── P2-03 filter
+          │   ├── P204SemanticArtifactResolver
+          │   │     └── separate PostgreSQL registry connection
+          │   └── ProcessingArtifactPublisher
+          │
+          ├── ProcessingArtifactLoader
+          ├── EvidenceCandidateSelector
+          └── HttpJinaRerankerClient
+                    │
+                    ▼
+             careerops-reranker
+                    │
+                    ▼
+                Jina GPU
 ```
 
-Queue и semantic registry используют разные PostgreSQL connections, потому что heartbeat lease должен продолжать работать во время semantic extraction и S3 операций
+Queue и semantic registry используют разные PostgreSQL connections, чтобы heartbeat lease продолжал работать во время extraction, S3 и model calls
 
 Health endpoints:
 
@@ -257,11 +308,27 @@ Health endpoints:
 /readyz   готовность полностью собранного Processing worker
 ```
 
-`/readyz` становится `200` только после успешного открытия PostgreSQL/S3 dependencies и сборки worker. При ошибке startup wiring сервис не объявляет ложную readiness
+Processing readiness означает, что зависимости и worker собраны. Временный model outage обрабатывается на уровне job как `DEFERRED`
+
+## Отдельный GPU runtime
+
+`careerops-reranker` находится в `src/careerops_reranker/`
+
+PyTorch/Transformers не входят в обязательные зависимости основного Processing процесса. Для GPU runtime используется optional extra `reranker-runtime` и отдельный container из `infra/compose/reranker/`
+
+Reranker endpoints:
+
+```text
+/healthz
+/readyz
+/v1/rerank
+```
+
+`/readyz` публикует фактическую runtime identity
 
 ## Processing runtime environment
 
-До P2-04 включительно обязательны:
+До P2-05 включительно Processing использует:
 
 ```text
 CAREEROPS_PROCESSING_POSTGRES_DSN
@@ -272,6 +339,9 @@ CAREEROPS_PROCESSING_S3_REGION
 CAREEROPS_PROCESSING_NORMALIZED_BUCKET
 CAREEROPS_PROCESSING_ARTIFACTS_BUCKET
 CAREEROPS_PROCESSING_ARTIFACTS_PREFIX
+CAREEROPS_PROCESSING_RERANKER_URL
+CAREEROPS_PROCESSING_RERANKER_TIMEOUT_SECONDS
+CAREEROPS_PROCESSING_RERANKER_UNAVAILABLE_DELAY_SECONDS
 CAREEROPS_PROCESSING_WORKER_ID
 CAREEROPS_PROCESSING_WORKER_LEASE_SECONDS
 CAREEROPS_PROCESSING_WORKER_IDLE_SLEEP_SECONDS
@@ -279,9 +349,9 @@ CAREEROPS_PROCESSING_HEALTH_HOST
 CAREEROPS_PROCESSING_HEALTH_PORT
 ```
 
-P2-04 не требует Jina URL или matching-core target. Эти настройки должны появиться только вместе со стадиями, которые реально используют соответствующие сервисы
+P2-05 не требует matching-core target. Эта настройка должна появиться только вместе с P2-06
 
-Пример значений находится в `.env.example`
+Примеры находятся в `.env.example`, `infra/compose/processing/env.example` и `infra/compose/reranker/env.example`
 
 ## Структура кода
 
@@ -300,8 +370,13 @@ src/
 │   ├── executor.py
 │   ├── queue.py
 │   ├── reconciliation.py
+│   ├── selector.py
 │   ├── semantic_cache.py
 │   └── worker.py
+├── careerops_reranker/
+│   ├── config.py
+│   ├── runtime.py
+│   └── server.py
 └── careerops_storage/
     ├── s3.py
     └── v2/
@@ -309,15 +384,7 @@ src/
 
 ### `careerops_adapter.hh`
 
-Владеет read-only HH ingestion:
-
-- persistent source tasks
-- watermarks
-- source worker
-- публикация RAW
-- account-scoped source orchestration
-
-Этот слой не выполняет matching и не отправляет отклики
+Владеет read-only HH ingestion и не выполняет matching или отправку откликов
 
 ### `careerops_integrations.hh`
 
@@ -327,44 +394,25 @@ src/
 
 ### `careerops_processing.contracts`
 
-Содержит единственный публичный набор versioned DTO Processing
-
-Missing и unknown значения не схлопываются в falsey значения. Для source-backed данных используется `SourceValue`:
-
-```text
-KNOWN
-NOT_PROVIDED
-EXPLICIT_NONE
-UNKNOWN_PARSE
-```
+Единственный публичный набор versioned DTO Processing
 
 ### `careerops_processing.core`
 
-Содержит детерминированную бизнес-логику
-
-Core не зависит от:
-
-- PostgreSQL
-- S3
-- HTTP
-- gRPC transport
-- HH adapter
-- service runtime
+Детерминированная бизнес-логика без PostgreSQL, S3, HTTP, gRPC, HH adapter и service runtime
 
 ### `careerops_processing.infrastructure`
 
-Реализует внешние границы Processing:
+Внешние границы Processing:
 
 - PostgreSQL durable queue
 - PostgreSQL semantic artifact registry
-- S3 normalized input loader
-- content-addressed artifact store
-- artifact publisher
+- S3 input/artifact stores
+- HTTP client reranker
 - `TargetPolicy` repository
 
-### `careerops_processing.service`
+### `careerops_reranker`
 
-Собирает production dependencies и запускает `ProcessingWorker`
+Отдельный GPU/model boundary. Не владеет queue, match decision или application actions
 
 ## PostgreSQL v2
 
@@ -380,17 +428,13 @@ careerops_v2
 alembic upgrade head
 ```
 
-Текущий P2-04 добавляет таблицу:
+`processing_semantic_artifacts` является индексом переиспользования P2-04 semantic artifacts, а не заменой S3
 
-```text
-processing_semantic_artifacts
-```
-
-Она является индексом переиспользования, а не заменой S3
+P2-05 не добавляет новую PostgreSQL domain table: его pair-specific результаты хранятся как immutable artifacts и durable job result URI
 
 ## Артефакты Processing
 
-P2-03/P2-04 публикуют:
+До P2-05 включительно публикуются:
 
 ```text
 INPUT_MANIFEST
@@ -398,17 +442,11 @@ FILTER_TRACE
 REQUIREMENT_SET
 RESUME_EVIDENCE_SET
 P2_04_RESULT
+EVIDENCE_CANDIDATE_SET
+P2_05_RESULT
 ```
 
 Все артефакты неизменяемы и адресуются по SHA-256. Mutable `latest` pointers не используются
-
-Текущие P2-04 schemas:
-
-```text
-careerops.processing.requirement-set.v2
-careerops.processing.resume-evidence-set.v2
-careerops.processing.p2-04-result.v2
-```
 
 ## Проверки
 
@@ -432,5 +470,6 @@ PostgreSQL integration tests требуют отдельный disposable local/
 - `docs/processing/P2-03.md`
 - `docs/processing/P2-03-evaluation.md`
 - `docs/processing/P2-04.md`
+- `docs/processing/P2-05.md`
 
 `docs/architecture-reset/progress/**` содержит только исторические снимки разработки и не является нормативным описанием текущей архитектуры

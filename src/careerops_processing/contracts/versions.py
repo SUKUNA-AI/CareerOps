@@ -16,10 +16,13 @@ class JinaVersionBundle(FrozenModel):
     tokenizer_revision: NonEmptyStr
     runtime_backend: NonEmptyStr
     dtype_or_quantization: NonEmptyStr
+    torch_version: NonEmptyStr
+    transformers_version: NonEmptyStr
     rendering_version: VersionId
     selection_version: VersionId
     block_protocol: VersionId
     token_budget: int = Field(gt=0)
+    top_k: int = Field(gt=0)
 
 
 class ProcessingVersionBundle(FrozenModel):

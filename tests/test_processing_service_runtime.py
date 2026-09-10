@@ -19,6 +19,9 @@ def _config() -> ProcessingRuntimeConfig:
         normalized_bucket="careerops-lake",
         artifacts_bucket="careerops-artifacts",
         artifacts_prefix="processing",
+        reranker_endpoint_url="http://127.0.0.1:18082",
+        reranker_timeout_seconds=30.0,
+        reranker_unavailable_delay_seconds=90.0,
         worker_id="processing-test",
         worker_lease_seconds=60,
         worker_idle_sleep_seconds=0.01,
@@ -63,6 +66,15 @@ class _FakeArtifactStore(_AsyncResource):
         self.settings = settings
 
 
+class _FakeRerankerClient(_AsyncResource):
+    instance: _FakeRerankerClient | None = None
+
+    def __init__(self, endpoint_url: str, *, timeout_seconds: float) -> None:
+        self.endpoint_url = endpoint_url
+        self.timeout_seconds = timeout_seconds
+        type(self).instance = self
+
+
 class _FakeHealthServer:
     instance: _FakeHealthServer | None = None
 
@@ -103,11 +115,13 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
 ) -> None:
     _FakeConnection.created.clear()
     _FakeHealthServer.instance = None
+    _FakeRerankerClient.instance = None
     _FakeWorker.instance = None
 
     monkeypatch.setattr(service_main, "AsyncConnection", _FakeConnection)
     monkeypatch.setattr(service_main, "S3JsonStore", _FakeS3Store)
     monkeypatch.setattr(service_main, "ProcessingArtifactStore", _FakeArtifactStore)
+    monkeypatch.setattr(service_main, "HttpJinaRerankerClient", _FakeRerankerClient)
     monkeypatch.setattr(service_main, "HealthServer", _FakeHealthServer)
     monkeypatch.setattr(service_main, "ProcessingWorker", _FakeWorker)
     monkeypatch.setattr(service_main, "_install_signal_handlers", lambda _stop: None)
@@ -117,6 +131,11 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     assert len(_FakeConnection.created) == 2
     assert _FakeConnection.created[0] is not _FakeConnection.created[1]
     assert all(connection.autocommit for connection in _FakeConnection.created)
+
+    reranker = _FakeRerankerClient.instance
+    assert reranker is not None
+    assert reranker.endpoint_url == "http://127.0.0.1:18082"
+    assert reranker.timeout_seconds == 30.0
 
     health = _FakeHealthServer.instance
     assert health is not None
@@ -129,4 +148,4 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     assert worker.ready_seen is True
     assert worker.kwargs["worker_id"] == "processing-test"
     assert worker.kwargs["store"].__class__.__name__ == "PostgresProcessingJobStore"
-    assert worker.kwargs["executor"].__class__.__name__ == "P204Executor"
+    assert worker.kwargs["executor"].__class__.__name__ == "P205Executor"

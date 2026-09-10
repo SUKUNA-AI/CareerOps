@@ -5,8 +5,10 @@ from __future__ import annotations
 from careerops_processing.contracts.artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,
     P204_RESULT_SCHEMA_VERSION,
+    P205_RESULT_SCHEMA_VERSION,
     FilterTraceArtifact,
     P204ResultArtifact,
+    P205ResultArtifact,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
 )
@@ -22,6 +24,10 @@ from careerops_processing.contracts.manifest import (
 from careerops_processing.contracts.requirements import (
     REQUIREMENT_SET_SCHEMA_VERSION,
     RequirementSet,
+)
+from careerops_processing.contracts.reranking import (
+    EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
+    EvidenceCandidateSet,
 )
 from careerops_processing.semantic_cache import SemanticArtifactIntegrityError
 
@@ -100,6 +106,32 @@ class ProcessingArtifactPublisher:
             schema_version=P204_RESULT_SCHEMA_VERSION,
             payload=result,
         )
+
+    async def publish_evidence_candidate_set(
+        self,
+        candidate_set: EvidenceCandidateSet,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.EVIDENCE_CANDIDATE_SET,
+                schema_version=EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
+                payload=candidate_set,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("EvidenceCandidateSet нарушает content-addressed integrity") from exc
+
+    async def publish_p205_result(
+        self,
+        result: P205ResultArtifact,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.P2_05_RESULT,
+                schema_version=P205_RESULT_SCHEMA_VERSION,
+                payload=result,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("P205ResultArtifact нарушает content-addressed integrity") from exc
 
     async def verify_artifact(self, ref: ProcessingArtifactRef) -> None:
         """Проверяет существование и целостность артефакта по его ссылке"""
