@@ -4,19 +4,21 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from support.processing import (
+    candidate_set,
+    evidence,
+    evidence_set,
+    jina,
+    policy,
+    requirement,
+    requirement_set,
+)
 
 from careerops_processing.contracts import (
     BindingSnapshot,
     DataQualityStatus,
     EntityType,
-    EvidenceActorScope,
-    EvidenceCandidate,
-    EvidenceCandidateSet,
-    EvidenceContext,
-    EvidenceKind,
-    EvidenceStrength,
     FilterOutcome,
-    JinaVersionBundle,
     MatchDecision,
     NormalizedRef,
     P204ResultArtifact,
@@ -26,24 +28,8 @@ from careerops_processing.contracts import (
     ProcessingInputManifest,
     ProcessingVersionBundle,
     RawObservationRef,
-    Requirement,
-    RequirementContext,
-    RequirementEvidenceCandidates,
-    RequirementGroup,
-    RequirementGroupOperator,
-    RequirementImportance,
-    RequirementKind,
-    RequirementModality,
     RequirementQualificationSet,
     RequirementQualificationState,
-    RequirementSelectionState,
-    RequirementSet,
-    ResumeEvidence,
-    ResumeEvidenceSet,
-    SemanticPolarity,
-    SemanticSourceRef,
-    SemanticSubject,
-    TargetPolicy,
 )
 from careerops_processing.executor import (
     P204StageResult,
@@ -76,24 +62,6 @@ def _artifact(
     )
 
 
-def _jina() -> JinaVersionBundle:
-    return JinaVersionBundle(
-        model_id="jinaai/jina-reranker-v3.5",
-        model_revision="model-rev",
-        model_code_revision="code-rev",
-        tokenizer_revision="tokenizer-rev",
-        runtime_backend="transformers-cuda",
-        dtype_or_quantization="float16",
-        torch_version="2.14.0",
-        transformers_version="4.57.3",
-        rendering_version="p205-render-v1",
-        selection_version="p205-selection-v1",
-        block_protocol="single-list-v1",
-        token_budget=4096,
-        top_k=3,
-    )
-
-
 def _normalized_ref(entity_type: EntityType) -> NormalizedRef:
     is_resume = entity_type is EntityType.RESUME
     return NormalizedRef(
@@ -119,22 +87,6 @@ def _normalized_ref(entity_type: EntityType) -> NormalizedRef:
 
 
 def _manifest(*, calibrated: bool) -> ProcessingInputManifest:
-    content: dict[str, object] = {"filtering": {"schema_version": 1}}
-    if calibrated:
-        content["scoring"] = {
-            "schema_version": 1,
-            "calibration_version": "gold-v1",
-            "candidate_min_score": "80",
-            "mandatory_min_support": "1",
-            "component_weights": {"mandatory_coverage": "1"},
-            "candidate_ttl_seconds": 3600,
-        }
-    policy = TargetPolicy.from_content(
-        target_key="de",
-        schema_version="target-policy-v1",
-        policy_version="policy-v1",
-        content=content,
-    )
     return ProcessingInputManifest(
         vacancy=_normalized_ref(EntityType.VACANCY),
         resume=_normalized_ref(EntityType.RESUME),
@@ -145,7 +97,7 @@ def _manifest(*, calibrated: bool) -> ProcessingInputManifest:
             source_resume_id="resume-1",
             target_key="de",
         ),
-        target_policy=policy,
+        target_policy=policy(calibrated=calibrated),
         versions=ProcessingVersionBundle(
             pipeline_version="processing-v2-p207",
             dictionary_version="dict-v1",
@@ -155,70 +107,9 @@ def _manifest(*, calibrated: bool) -> ProcessingInputManifest:
             qualification_version="qualification-v1",
             scoring_version="scoring-v1",
             calibration_version="gold-v1" if calibrated else "calibration-unset",
-            jina=_jina(),
+            jina=jina(),
         ),
         as_of=datetime(2026, 9, 10, 12, tzinfo=UTC),
-    )
-
-
-def _source(path: str) -> SemanticSourceRef:
-    return SemanticSourceRef(source_path=path, rendered_value="Python")
-
-
-def _requirements(manifest: ProcessingInputManifest) -> RequirementSet:
-    requirement = Requirement(
-        requirement_id="req-python",
-        kind=RequirementKind.TECHNOLOGY,
-        statement="Python обязателен",
-        subjects=(SemanticSubject(text="Python", normalized="python"),),
-        context=RequirementContext.QUALIFICATION,
-        importance=RequirementImportance.MANDATORY,
-        modality=RequirementModality.REQUIRED,
-        polarity=SemanticPolarity.POSITIVE,
-        source_refs=(_source("requirements.python"),),
-    )
-    return RequirementSet(
-        source_key=manifest.vacancy.source_key,
-        source_entity_id=manifest.vacancy.source_entity_id,
-        semantic_content_hash=manifest.vacancy.semantic_content_hash,
-        normalized_schema_version=manifest.vacancy.schema_version,
-        normalization_version=manifest.vacancy.normalization_version,
-        dictionary_version=manifest.versions.dictionary_version,
-        extraction_version=manifest.versions.requirement_extraction_version,
-        requirements=(requirement,),
-        groups=(
-            RequirementGroup(
-                group_id="root",
-                operator=RequirementGroupOperator.ALL,
-                requirement_ids=(requirement.requirement_id,),
-            ),
-        ),
-        root_group_id="root",
-    )
-
-
-def _evidence(manifest: ProcessingInputManifest) -> ResumeEvidenceSet:
-    item = ResumeEvidence(
-        evidence_id="ev-python",
-        kind=EvidenceKind.EXPERIENCE,
-        statement="Разрабатывал production сервисы на Python",
-        subjects=(SemanticSubject(text="Python", normalized="python"),),
-        actor_scope=EvidenceActorScope.SELF,
-        context=EvidenceContext.COMMERCIAL,
-        polarity=SemanticPolarity.POSITIVE,
-        strength=EvidenceStrength.DIRECT,
-        source_refs=(_source("experience.python"),),
-    )
-    return ResumeEvidenceSet(
-        source_key=manifest.resume.source_key,
-        account_key=manifest.resume.account_key or "",
-        source_entity_id=manifest.resume.source_entity_id,
-        semantic_content_hash=manifest.resume.semantic_content_hash,
-        normalized_schema_version=manifest.resume.schema_version,
-        normalization_version=manifest.resume.normalization_version,
-        dictionary_version=manifest.versions.dictionary_version,
-        evidence_version=manifest.versions.evidence_version,
-        evidence=(item,),
     )
 
 
@@ -265,54 +156,22 @@ def _p204_stage(
     )
 
 
-def _candidate_set(
-    manifest: ProcessingInputManifest,
-    requirement_ref: ProcessingArtifactRef,
-    evidence_ref: ProcessingArtifactRef,
-    *,
-    input_fingerprint: str | None = None,
-) -> EvidenceCandidateSet:
-    return EvidenceCandidateSet(
-        input_fingerprint=input_fingerprint or manifest.input_fingerprint(),
-        requirement_set_sha256=requirement_ref.sha256,
-        resume_evidence_set_sha256=evidence_ref.sha256,
-        jina=_jina(),
-        selections=(
-            RequirementEvidenceCandidates(
-                requirement_id="req-python",
-                state=RequirementSelectionState.RANKED,
-                query_text="Python обязателен",
-                pool_evidence_ids=("ev-python",),
-                pool_render_sha256=HASH_F,
-                candidates=(
-                    EvidenceCandidate(
-                        evidence_id="ev-python",
-                        rank=1,
-                        relevance_score=0.01,
-                    ),
-                ),
-            ),
-        ),
-    )
-
-
 def _p205_stage(
     manifest: ProcessingInputManifest,
     *,
     outcome: FilterOutcome,
-    candidate_ref: ProcessingArtifactRef | None = None,
+    candidate_ref: ProcessingArtifactRef | None,
 ) -> P205StageResult:
     p204 = _p204_stage(manifest, outcome=outcome)
-    result = P205ResultArtifact(
-        input_fingerprint=manifest.input_fingerprint(),
-        manifest=manifest,
-        filter_outcome=outcome,
-        p2_04_result_ref=p204.result_ref,
-        evidence_candidate_set_ref=candidate_ref,
-    )
     return P205StageResult(
         manifest=manifest,
-        result=result,
+        result=P205ResultArtifact(
+            input_fingerprint=manifest.input_fingerprint(),
+            manifest=manifest,
+            filter_outcome=outcome,
+            p2_04_result_ref=p204.result_ref,
+            evidence_candidate_set_ref=candidate_ref,
+        ),
         result_ref=_artifact(
             ProcessingArtifactKind.P2_05_RESULT,
             "careerops.processing.p2-05-result.v1",
@@ -331,36 +190,27 @@ class _P205:
 
 
 class _Loader:
-    def __init__(
-        self,
-        requirements: RequirementSet,
-        evidence: ResumeEvidenceSet,
-        candidates: EvidenceCandidateSet,
-    ) -> None:
-        self.requirements = requirements
-        self.evidence = evidence
+    def __init__(self, candidates: Any) -> None:
+        self.requirements = requirement_set(
+            requirement("req-python", "Python", statement="Python обязателен")
+        )
+        self.evidence = evidence_set(evidence("ev-python", "Python"))
         self.candidates = candidates
 
-    async def load_requirement_set(self, _ref: ProcessingArtifactRef) -> RequirementSet:
+    async def load_requirement_set(self, _ref: ProcessingArtifactRef):
         return self.requirements
 
-    async def load_resume_evidence_set(
-        self,
-        _ref: ProcessingArtifactRef,
-    ) -> ResumeEvidenceSet:
+    async def load_resume_evidence_set(self, _ref: ProcessingArtifactRef):
         return self.evidence
 
-    async def load_evidence_candidate_set(
-        self,
-        _ref: ProcessingArtifactRef,
-    ) -> EvidenceCandidateSet:
+    async def load_evidence_candidate_set(self, _ref: ProcessingArtifactRef):
         return self.candidates
 
     async def load_requirement_qualification_set(
         self,
         _ref: ProcessingArtifactRef,
     ) -> RequirementQualificationSet:
-        raise AssertionError("P2-07 reuses the qualification carried by P2-06 stage")
+        raise AssertionError("P2-07 reuses P2-06 qualification")
 
 
 class _Publisher:
@@ -371,40 +221,50 @@ class _Publisher:
         self.decision: Any = None
         self.p207_result: Any = None
 
+    def _ref(
+        self,
+        event: str,
+        kind: ProcessingArtifactKind,
+        schema_version: str,
+        digest: str,
+    ) -> ProcessingArtifactRef:
+        self.events.append(event)
+        return _artifact(kind, schema_version, digest)
+
     async def publish_requirement_qualification_set(
         self,
-        qualification_set: RequirementQualificationSet,
+        value: RequirementQualificationSet,
     ) -> ProcessingArtifactRef:
-        self.events.append("qualification_artifact")
-        self.qualification = qualification_set
-        return _artifact(
+        self.qualification = value
+        return self._ref(
+            "qualification_artifact",
             ProcessingArtifactKind.REQUIREMENT_QUALIFICATION_SET,
             "careerops.processing.requirement-qualification-set.v1",
             HASH_C,
         )
 
-    async def publish_p206_result(self, result: Any) -> ProcessingArtifactRef:
-        self.events.append("p206_result")
-        self.p206_result = result
-        return _artifact(
+    async def publish_p206_result(self, value: Any) -> ProcessingArtifactRef:
+        self.p206_result = value
+        return self._ref(
+            "p206_result",
             ProcessingArtifactKind.P2_06_RESULT,
             "careerops.processing.p2-06-result.v1",
             HASH_D,
         )
 
-    async def publish_match_decision(self, decision: Any) -> ProcessingArtifactRef:
-        self.events.append("match_decision")
-        self.decision = decision
-        return _artifact(
+    async def publish_match_decision(self, value: Any) -> ProcessingArtifactRef:
+        self.decision = value
+        return self._ref(
+            "match_decision",
             ProcessingArtifactKind.MATCH_DECISION,
             "careerops.processing.match-decision.v1",
             HASH_E,
         )
 
-    async def publish_p207_result(self, result: Any) -> ProcessingArtifactRef:
-        self.events.append("p207_result")
-        self.p207_result = result
-        return _artifact(
+    async def publish_p207_result(self, value: Any) -> ProcessingArtifactRef:
+        self.p207_result = value
+        return self._ref(
+            "p207_result",
             ProcessingArtifactKind.P2_07_RESULT,
             "careerops.processing.p2-07-result.v1",
             HASH_F,
@@ -416,7 +276,6 @@ class _CurrentPublisher:
         self.events = events
         self.fail_lease = fail_lease
         self.decision: Any = None
-        self.result_ref: ProcessingArtifactRef | None = None
         self.candidate_ttl_seconds: int | None = None
 
     async def publish_current(
@@ -427,9 +286,9 @@ class _CurrentPublisher:
         result_ref: ProcessingArtifactRef,
         candidate_ttl_seconds: int | None,
     ) -> None:
+        del result_ref
         self.events.append("current_publication")
         self.decision = decision
-        self.result_ref = result_ref
         self.candidate_ttl_seconds = candidate_ttl_seconds
         if self.fail_lease:
             raise ProcessingJobLeaseLost("stale worker")
@@ -444,6 +303,8 @@ def _build_executor(
 ):
     manifest = _manifest(calibrated=calibrated)
     p204 = _p204_stage(manifest, outcome=outcome)
+    candidate_ref = None
+    candidates: Any = object()
     if outcome is FilterOutcome.KEEP:
         requirement_ref = p204.result.requirement_set_ref
         evidence_ref = p204.result.resume_evidence_set_ref
@@ -454,21 +315,27 @@ def _build_executor(
             "careerops.processing.evidence-candidate-set.v1",
             HASH_F,
         )
-        candidates = _candidate_set(
-            manifest,
-            requirement_ref,
-            evidence_ref,
-            input_fingerprint=candidate_fingerprint,
+        requirements = requirement_set(
+            requirement("req-python", "Python", statement="Python обязателен")
         )
-    else:
-        candidate_ref = None
-        candidates = EvidenceCandidateSet.model_construct()
-    p205 = _p205_stage(manifest, outcome=outcome, candidate_ref=candidate_ref)
+        resume_evidence = evidence_set(evidence("ev-python", "Python"))
+        candidates = candidate_set(
+            requirements,
+            resume_evidence,
+            scores={"ev-python": 0.01},
+        ).model_copy(
+            update={
+                "input_fingerprint": candidate_fingerprint or manifest.input_fingerprint()
+            }
+        )
+
     events: list[str] = []
     publisher = _Publisher(events)
-    loader = _Loader(_requirements(manifest), _evidence(manifest), candidates)
+    loader = _Loader(candidates)
     p206 = P206Executor(
-        p205=_P205(p205),  # type: ignore[arg-type]
+        p205=_P205(
+            _p205_stage(manifest, outcome=outcome, candidate_ref=candidate_ref)
+        ),  # type: ignore[arg-type]
         artifact_loader=loader,
         publisher=publisher,  # type: ignore[arg-type]
     )
@@ -558,7 +425,12 @@ async def test_p207_exclude_proven_skips_qualification_and_publishes_skip() -> N
     assert publisher.decision.decision is MatchDecision.SKIP
     assert publisher.decision.requirement_qualification_set_sha256 is None
     assert current.decision.decision is MatchDecision.SKIP
-    assert events == ["p206_result", "match_decision", "p207_result", "current_publication"]
+    assert events == [
+        "p206_result",
+        "match_decision",
+        "p207_result",
+        "current_publication",
+    ]
 
 
 @pytest.mark.asyncio
