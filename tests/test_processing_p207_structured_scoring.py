@@ -8,34 +8,28 @@ from careerops_processing.contracts import (
     MatchDecision,
     NormalizedVacancy,
     RawObservationRef,
-    Requirement,
-    RequirementContext,
-    RequirementGroup,
-    RequirementGroupOperator,
     RequirementGroupQualification,
-    RequirementImportance,
     RequirementKind,
-    RequirementModality,
     RequirementQualification,
     RequirementQualificationSet,
     RequirementQualificationState,
-    RequirementSet,
-    SemanticPolarity,
-    SemanticSourceRef,
-    SemanticSubject,
     SourceLabel,
     SourceValue,
     SupportBounds,
-    TargetPolicy,
     ValueState,
 )
 from careerops_processing.contracts.normalized import DataQualityReport, Employer, Location
-from careerops_processing.core import score_match
-
-HASH_A = "a" * 64
-HASH_B = "b" * 64
-HASH_C = "c" * 64
-HASH_D = "d" * 64
+from support.processing import (
+    HASH_A,
+    HASH_B,
+    HASH_C,
+    HASH_D,
+    empty_qualification_set,
+    empty_requirement_set,
+    requirement,
+    requirement_set,
+    score,
+)
 
 
 def _known(value):
@@ -70,70 +64,23 @@ def _vacancy(
     )
 
 
-def _empty_requirements() -> RequirementSet:
-    return RequirementSet(
-        source_key="hh",
-        source_entity_id="vacancy-1",
-        semantic_content_hash=HASH_A,
-        normalized_schema_version="vacancy-v1",
-        normalization_version="normalizer-v1",
-        dictionary_version="dictionary-v1",
-        extraction_version="requirements-v2",
-    )
-
-
-def _empty_qualification() -> RequirementQualificationSet:
-    return RequirementQualificationSet(
-        input_fingerprint=HASH_A,
-        requirement_set_sha256=HASH_B,
-        resume_evidence_set_sha256=HASH_C,
-        evidence_candidate_set_sha256=HASH_D,
-        qualification_version="qualification-v1",
-    )
-
-
-def _policy(*, filtering: dict[str, object], weights: dict[str, str]) -> TargetPolicy:
-    return TargetPolicy.from_content(
-        target_key="de",
-        schema_version="target-policy-v1",
-        policy_version="policy-v1",
-        content={
-            "filtering": {"schema_version": 1, **filtering},
-            "scoring": {
-                "schema_version": 1,
-                "calibration_version": "gold-v1",
-                "candidate_min_score": "80",
-                "mandatory_min_support": "0",
-                "component_weights": weights,
-                "candidate_ttl_seconds": 3600,
-            },
-        },
-    )
-
-
 def test_known_role_work_format_and_location_are_first_class_score_components() -> None:
     vacancy = _vacancy(
         title="Data Engineer",
         work_formats=(SourceLabel(key="office", label="Офис"),),
         location=Location(area_id="1", area_name="Москва"),
     )
-    policy = _policy(
+
+    decision = score(
+        empty_requirement_set(),
+        empty_qualification_set(),
         filtering={
             "allowed_primary_roles": ["data_engineering"],
             "allowed_work_formats": ["onsite"],
             "allowed_area_ids": ["1"],
         },
         weights={"role_fit": "1", "work_format_fit": "1", "location_fit": "1"},
-    )
-
-    decision = score_match(
-        input_fingerprint=HASH_A,
-        qualification_set_ref_sha256=HASH_B,
-        requirement_set=_empty_requirements(),
-        qualification_set=_empty_qualification(),
-        target_policy=policy,
-        scoring_version="scoring-v1",
-        calibration_version="gold-v1",
+        mandatory_min_support="0",
         vacancy=vacancy,
     )
 
@@ -145,20 +92,13 @@ def test_known_role_work_format_and_location_are_first_class_score_components() 
     assert decision.decision is MatchDecision.APPLICATION_CANDIDATE
 
 
-def test_unknown_role_remains_bounded_and_forces_review_when_outcome_can_change() -> None:
-    policy = _policy(
+def test_unknown_role_remains_bounded_and_forces_review() -> None:
+    decision = score(
+        empty_requirement_set(),
+        empty_qualification_set(),
         filtering={"allowed_primary_roles": ["data_engineering"]},
         weights={"role_fit": "1"},
-    )
-
-    decision = score_match(
-        input_fingerprint=HASH_A,
-        qualification_set_ref_sha256=HASH_B,
-        requirement_set=_empty_requirements(),
-        qualification_set=_empty_qualification(),
-        target_policy=policy,
-        scoring_version="scoring-v1",
-        calibration_version="gold-v1",
+        mandatory_min_support="0",
         vacancy=_vacancy(title=None),
     )
 
@@ -170,47 +110,38 @@ def test_unknown_role_remains_bounded_and_forces_review_when_outcome_can_change(
     assert decision.decision is MatchDecision.REVIEW
 
 
+def test_positive_weight_missing_signal_remains_uncertain() -> None:
+    decision = score(
+        empty_requirement_set(),
+        empty_qualification_set(),
+        weights={"role_fit": "1"},
+        vacancy=None,
+    )
+
+    assert decision.decision is MatchDecision.REVIEW
+    assert decision.score.lower == Decimal("0")
+    assert decision.score.upper == Decimal("100")
+    assert decision.components[0].key == "role_fit"
+    assert decision.components[0].weight == Decimal("1")
+
+
 def test_domain_requirement_is_scored_as_domain_fit() -> None:
-    requirement = Requirement(
-        requirement_id="req-domain",
+    domain_requirement = requirement(
+        "req-domain",
+        "банкинг",
         kind=RequirementKind.DOMAIN,
         statement="Опыт в банковском домене",
-        subjects=(SemanticSubject(text="банкинг", normalized="банкинг"),),
-        context=RequirementContext.QUALIFICATION,
-        importance=RequirementImportance.MANDATORY,
-        modality=RequirementModality.REQUIRED,
-        polarity=SemanticPolarity.POSITIVE,
-        source_refs=(
-            SemanticSourceRef(source_path="requirements.domain", rendered_value="банкинг"),
-        ),
     )
-    requirement_set = RequirementSet(
-        source_key="hh",
-        source_entity_id="vacancy-1",
-        semantic_content_hash=HASH_A,
-        normalized_schema_version="vacancy-v1",
-        normalization_version="normalizer-v1",
-        dictionary_version="dictionary-v1",
-        extraction_version="requirements-v2",
-        requirements=(requirement,),
-        groups=(
-            RequirementGroup(
-                group_id="root",
-                operator=RequirementGroupOperator.ALL,
-                requirement_ids=(requirement.requirement_id,),
-            ),
-        ),
-        root_group_id="root",
-    )
+    requirements = requirement_set(domain_requirement)
     qualification = RequirementQualificationSet(
-        input_fingerprint=HASH_A,
+        input_fingerprint=HASH_C,
         requirement_set_sha256=HASH_B,
         resume_evidence_set_sha256=HASH_C,
         evidence_candidate_set_sha256=HASH_D,
         qualification_version="qualification-v1",
         evaluations=(
             RequirementQualification(
-                requirement_id=requirement.requirement_id,
+                requirement_id=domain_requirement.requirement_id,
                 state=RequirementQualificationState.MATCHED,
                 support=SupportBounds(lower=Decimal("1"), upper=Decimal("1")),
                 selection_complete=True,
@@ -226,16 +157,12 @@ def test_domain_requirement_is_scored_as_domain_fit() -> None:
             ),
         ),
     )
-    policy = _policy(filtering={}, weights={"domain_fit": "1"})
 
-    decision = score_match(
-        input_fingerprint=HASH_A,
-        qualification_set_ref_sha256=HASH_B,
-        requirement_set=requirement_set,
-        qualification_set=qualification,
-        target_policy=policy,
-        scoring_version="scoring-v1",
-        calibration_version="gold-v1",
+    decision = score(
+        requirements,
+        qualification,
+        weights={"domain_fit": "1"},
+        mandatory_min_support="0",
     )
 
     domain = next(item for item in decision.components if item.key == "domain_fit")
