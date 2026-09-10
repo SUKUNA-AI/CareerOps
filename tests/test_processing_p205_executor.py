@@ -73,7 +73,7 @@ def _jina() -> JinaVersionBundle:
         tokenizer_revision="tokenizer-rev",
         runtime_backend="transformers-cuda",
         dtype_or_quantization="float16",
-        torch_version="2.8.0",
+        torch_version="2.14.0",
         transformers_version="4.57.3",
         rendering_version="p205-render-v1",
         selection_version="p205-selection-v1",

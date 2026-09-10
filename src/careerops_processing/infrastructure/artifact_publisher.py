@@ -6,9 +6,13 @@ from careerops_processing.contracts.artifacts import (
     FILTER_TRACE_SCHEMA_VERSION,
     P204_RESULT_SCHEMA_VERSION,
     P205_RESULT_SCHEMA_VERSION,
+    P206_RESULT_SCHEMA_VERSION,
+    P207_RESULT_SCHEMA_VERSION,
     FilterTraceArtifact,
     P204ResultArtifact,
     P205ResultArtifact,
+    P206ResultArtifact,
+    P207ResultArtifact,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
 )
@@ -21,6 +25,10 @@ from careerops_processing.contracts.manifest import (
     MANIFEST_SCHEMA_VERSION,
     ProcessingInputManifest,
 )
+from careerops_processing.contracts.qualification import (
+    REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION,
+    RequirementQualificationSet,
+)
 from careerops_processing.contracts.requirements import (
     REQUIREMENT_SET_SCHEMA_VERSION,
     RequirementSet,
@@ -28,6 +36,10 @@ from careerops_processing.contracts.requirements import (
 from careerops_processing.contracts.reranking import (
     EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
     EvidenceCandidateSet,
+)
+from careerops_processing.contracts.scoring import (
+    MATCH_DECISION_SCHEMA_VERSION,
+    MatchDecisionBundle,
 )
 from careerops_processing.semantic_cache import SemanticArtifactIntegrityError
 
@@ -61,11 +73,14 @@ class ProcessingArtifactPublisher:
             filter_version=manifest.versions.filter_version,
             decision=decision,
         )
-        return await self.store.put_contract(
-            kind=ProcessingArtifactKind.FILTER_TRACE,
-            schema_version=FILTER_TRACE_SCHEMA_VERSION,
-            payload=trace,
-        )
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.FILTER_TRACE,
+                schema_version=FILTER_TRACE_SCHEMA_VERSION,
+                payload=trace,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("FilterTraceArtifact нарушает content-addressed integrity") from exc
 
     async def publish_requirement_set(
         self,
@@ -101,11 +116,14 @@ class ProcessingArtifactPublisher:
         self,
         result: P204ResultArtifact,
     ) -> ProcessingArtifactRef:
-        return await self.store.put_contract(
-            kind=ProcessingArtifactKind.P2_04_RESULT,
-            schema_version=P204_RESULT_SCHEMA_VERSION,
-            payload=result,
-        )
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.P2_04_RESULT,
+                schema_version=P204_RESULT_SCHEMA_VERSION,
+                payload=result,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("P204ResultArtifact нарушает content-addressed integrity") from exc
 
     async def publish_evidence_candidate_set(
         self,
@@ -132,6 +150,60 @@ class ProcessingArtifactPublisher:
             )
         except ProcessingArtifactIntegrityError as exc:
             raise ValueError("P205ResultArtifact нарушает content-addressed integrity") from exc
+
+    async def publish_requirement_qualification_set(
+        self,
+        qualification_set: RequirementQualificationSet,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.REQUIREMENT_QUALIFICATION_SET,
+                schema_version=REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION,
+                payload=qualification_set,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError(
+                "RequirementQualificationSet нарушает content-addressed integrity"
+            ) from exc
+
+    async def publish_p206_result(
+        self,
+        result: P206ResultArtifact,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.P2_06_RESULT,
+                schema_version=P206_RESULT_SCHEMA_VERSION,
+                payload=result,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("P206ResultArtifact нарушает content-addressed integrity") from exc
+
+    async def publish_match_decision(
+        self,
+        decision: MatchDecisionBundle,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.MATCH_DECISION,
+                schema_version=MATCH_DECISION_SCHEMA_VERSION,
+                payload=decision,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("MatchDecisionBundle нарушает content-addressed integrity") from exc
+
+    async def publish_p207_result(
+        self,
+        result: P207ResultArtifact,
+    ) -> ProcessingArtifactRef:
+        try:
+            return await self.store.put_contract(
+                kind=ProcessingArtifactKind.P2_07_RESULT,
+                schema_version=P207_RESULT_SCHEMA_VERSION,
+                payload=result,
+            )
+        except ProcessingArtifactIntegrityError as exc:
+            raise ValueError("P207ResultArtifact нарушает content-addressed integrity") from exc
 
     async def verify_artifact(self, ref: ProcessingArtifactRef) -> None:
         """Проверяет существование и целостность артефакта по его ссылке"""

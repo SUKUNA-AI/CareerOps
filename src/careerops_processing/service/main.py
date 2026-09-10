@@ -12,9 +12,10 @@ from datetime import timedelta
 
 from psycopg import AsyncConnection
 
-from careerops_processing.executor import P204Executor, P205Executor
+from careerops_processing.executor import P204Executor, P205Executor, P206Executor, P207Executor
 from careerops_processing.infrastructure import (
     HttpJinaRerankerClient,
+    PostgresMatchPublicationStore,
     PostgresProcessingJobStore,
     PostgresSemanticArtifactRegistry,
     ProcessingArtifactLoader,
@@ -102,6 +103,9 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
             semantic_conn = await stack.enter_async_context(
                 await AsyncConnection.connect(config.postgres_dsn, autocommit=True)
             )
+            publication_conn = await stack.enter_async_context(
+                await AsyncConnection.connect(config.postgres_dsn, autocommit=True)
+            )
             manifest_store = await stack.enter_async_context(S3JsonStore(manifest_settings))
             normalized_store = await stack.enter_async_context(S3JsonStore(normalized_settings))
             artifact_store = await stack.enter_async_context(
@@ -115,6 +119,7 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
             )
 
             publisher = ProcessingArtifactPublisher(artifact_store)
+            artifact_loader = ProcessingArtifactLoader(artifact_store)
             loader = S3ProcessingInputLoader(
                 manifest_store=manifest_store,
                 normalized_store=normalized_store,
@@ -129,14 +134,25 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                 publisher=publisher,
                 semantic_resolver=semantic_resolver,
             )
-            executor = P205Executor(
+            p205 = P205Executor(
                 p204=p204,
-                artifact_loader=ProcessingArtifactLoader(artifact_store),
+                artifact_loader=artifact_loader,
                 publisher=publisher,
                 selector=EvidenceCandidateSelector(reranker_client),
                 unavailable_delay=timedelta(
                     seconds=config.reranker_unavailable_delay_seconds
                 ),
+            )
+            p206 = P206Executor(
+                p205=p205,
+                artifact_loader=artifact_loader,
+                publisher=publisher,
+            )
+            executor = P207Executor(
+                p206=p206,
+                artifact_loader=artifact_loader,
+                publisher=publisher,
+                current_publisher=PostgresMatchPublicationStore(publication_conn),
             )
             worker = ProcessingWorker(
                 store=PostgresProcessingJobStore(queue_conn),

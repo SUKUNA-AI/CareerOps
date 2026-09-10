@@ -21,6 +21,7 @@ class RequirementKind(StrEnum):
     EDUCATION = "education"
     LANGUAGE = "language"
     WORK_CONDITION = "work_condition"
+    DOMAIN = "domain"
     OTHER = "other"
 
 

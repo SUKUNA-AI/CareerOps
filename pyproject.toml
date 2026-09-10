@@ -22,7 +22,7 @@ dev = [
     "mypy>=1.17,<2",
 ]
 reranker-runtime = [
-    "torch==2.8.0",
+    "torch==2.14.0",
     "transformers==4.57.3",
 ]
 matching-core-test = [
