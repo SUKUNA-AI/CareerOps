@@ -1,0 +1,38 @@
+{
+  "schema_version": "careerops.calibration-source-manifest.v1",
+  "dataset_id": "astra-calibration-v1",
+  "label_tier": "weak_gold",
+  "annotation_source": "astra",
+  "annotation_policy_version": "careerops-high-recall-v1",
+  "annotator_model": null,
+  "provenance_complete": false,
+  "external_artifacts": {
+    "annotations.jsonl": {
+      "sha256": "7e9eb11e6a9bcedaa7146b19c90f7fe0737de5e6ce665b54de2f6b10cb3fac8",
+      "rows": 1500
+    },
+    "astra_batches.jsonl": {
+      "sha256": "202773a9ee4d6e002dc5b68044af8c1a48b859ab762fa8c94e464514e89bb6d4",
+      "pairs": 1500
+    }
+  },
+  "counts": {
+    "pairs": 1500,
+    "unique_vacancies": 889,
+    "unique_resumes": 6,
+    "APPLICATION_CANDIDATE": 76,
+    "REVIEW": 1084,
+    "SKIP": 340
+  },
+  "split": {
+    "group_key": "source_vacancy_id",
+    "seed": "careerops-calibration-v1",
+    "calibration_fraction": "0.70",
+    "validation_fraction": "0.15",
+    "holdout_fraction": "0.15"
+  },
+  "freeze_gate": {
+    "requires_annotator_model": true,
+    "status": "blocked_missing_annotator_model"
+  }
+}
