@@ -101,7 +101,7 @@ def ndcg_at_k(
         raise ValueError("relevance grades must be finite non-negative numbers")
 
     def gain(grade: float, rank: int) -> float:
-        return (2.0**grade - 1.0) / math.log2(rank + 1.0)
+        return (math.pow(2.0, grade) - 1.0) / math.log2(rank + 1.0)
 
     dcg = 0.0
     for rank, item in enumerate(ranked[:k], start=1):
