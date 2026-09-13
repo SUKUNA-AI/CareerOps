@@ -69,18 +69,18 @@ def build_policy_grid(
         raise ValueError("policy search space must not be empty")
     keys = tuple(sorted(component_weight_options))
     options = tuple(tuple(component_weight_options[key]) for key in keys)
-    if any(not values for values in options):
+    if any(not option_values for option_values in options):
         raise ValueError("each component must contain at least one candidate weight")
 
     estimated = len(candidate_min_scores) * len(mandatory_min_supports)
-    for values in options:
-        estimated *= len(values)
+    for option_values in options:
+        estimated *= len(option_values)
     if estimated > max_candidates:
         raise ValueError(
             f"policy grid would create {estimated} candidates; max_candidates={max_candidates}"
         )
 
-    values: list[P207PolicyCandidate] = []
+    candidates_out: list[P207PolicyCandidate] = []
     candidate_number = 0
     for score, mandatory, weights in itertools.product(
         candidate_min_scores,
@@ -91,7 +91,7 @@ def build_policy_grid(
         if sum(weight_map.values(), _ZERO) <= 0:
             continue
         candidate_number += 1
-        values.append(
+        candidates_out.append(
             P207PolicyCandidate(
                 candidate_id=f"candidate-{candidate_number:06d}",
                 candidate_min_score=score,
@@ -99,9 +99,9 @@ def build_policy_grid(
                 component_weights=weight_map,
             )
         )
-    if not values:
+    if not candidates_out:
         raise ValueError("policy grid contains no positive-weight candidates")
-    return tuple(values)
+    return tuple(candidates_out)
 
 
 def _high_recall_cost(gold: AstraDecision, predicted: AstraDecision) -> Decimal:
@@ -137,7 +137,7 @@ def search_p207_policy(
         raise ValueError("P2-07 policy search has no overlapping pairs")
 
     selected_annotations = tuple(annotation_by_pair[pair_id] for pair_id in sorted(pair_ids))
-    ranked: list[dict[str, object]] = []
+    ranked_entries: list[tuple[Decimal, float, float, dict[str, object]]] = []
     for candidate in candidates:
         predictions = tuple(
             P207Prediction(
@@ -157,20 +157,18 @@ def search_p207_policy(
             ),
             _ZERO,
         )
-        ranked.append(
-            {
-                "candidate": candidate.model_dump(mode="json"),
-                "weighted_cost": str(total_cost),
-                "metrics": metrics,
-            }
+        apply_recall_value = metrics["application_candidate_recall"]
+        review_rate_value = metrics["review_rate"]
+        if not isinstance(apply_recall_value, float) or not isinstance(review_rate_value, float):
+            raise TypeError("P2-07 evaluator returned non-float policy metrics")
+        payload: dict[str, object] = {
+            "candidate": candidate.model_dump(mode="json"),
+            "weighted_cost": str(total_cost),
+            "metrics": metrics,
+        }
+        ranked_entries.append(
+            (total_cost, -apply_recall_value, review_rate_value, payload)
         )
 
-    def sort_key(item: dict[str, object]) -> tuple[Decimal, float, float]:
-        metrics = item["metrics"]
-        if not isinstance(metrics, dict):
-            raise TypeError("invalid policy-search metrics")
-        apply_recall = float(metrics["application_candidate_recall"])
-        review_rate = float(metrics["review_rate"])
-        return Decimal(str(item["weighted_cost"])), -apply_recall, review_rate
-
-    return tuple(sorted(ranked, key=sort_key))
+    ranked_entries.sort(key=lambda item: (item[0], item[1], item[2]))
+    return tuple(item[3] for item in ranked_entries)
