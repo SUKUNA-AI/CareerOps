@@ -1,4 +1,4 @@
-"""Инфраструктурные адаптеры отдельного сервиса Processing v2"""
+"""Инфраструктурные адаптеры отдельного сервиса Processing v2."""
 
 from .artifact_loader import ProcessingArtifactLoader
 from .artifact_publisher import ProcessingArtifactPublisher
@@ -12,9 +12,11 @@ from .policy_repository import FileTargetPolicyRepository, TargetPolicyRepositor
 from .postgres_jobs import PostgresProcessingJobStore
 from .postgres_match_publication import PostgresMatchPublicationStore
 from .postgres_semantic_cache import PostgresSemanticArtifactRegistry
+from .reranker_audit import DurableRerankerAuditRecorder
 from .reranker_http import HttpJinaRerankerClient
 
 __all__ = [
+    "DurableRerankerAuditRecorder",
     "FileTargetPolicyRepository",
     "HttpJinaRerankerClient",
     "PostgresMatchPublicationStore",

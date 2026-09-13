@@ -1,4 +1,4 @@
-"""Точка запуска отдельного сервиса careerops-processing"""
+"""Точка запуска отдельного сервиса careerops-processing."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from psycopg import AsyncConnection
 
 from careerops_processing.executor import P204Executor, P205Executor, P206Executor, P207Executor
 from careerops_processing.infrastructure import (
+    DurableRerankerAuditRecorder,
     HttpJinaRerankerClient,
     PostgresMatchPublicationStore,
     PostgresProcessingJobStore,
@@ -86,6 +87,14 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
         region=config.s3_region,
         prefix="",
     )
+    reranker_audit_settings = S3Settings(
+        endpoint_url=config.s3_endpoint_url,
+        access_key=config.s3_access_key,
+        secret_key=config.s3_secret_key,
+        bucket=config.artifacts_bucket,
+        region=config.s3_region,
+        prefix="reranker",
+    )
     artifact_settings = ProcessingArtifactStoreSettings(
         endpoint_url=config.s3_endpoint_url,
         access_key=config.s3_access_key,
@@ -106,8 +115,14 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
             publication_conn = await stack.enter_async_context(
                 await AsyncConnection.connect(config.postgres_dsn, autocommit=True)
             )
+            audit_conn = await stack.enter_async_context(
+                await AsyncConnection.connect(config.postgres_dsn, autocommit=True)
+            )
             manifest_store = await stack.enter_async_context(S3JsonStore(manifest_settings))
             normalized_store = await stack.enter_async_context(S3JsonStore(normalized_settings))
+            reranker_audit_store = await stack.enter_async_context(
+                S3JsonStore(reranker_audit_settings)
+            )
             artifact_store = await stack.enter_async_context(
                 ProcessingArtifactStore(artifact_settings)
             )
@@ -129,6 +144,10 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                 registry=semantic_registry,
                 publisher=publisher,
             )
+            reranker_audit = DurableRerankerAuditRecorder(
+                store=reranker_audit_store,
+                conn=audit_conn,
+            )
             p204 = P204Executor(
                 loader=loader,
                 publisher=publisher,
@@ -138,7 +157,10 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                 p204=p204,
                 artifact_loader=artifact_loader,
                 publisher=publisher,
-                selector=EvidenceCandidateSelector(reranker_client),
+                selector=EvidenceCandidateSelector(
+                    reranker_client,
+                    audit_recorder=reranker_audit,
+                ),
                 unavailable_delay=timedelta(
                     seconds=config.reranker_unavailable_delay_seconds
                 ),

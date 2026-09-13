@@ -32,8 +32,9 @@ def _jina() -> JinaVersionBundle:
     )
 
 
-def _response_payload(version: JinaVersionBundle) -> dict[str, object]:
+def _response_payload(version: JinaVersionBundle, request_id: str) -> dict[str, object]:
     return {
+        "request_id": request_id,
         "runtime": {
             "model_id": version.model_id,
             "model_revision": version.model_revision,
@@ -59,7 +60,10 @@ async def test_http_client_sends_expected_runtime_and_parses_response() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, json=_response_payload(version))
+        return httpx.Response(
+            200,
+            json=_response_payload(version, str(captured["request_id"])),
+        )
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as raw_client:
@@ -72,9 +76,12 @@ async def test_http_client_sends_expected_runtime_and_parses_response() -> None:
             expected_version=version,
         )
 
-    assert captured["expected_runtime"] == _response_payload(version)["runtime"]
+    assert isinstance(captured["request_id"], str)
+    assert captured["expected_runtime"] == _response_payload(version, "unused")["runtime"]
     assert captured["token_budget"] == 4096
     assert response.total_tokens == 321
+    assert response.runtime is not None
+    assert response.runtime.model_revision == version.model_revision
     assert [(item.index, item.relevance_score) for item in response.results] == [
         (1, 0.9),
         (0, 0.3),
@@ -84,15 +91,37 @@ async def test_http_client_sends_expected_runtime_and_parses_response() -> None:
 @pytest.mark.asyncio
 async def test_http_client_rejects_runtime_identity_drift() -> None:
     version = _jina()
-    payload = _response_payload(version)
-    runtime = dict(payload["runtime"])  # type: ignore[arg-type]
-    runtime["transformers_version"] = "4.58.0"
-    payload["runtime"] = runtime
 
-    transport = httpx.MockTransport(lambda _request: httpx.Response(200, json=payload))
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_payload = json.loads(request.content)
+        payload = _response_payload(version, str(request_payload["request_id"]))
+        runtime = dict(payload["runtime"])  # type: ignore[arg-type]
+        runtime["transformers_version"] = "4.58.0"
+        payload["runtime"] = runtime
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as raw_client:
         client = HttpJinaRerankerClient("http://reranker", client=raw_client)
         with pytest.raises(RerankerProtocolError, match="runtime identity"):
+            await client.rerank(
+                query="query",
+                documents=("a",),
+                top_n=1,
+                token_budget=4096,
+                expected_version=version,
+            )
+
+
+@pytest.mark.asyncio
+async def test_http_client_rejects_request_id_drift() -> None:
+    version = _jina()
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, json=_response_payload(version, "wrong-id"))
+    )
+    async with httpx.AsyncClient(transport=transport) as raw_client:
+        client = HttpJinaRerankerClient("http://reranker", client=raw_client)
+        with pytest.raises(RerankerProtocolError, match="request_id"):
             await client.rerank(
                 query="query",
                 documents=("a",),
