@@ -151,7 +151,8 @@ def _evaluate(args: argparse.Namespace) -> int:
     if p207_path.exists():
         stages["P2-07"] = evaluate_p207(selected, load_jsonl(p207_path, P207Prediction))
 
-    manifest = CalibrationManifest.model_validate_json(Path(args.manifest).read_text(encoding="utf-8"))
+    manifest_payload = Path(args.manifest).read_text(encoding="utf-8")
+    manifest = CalibrationManifest.model_validate_json(manifest_payload)
     report: dict[str, object] = {
         "schema_version": "careerops.calibration-report.v1",
         "dataset": manifest.model_dump(mode="json"),
