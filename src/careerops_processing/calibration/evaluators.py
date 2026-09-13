@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from typing import TypeVar
 
 from careerops_processing.evaluation.reranker_metrics import (
     average_precision_at_k,
@@ -28,10 +27,8 @@ from .models import (
     RequirementImportanceLabel,
 )
 
-T = TypeVar("T")
 
-
-def _unique_by_pair(values: tuple[T, ...], pair_id: Callable[[T], str]) -> dict[str, T]:
+def _unique_by_pair[T](values: tuple[T, ...], pair_id: Callable[[T], str]) -> dict[str, T]:
     result: dict[str, T] = {}
     for item in values:
         key = pair_id(item)
@@ -68,8 +65,6 @@ def evaluate_p203(
         if prediction is None:
             continue
         evaluated += 1
-        # High-recall contract: APPLY and REVIEW must survive P2-03. A SKIP label is only
-        # treated as a proven exclusion target when Astra supplied an explicit hard reason.
         gold_keep = not (
             annotation.decision is AstraDecision.SKIP and bool(annotation.hard_reject_reasons)
         )
@@ -94,9 +89,7 @@ def evaluate_p203(
         "missed_exclusions": missed_exclusions,
         "retention_false_negative_rate": _safe_ratio(false_exclusions, expected_keep),
         "retention_recall": 1.0 - _safe_ratio(false_exclusions, expected_keep),
-        "exclusion_precision": _safe_ratio(
-            correct_exclusions, predicted_exclude, empty=1.0
-        ),
+        "exclusion_precision": _safe_ratio(correct_exclusions, predicted_exclude, empty=1.0),
         "exclusion_recall": _safe_ratio(correct_exclusions, expected_exclude, empty=1.0),
     }
 
@@ -281,9 +274,7 @@ def evaluate_p206(
         if gold_count == 0:
             state_recall[state.value] = None
         else:
-            state_recall[state.value] = _safe_ratio(
-                matrix[state.value][state.value], gold_count
-            )
+            state_recall[state.value] = _safe_ratio(matrix[state.value][state.value], gold_count)
 
     total_gold = sum(gold_counts.values())
     return {
@@ -321,24 +312,24 @@ def evaluate_p207(
         matrix[annotation.decision.value][prediction.decision.value] += 1
         correct += int(annotation.decision is prediction.decision)
 
-    apply = AstraDecision.APPLICATION_CANDIDATE.value
-    skip = AstraDecision.SKIP.value
-    review = AstraDecision.REVIEW.value
-    apply_tp = matrix[apply][apply]
-    skip_tp = matrix[skip][skip]
+    candidate_key = AstraDecision.APPLICATION_CANDIDATE.value
+    skip_key = AstraDecision.SKIP.value
+    review_key = AstraDecision.REVIEW.value
+    candidate_tp = matrix[candidate_key][candidate_key]
+    skip_tp = matrix[skip_key][skip_key]
 
     return {
         "stage": "P2-07",
         "evaluated_pairs": evaluated,
         "missing_predictions": len(annotations) - evaluated,
         "accuracy": _safe_ratio(correct, evaluated),
-        "application_candidate_recall": _safe_ratio(apply_tp, gold_counts[apply]),
+        "application_candidate_recall": _safe_ratio(candidate_tp, gold_counts[candidate_key]),
         "application_candidate_precision": _safe_ratio(
-            apply_tp, predicted_counts[apply], empty=1.0
+            candidate_tp, predicted_counts[candidate_key], empty=1.0
         ),
-        "skip_recall": _safe_ratio(skip_tp, gold_counts[skip]),
-        "skip_precision": _safe_ratio(skip_tp, predicted_counts[skip], empty=1.0),
-        "review_rate": _safe_ratio(predicted_counts[review], evaluated),
+        "skip_recall": _safe_ratio(skip_tp, gold_counts[skip_key]),
+        "skip_precision": _safe_ratio(skip_tp, predicted_counts[skip_key], empty=1.0),
+        "review_rate": _safe_ratio(predicted_counts[review_key], evaluated),
         "gold_decision_counts": dict(sorted(gold_counts.items())),
         "predicted_decision_counts": dict(sorted(predicted_counts.items())),
         "confusion_matrix": {
