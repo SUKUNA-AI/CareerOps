@@ -34,7 +34,16 @@ class _RuntimeIdentity(BaseModel):
     transformers_version: str = Field(min_length=1)
 
     def to_observed(self) -> ObservedRerankerRuntime:
-        return ObservedRerankerRuntime(**self.model_dump(mode="python"))
+        return ObservedRerankerRuntime(
+            model_id=self.model_id,
+            model_revision=self.model_revision,
+            model_code_revision=self.model_code_revision,
+            tokenizer_revision=self.tokenizer_revision,
+            runtime_backend=self.runtime_backend,
+            dtype_or_quantization=self.dtype_or_quantization,
+            torch_version=self.torch_version,
+            transformers_version=self.transformers_version,
+        )
 
 
 class _Usage(BaseModel):

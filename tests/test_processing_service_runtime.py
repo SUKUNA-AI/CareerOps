@@ -59,7 +59,7 @@ class _FakeConnection(_AsyncResource):
 class _FakeS3Store(_AsyncResource):
     created: list[_FakeS3Store] = []
 
-    def __init__(self, settings: object) -> None:
+    def __init__(self, settings: Any) -> None:
         self.settings = settings
         type(self).created.append(self)
 
@@ -138,9 +138,9 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
 
     assert len(_FakeS3Store.created) == 3
     audit_store = next(
-        store for store in _FakeS3Store.created if getattr(store.settings, "prefix") == "reranker"
+        store for store in _FakeS3Store.created if store.settings.prefix == "reranker"
     )
-    assert getattr(audit_store.settings, "bucket") == "careerops-artifacts"
+    assert audit_store.settings.bucket == "careerops-artifacts"
 
     reranker = _FakeRerankerClient.instance
     assert reranker is not None

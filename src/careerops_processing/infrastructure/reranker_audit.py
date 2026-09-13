@@ -9,7 +9,8 @@ from typing import Any
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
-from psycopg import AsyncConnection, Error as PsycopgError
+from psycopg import AsyncConnection
+from psycopg import Error as PsycopgError
 
 from careerops_processing.contracts import JinaVersionBundle
 from careerops_processing.selector import (

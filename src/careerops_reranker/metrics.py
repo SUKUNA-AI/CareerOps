@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import threading
-from collections import Counter
 from dataclasses import dataclass, field
 
 
@@ -27,9 +26,9 @@ class _Histogram:
     def __post_init__(self) -> None:
         self.counts = [0 for _ in self.buckets]
 
-    def observe(self, value: float) -> None:
+    def record(self, value: float) -> None:
         if not math.isfinite(value) or value < 0:
-            raise ValueError("histogram observation must be a finite non-negative number")
+            raise ValueError("histogram sample must be a finite non-negative number")
         self.count += 1
         self.total += value
         for index, upper_bound in enumerate(self.buckets):
@@ -52,7 +51,7 @@ class RerankerMetrics:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._requests_total = 0
-        self._errors_total: Counter[str] = Counter()
+        self._errors_total: dict[str, int] = {}
         self._tokens_total = 0
         self._duration = _Histogram(_DURATION_BUCKETS)
         self._documents = _Histogram(_DOCUMENT_BUCKETS)
@@ -78,15 +77,15 @@ class RerankerMetrics:
 
         with self._lock:
             self._requests_total += 1
-            self._duration.observe(latency_seconds)
+            self._duration.record(latency_seconds)
             if documents is not None:
-                self._documents.observe(float(documents))
+                self._documents.record(float(documents))
             if selected is not None:
-                self._selected.observe(float(selected))
+                self._selected.record(float(selected))
             if total_tokens is not None:
                 self._tokens_total += total_tokens
             if error_class is not None:
-                self._errors_total[error_class] += 1
+                self._errors_total[error_class] = self._errors_total.get(error_class, 0) + 1
 
     def render(self) -> bytes:
         with self._lock:
@@ -111,7 +110,7 @@ class RerankerMetrics:
                     "# HELP reranker_request_duration_seconds End-to-end rerank HTTP latency.",
                     "# TYPE reranker_request_duration_seconds histogram",
                     *self._duration.render("reranker_request_duration_seconds"),
-                    "# HELP reranker_tokens_total Exact prompt tokens processed for successful requests.",
+                    "# HELP reranker_tokens_total Exact prompt tokens for successful requests.",
                     "# TYPE reranker_tokens_total counter",
                     f"reranker_tokens_total {self._tokens_total}",
                     "# HELP reranker_documents_per_request Candidate documents per rerank request.",
