@@ -257,13 +257,13 @@ def evaluate_p206(
         if key in seen:
             raise ValueError(f"duplicate P2-06 prediction for {key}")
         seen.add(key)
-        annotation = annotation_by_pair.get(prediction.pair_id)
-        if annotation is None:
+        selected_annotation = annotation_by_pair.get(prediction.pair_id)
+        if selected_annotation is None:
             raise ValueError(f"P2-06 prediction contains unknown pair_id={prediction.pair_id}")
-        if prediction.gold_requirement_index >= len(annotation.requirements):
+        if prediction.gold_requirement_index >= len(selected_annotation.requirements):
             raise ValueError(f"P2-06 gold_requirement_index out of range for {key}")
         gold = _gold_qualification_state(
-            annotation.requirements[prediction.gold_requirement_index].status
+            selected_annotation.requirements[prediction.gold_requirement_index].status
         )
         matrix[gold.value][prediction.state.value] += 1
         correct += int(gold is prediction.state)
