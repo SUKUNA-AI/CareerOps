@@ -103,10 +103,13 @@ def ndcg_at_k(
     def gain(grade: float, rank: int) -> float:
         return (2.0**grade - 1.0) / math.log2(rank + 1.0)
 
-    dcg = sum(
-        gain(float(relevance_by_id.get(item, 0.0)), rank)
-        for rank, item in enumerate(ranked[:k], start=1)
-    )
+    dcg = 0.0
+    for rank, item in enumerate(ranked[:k], start=1):
+        dcg += gain(float(relevance_by_id.get(item, 0.0)), rank)
+
     ideal_grades = sorted((float(value) for value in relevance_by_id.values()), reverse=True)[:k]
-    idcg = sum(gain(grade, rank) for rank, grade in enumerate(ideal_grades, start=1))
+    idcg = 0.0
+    for rank, grade in enumerate(ideal_grades, start=1):
+        idcg += gain(grade, rank)
+
     return dcg / idcg if idcg > 0 else 0.0
