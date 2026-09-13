@@ -1,21 +1,24 @@
-"""HTTP boundary между Processing и отдельным Jina reranker runtime"""
+"""HTTP boundary между Processing и отдельным Jina reranker runtime."""
 
 from __future__ import annotations
 
 from types import TracebackType
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from careerops_processing.contracts import JinaVersionBundle
 from careerops_processing.selector import (
+    ObservedRerankerRuntime,
     RerankerProtocolError,
     RerankerResponse,
     RerankerScore,
     RerankerTokenBudgetError,
     RerankerUnavailableError,
 )
+from careerops_processing.telemetry import reranker_request_id
 
 
 class _RuntimeIdentity(BaseModel):
@@ -29,6 +32,18 @@ class _RuntimeIdentity(BaseModel):
     dtype_or_quantization: str = Field(min_length=1)
     torch_version: str = Field(min_length=1)
     transformers_version: str = Field(min_length=1)
+
+    def to_observed(self) -> ObservedRerankerRuntime:
+        return ObservedRerankerRuntime(
+            model_id=self.model_id,
+            model_revision=self.model_revision,
+            model_code_revision=self.model_code_revision,
+            tokenizer_revision=self.tokenizer_revision,
+            runtime_backend=self.runtime_backend,
+            dtype_or_quantization=self.dtype_or_quantization,
+            torch_version=self.torch_version,
+            transformers_version=self.transformers_version,
+        )
 
 
 class _Usage(BaseModel):
@@ -47,13 +62,14 @@ class _Result(BaseModel):
 class _Response(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    request_id: str = Field(min_length=1)
     runtime: _RuntimeIdentity
     usage: _Usage
     results: tuple[_Result, ...]
 
 
 class HttpJinaRerankerClient:
-    """Вызывает внутренний `/v1/rerank` и проверяет точную runtime identity"""
+    """Вызывает внутренний `/v1/rerank` и проверяет точную runtime identity."""
 
     def __init__(
         self,
@@ -130,7 +146,9 @@ class HttpJinaRerankerClient:
         if token_budget <= 0:
             raise RerankerProtocolError("token_budget должен быть положительным")
 
+        request_id = reranker_request_id.get() or str(uuid4())
         payload: dict[str, Any] = {
+            "request_id": request_id,
             "query": query,
             "documents": list(documents),
             "top_n": top_n,
@@ -158,6 +176,8 @@ class HttpJinaRerankerClient:
             parsed = _Response.model_validate_json(response.content)
         except ValueError as exc:
             raise RerankerProtocolError("reranker вернул неверный JSON contract") from exc
+        if parsed.request_id != request_id:
+            raise RerankerProtocolError("reranker request_id не совпадает с запросом")
         if not self._runtime_matches(parsed.runtime, expected_version):
             raise RerankerProtocolError("reranker runtime identity не совпадает с manifest")
 
@@ -167,4 +187,5 @@ class HttpJinaRerankerClient:
                 for item in parsed.results
             ),
             total_tokens=parsed.usage.total_tokens,
+            runtime=parsed.runtime.to_observed(),
         )

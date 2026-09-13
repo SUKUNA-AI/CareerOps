@@ -57,8 +57,11 @@ class _FakeConnection(_AsyncResource):
 
 
 class _FakeS3Store(_AsyncResource):
-    def __init__(self, settings: object) -> None:
+    created: list[_FakeS3Store] = []
+
+    def __init__(self, settings: Any) -> None:
         self.settings = settings
+        type(self).created.append(self)
 
 
 class _FakeArtifactStore(_AsyncResource):
@@ -114,6 +117,7 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _FakeConnection.created.clear()
+    _FakeS3Store.created.clear()
     _FakeHealthServer.instance = None
     _FakeRerankerClient.instance = None
     _FakeWorker.instance = None
@@ -128,9 +132,15 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
 
     assert await service_main._serve_async(_config()) == 0
 
-    assert len(_FakeConnection.created) == 3
-    assert len({id(connection) for connection in _FakeConnection.created}) == 3
+    assert len(_FakeConnection.created) == 4
+    assert len({id(connection) for connection in _FakeConnection.created}) == 4
     assert all(connection.autocommit for connection in _FakeConnection.created)
+
+    assert len(_FakeS3Store.created) == 3
+    audit_store = next(
+        store for store in _FakeS3Store.created if store.settings.prefix == "reranker"
+    )
+    assert audit_store.settings.bucket == "careerops-artifacts"
 
     reranker = _FakeRerankerClient.instance
     assert reranker is not None

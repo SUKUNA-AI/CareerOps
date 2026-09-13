@@ -1,4 +1,4 @@
-"""Версионированная очередь Processing и текущее состояние решений"""
+"""Версионированная очередь Processing и текущее состояние решений."""
 
 from sqlalchemy import (
     BigInteger,
@@ -122,6 +122,58 @@ Index(
     processing_semantic_artifacts.c.source_key,
     processing_semantic_artifacts.c.source_entity_id,
 )
+
+reranker_runs = Table(
+    "reranker_runs",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("processing_job_id", UUID(as_uuid=True), nullable=False),
+    Column("vacancy_id", BigInteger, nullable=False),
+    Column("binding_id", BigInteger, nullable=False),
+    Column("requirement_id", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("pool_size", Integer, nullable=False),
+    Column("top_k", Integer, nullable=False),
+    Column("selected_size", Integer, nullable=False),
+    Column("total_tokens", Integer),
+    Column("latency_ms", BigInteger, nullable=False),
+    Column("runtime_fingerprint", Text),
+    Column("artifact_uri", Text, nullable=False),
+    Column("error_class", Text),
+    Column("started_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("finished_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    ForeignKeyConstraint(
+        ["processing_job_id", "vacancy_id", "binding_id"],
+        [processing_jobs.c.id, processing_jobs.c.vacancy_id, processing_jobs.c.binding_id],
+    ),
+    CheckConstraint("status IN ('success', 'error')", name="status"),
+    CheckConstraint("length(btrim(requirement_id)) > 0", name="requirement_id"),
+    CheckConstraint("pool_size > 0", name="pool_size"),
+    CheckConstraint("top_k > 0 AND top_k <= pool_size", name="top_k"),
+    CheckConstraint("selected_size >= 0 AND selected_size <= top_k", name="selected_size"),
+    CheckConstraint("total_tokens IS NULL OR total_tokens >= 0", name="total_tokens"),
+    CheckConstraint("latency_ms >= 0", name="latency_ms"),
+    CheckConstraint(
+        "runtime_fingerprint IS NULL OR runtime_fingerprint ~ '^[0-9a-f]{64}$'",
+        name="runtime_fingerprint",
+    ),
+    CheckConstraint("artifact_uri LIKE 's3://%'", name="artifact_uri"),
+    CheckConstraint("finished_at >= started_at", name="timestamps"),
+    CheckConstraint(
+        "(status = 'success' AND error_class IS NULL) OR "
+        "(status = 'error' AND error_class IS NOT NULL AND length(btrim(error_class)) > 0)",
+        name="error_class",
+    ),
+)
+Index("ix_reranker_runs_job", reranker_runs.c.processing_job_id, reranker_runs.c.started_at)
+Index(
+    "ix_reranker_runs_pair",
+    reranker_runs.c.vacancy_id,
+    reranker_runs.c.binding_id,
+    reranker_runs.c.started_at,
+)
+Index("ix_reranker_runs_status", reranker_runs.c.status, reranker_runs.c.created_at)
 
 match_results = Table(
     "match_results",
