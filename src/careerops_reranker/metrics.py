@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import math
 import threading
-from dataclasses import dataclass, field
-
 
 _DURATION_BUCKETS = (0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0)
 _DOCUMENT_BUCKETS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0)
@@ -16,18 +13,15 @@ def _escape_label(value: str) -> str:
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-@dataclass(slots=True)
 class _Histogram:
-    buckets: tuple[float, ...]
-    counts: list[int] = field(init=False)
-    count: int = 0
-    total: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.counts = [0 for _ in self.buckets]
+    def __init__(self, buckets: tuple[float, ...]) -> None:
+        self.buckets = buckets
+        self.counts = [0 for _ in buckets]
+        self.count = 0
+        self.total = 0.0
 
     def record(self, value: float) -> None:
-        if not math.isfinite(value) or value < 0:
+        if value != value or value < 0 or value == float("inf"):
             raise ValueError("histogram sample must be a finite non-negative number")
         self.count += 1
         self.total += value
