@@ -7,7 +7,6 @@ import json
 from collections import Counter, defaultdict
 from decimal import Decimal
 from pathlib import Path
-from typing import TypeVar
 
 from pydantic import BaseModel
 
@@ -21,8 +20,6 @@ from .models import (
     SplitName,
 )
 
-ModelT = TypeVar("ModelT", bound=BaseModel)
-
 
 def _sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
@@ -32,7 +29,10 @@ def _sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def load_jsonl(path: str | Path, model: type[ModelT]) -> tuple[ModelT, ...]:
+def load_jsonl[ModelT: BaseModel](
+    path: str | Path,
+    model: type[ModelT],
+) -> tuple[ModelT, ...]:
     values: list[ModelT] = []
     with Path(path).open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -127,7 +127,12 @@ def build_grouped_split(
     holdout_ids = set(ordered[calibration_count + validation_count :])
     if not holdout_ids:
         raise ValueError("dataset is too small to create a non-empty holdout split")
-    if calibration_ids & validation_ids or calibration_ids & holdout_ids or validation_ids & holdout_ids:
+    leaked = (
+        calibration_ids & validation_ids
+        or calibration_ids & holdout_ids
+        or validation_ids & holdout_ids
+    )
+    if leaked:
         raise AssertionError("vacancy groups leaked across splits")
 
     values: list[SplitAssignment] = []
@@ -214,7 +219,8 @@ def build_label_summary(
     requirement_count = 0
 
     for annotation in annotations:
-        split_decisions[assignment_by_pair[annotation.pair_id].value][annotation.decision.value] += 1
+        split_name = assignment_by_pair[annotation.pair_id].value
+        split_decisions[split_name][annotation.decision.value] += 1
         confidence_counts[annotation.confidence.value] += 1
         sufficiency_counts[annotation.data_sufficiency.value] += 1
         for requirement in annotation.requirements:
@@ -228,7 +234,8 @@ def build_label_summary(
         "pair_count": len(annotations),
         "decision_counts": dict(sorted(decision_counts.items())),
         "split_decision_counts": {
-            split: dict(sorted(counts.items())) for split, counts in sorted(split_decisions.items())
+            split: dict(sorted(counts.items()))
+            for split, counts in sorted(split_decisions.items())
         },
         "confidence_counts": dict(sorted(confidence_counts.items())),
         "data_sufficiency_counts": dict(sorted(sufficiency_counts.items())),
