@@ -1,55 +1,13 @@
-"""Legacy runtime persistence and shared S3 exports; canonical schema is in v2."""
+"""Общие exports объектного хранилища
 
-from .postgres import (
-    PostgresApplicationClaimStore,
-    PostgresObserveQueryCursorStore,
-    PostgresOLTPStore,
-    PostgresResumeRegistry,
-    PostgresSettings,
-    acquire_application_claim,
-    connect_postgres,
-    prepare_application_claim_identity,
-    reserve_observe_query_window,
-    transition_application_claim,
-    upsert_application,
-    upsert_batch_run,
-    upsert_evaluation_work_item,
-    upsert_observation_run,
-    upsert_partial_vacancy,
-    upsert_reconciled_resume,
-    upsert_resume,
-    upsert_source_profile,
-    upsert_vacancy,
-    upsert_vacancy_decision,
-    upsert_vacancy_observation,
-)
+Канонические PostgreSQL v2 schema и table contracts находятся в
+``careerops_storage.v2``. Этот пакет экспортирует только S3 primitives
+"""
+
 from .s3 import S3JsonStore, S3ObjectRef, S3Settings
-from .schema import metadata
 
 __all__ = [
-    "PostgresApplicationClaimStore",
-    "PostgresObserveQueryCursorStore",
-    "PostgresOLTPStore",
-    "PostgresResumeRegistry",
-    "PostgresSettings",
     "S3JsonStore",
     "S3ObjectRef",
     "S3Settings",
-    "acquire_application_claim",
-    "connect_postgres",
-    "metadata",
-    "prepare_application_claim_identity",
-    "reserve_observe_query_window",
-    "transition_application_claim",
-    "upsert_application",
-    "upsert_batch_run",
-    "upsert_evaluation_work_item",
-    "upsert_observation_run",
-    "upsert_partial_vacancy",
-    "upsert_reconciled_resume",
-    "upsert_resume",
-    "upsert_source_profile",
-    "upsert_vacancy",
-    "upsert_vacancy_decision",
-    "upsert_vacancy_observation",
 ]

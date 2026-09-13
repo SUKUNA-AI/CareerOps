@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package careerops.matching_core.v1;
+
+service MatchingCoreControl {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    SERVING = 1;
+  }
+
+  Status status = 1;
+  string service_name = 2;
+  string service_version = 3;
+  string protocol_version = 4;
+}
+
+message CapabilitiesRequest {}
+
+message CapabilitiesResponse {
+  string service_name = 1;
+  string service_version = 2;
+  repeated string supported_control_protocol_versions = 3;
+  bool evaluate_match_available = 4;
+  bool evaluate_batch_available = 5;
+}

@@ -1,14 +1,13 @@
-"""Immutable HH RAW publication contract for SeaweedFS.
+"""Immutable HH RAW contract для публикации в SeaweedFS
 
-Object keys carry source identity and a caller-generated observation UUID. A caller
-that retries publication of the same already-fetched observation must reuse that
-UUID. A fresh source fetch is a new observation and therefore gets a new UUID.
-A key collision with different content fails closed instead of overwriting the
-previous source observation.
+Object key содержит source identity и observation UUID, созданный caller-ом
+При retry публикации уже загруженной observation caller должен повторно использовать тот же UUID
+Новый source fetch является новой observation и получает новый UUID
+Collision одного key с другим content завершается ошибкой вместо перезаписи предыдущей observation
 
-SeaweedFS create-only conditional PUT semantics are intentionally not assumed.
-Uniqueness of observation IDs prevents normal writer races; existence/hash checks
-make same-observation publication retries idempotent and detect accidental key reuse.
+Create-only conditional PUT semantics SeaweedFS здесь намеренно не предполагаются
+Уникальность observation ID предотвращает штатные writer races, а existence/hash checks
+делают retry одной observation idempotent и обнаруживают случайное повторное использование key
 """
 
 from __future__ import annotations
@@ -28,15 +27,15 @@ from careerops_storage.s3 import S3JsonStore, S3ObjectRef
 
 
 class RawObjectCollisionError(RuntimeError):
-    """Reject reuse of one immutable RAW key for different source content."""
+    """Отклоняет reuse immutable RAW key с другим source content"""
 
 
 class RawWriteVerificationError(RuntimeError):
-    """Report a RAW write whose persisted metadata does not match the source body."""
+    """Ошибка проверки RAW write после сохранения в S3"""
 
 
 class HHRawObjectKind(StrEnum):
-    """External HH payload families stored in careerops-raw."""
+    """Семейства внешних HH payload, которые хранятся в careerops-raw"""
 
     SEARCH_PAGE = "search-page"
     VACANCY = "vacancy"
@@ -46,7 +45,7 @@ class HHRawObjectKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class HHRawContext:
-    """Stable provenance shared by one exact HH source observation."""
+    """Стабильный provenance одной точной HH source observation"""
 
     account_key: str
     profile_key: str
@@ -64,7 +63,7 @@ class HHRawContext:
 
 @dataclass(frozen=True, slots=True)
 class HHRawObject:
-    """Published RAW source object plus its logical kind and observation identity."""
+    """Опубликованный RAW object с kind и observation identity"""
 
     kind: HHRawObjectKind
     observation_id: UUID
@@ -83,7 +82,7 @@ def _observation_stamp(value: datetime) -> str:
 
 
 def _canonical_json_bytes(payload: Any) -> bytes:
-    """Validate JSON source data and serialize it exactly as S3JsonStore will."""
+    """Проверяет JSON source data и сериализует их так же, как S3JsonStore"""
 
     return json.dumps(
         payload,
@@ -100,7 +99,7 @@ def _is_missing(exc: ClientError) -> bool:
 
 
 class HHRawPublisher:
-    """Publish exact HH JSON bodies under immutable observation keys."""
+    """Публикует точные HH JSON bodies под immutable observation keys"""
 
     def __init__(self, store: S3JsonStore) -> None:
         self._store = store
@@ -196,7 +195,7 @@ class HHRawPublisher:
         page: int,
         payload: Any,
     ) -> HHRawObject:
-        """Publish one exact vacancy search page."""
+        """Публикует один точный page поиска вакансий"""
 
         if page < 0:
             raise ValueError("page must be >= 0")
@@ -217,7 +216,7 @@ class HHRawPublisher:
         vacancy_id: str,
         payload: Any,
     ) -> HHRawObject:
-        """Publish one exact full vacancy response."""
+        """Публикует один точный full vacancy response"""
 
         return await self._publish(
             context=context,
@@ -233,7 +232,7 @@ class HHRawPublisher:
         page: int,
         payload: Any,
     ) -> HHRawObject:
-        """Publish one exact /resumes/mine page."""
+        """Публикует один точный page /resumes/mine"""
 
         if page < 0:
             raise ValueError("page must be >= 0")
@@ -251,7 +250,7 @@ class HHRawPublisher:
         resume_id: str,
         payload: Any,
     ) -> HHRawObject:
-        """Publish one exact full resume response."""
+        """Публикует один точный full resume response"""
 
         return await self._publish(
             context=context,

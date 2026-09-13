@@ -1,4 +1,4 @@
-"""Bounded command-line entry point for CareerOPS HH v2 source ingestion."""
+"""Bounded CLI entry point для HH source ingestion CareerOPS v2"""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ async def _run(args: argparse.Namespace) -> int:
                 worker_id=args.worker_id,
             )
         ).as_dict()
-    else:  # pragma: no cover - argparse enforces a known required subcommand.
+    else:  # pragma: no cover — argparse гарантирует известную обязательную subcommand
         raise RuntimeError(f"unsupported HH adapter command: {args.command!r}")
 
     print(json.dumps(summary_payload, ensure_ascii=False, sort_keys=True))
@@ -118,7 +118,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    """Run one explicit seeding or bounded worker operation and emit JSON."""
+    """Запускает одну explicit seed/work операцию и печатает JSON result"""
 
     return asyncio.run(_run(_parser().parse_args()))
 

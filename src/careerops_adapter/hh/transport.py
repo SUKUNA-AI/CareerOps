@@ -1,9 +1,8 @@
-"""Read-only HH transport boundary for the v2 source adapter.
+"""Read-only transport boundary HH source adapter v2
 
-The initial implementation deliberately wraps the existing pinned
-hh-applicant-tool CLI integration instead of duplicating its authentication and
-protocol behavior. No filtering, scoring, scheduling, or application policy is
-implemented here.
+Начальная реализация оборачивает pinned hh-applicant-tool CLI и не дублирует его
+authentication и protocol behavior
+Здесь нет filtering, scoring, scheduling или application policy
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ def _request_min_interval_from_env() -> float:
 
 @dataclass(frozen=True, slots=True)
 class HHSearchPageRequest:
-    """Parameters for exactly one HH vacancy search page."""
+    """Параметры одного page запроса поиска вакансий HH"""
 
     text: str
     page: int
@@ -67,7 +66,7 @@ class HHSearchPageRequest:
             raise ValueError("period must be >= 1")
 
     def api_params(self) -> dict[str, ParamValue]:
-        """Return source parameters without adding CareerOPS task metadata."""
+        """Возвращает source parameters без служебной metadata CareerOPS"""
 
         params: dict[str, ParamValue] = {
             "text": self.text,
@@ -84,7 +83,7 @@ class HHSearchPageRequest:
 
 @dataclass(frozen=True, slots=True)
 class HHResumeListPageRequest:
-    """Parameters for exactly one authoritative /resumes/mine page."""
+    """Параметры одного authoritative page запроса /resumes/mine"""
 
     page: int = 0
     per_page: int = 100
@@ -96,21 +95,21 @@ class HHResumeListPageRequest:
             raise ValueError("per_page must be between 1 and 100")
 
     def api_params(self) -> dict[str, ParamValue]:
-        """Return exact source parameters for the requested inventory page."""
+        """Возвращает точные source parameters запрошенного inventory page"""
 
         return {"page": self.page, "per_page": self.per_page}
 
 
 class HHReadTransport(Protocol):
-    """Read operations needed by HH ingestion before any application workflow."""
+    """Read-only операции, необходимые HH ingestion"""
 
     async def search_page(self, request: HHSearchPageRequest) -> dict[str, Any]:
-        """Return one exact HH vacancy-search page."""
+        """Возвращает один точный page поисковой выдачи HH"""
 
         ...
 
     async def fetch_vacancy(self, vacancy_id: str) -> dict[str, Any]:
-        """Return one exact full vacancy response."""
+        """Возвращает один точный full vacancy response"""
 
         ...
 
@@ -118,18 +117,18 @@ class HHReadTransport(Protocol):
         self,
         request: HHResumeListPageRequest,
     ) -> dict[str, Any]:
-        """Return one exact /resumes/mine page."""
+        """Возвращает один точный page /resumes/mine"""
 
         ...
 
     async def fetch_resume(self, resume_id: str) -> dict[str, Any]:
-        """Return one exact full resume response."""
+        """Возвращает один точный full resume response"""
 
         ...
 
 
-def _legacy_failure_kind(message: str) -> HHFailureKind:
-    """Classify only source signals that the current CLI exposes reliably enough."""
+def _classify_cli_failure(message: str) -> HHFailureKind:
+    """Классифицирует только сигналы, которые надёжно доступны через текущий CLI"""
 
     normalized = message.casefold()
     if "captcha_required" in normalized or "captcha" in normalized:
@@ -144,11 +143,11 @@ def _legacy_failure_kind(message: str) -> HHFailureKind:
 
 
 class HHApplicantToolTransport:
-    """Async CareerOPS boundary around the existing pinned HH CLI driver.
+    """Async boundary CareerOPS поверх pinned HH CLI driver
 
-    The vendor hh-applicant-tool remains the actual HH transport implementation.
-    CareerOPS only serializes calls and enforces a conservative minimum request
-    start interval around it so one account cannot hammer HH accidentally.
+    Vendored hh-applicant-tool остаётся фактической реализацией HH transport
+    CareerOPS сериализует вызовы и выдерживает минимальный интервал между стартами
+    запросов одного account, чтобы случайно не перегружать HH
     """
 
     def __init__(
@@ -202,13 +201,13 @@ class HHApplicantToolTransport:
             except HHDriverError as exc:
                 message = str(exc)
                 raise HHTransportError(
-                    kind=_legacy_failure_kind(message),
+                    kind=_classify_cli_failure(message),
                     operation=operation,
                     message=message,
                 ) from exc
 
     async def search_page(self, request: HHSearchPageRequest) -> dict[str, Any]:
-        """Fetch one page without flattening or deduplicating source items."""
+        """Получает один page без flatten или dedup source items"""
 
         return await self._call_api(
             "vacancies",
@@ -217,7 +216,7 @@ class HHApplicantToolTransport:
         )
 
     async def fetch_vacancy(self, vacancy_id: str) -> dict[str, Any]:
-        """Fetch one full vacancy through the existing read-only transport."""
+        """Получает одну full vacancy через read-only transport"""
 
         normalized_id = vacancy_id.strip()
         if not normalized_id:
@@ -231,7 +230,7 @@ class HHApplicantToolTransport:
         self,
         request: HHResumeListPageRequest,
     ) -> dict[str, Any]:
-        """Fetch one inventory page so RAW keeps the actual upstream envelope."""
+        """Получает один inventory page без изменения upstream envelope"""
 
         return await self._call_api(
             "resumes/mine",
@@ -240,7 +239,7 @@ class HHApplicantToolTransport:
         )
 
     async def fetch_resume(self, resume_id: str) -> dict[str, Any]:
-        """Fetch one full resume without applying CareerOPS binding policy."""
+        """Получает одно full resume без применения binding policy CareerOPS"""
 
         normalized_id = resume_id.strip()
         if not normalized_id:

@@ -1,9 +1,9 @@
-"""Compose one account-scoped HH source worker from v2 runtime dependencies.
+"""Сборка account-scoped HH source worker из runtime-зависимостей v2
 
-This module intentionally stops at source ingestion. It does not choose search
-queries, schedule runs, materialize domain state, filter vacancies, or submit
-applications. Orchestration only has to enqueue persistent source tasks and invoke
-this bounded worker.
+Модуль заканчивается на source ingestion
+Он не выбирает поисковые запросы, не задаёт расписание, не материализует domain state,
+не фильтрует вакансии и не отправляет отклики
+Orchestration должна только создать persistent source tasks и запустить bounded worker
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from careerops_integrations.hh.configuration import (
     load_accounts_config,
 )
 from careerops_integrations.hh.driver import HHApplicantToolCLI
-from careerops_integrations.hh.runtime import HHExternalWriteGuard, RuntimeMode
 from careerops_storage.s3 import S3JsonStore, S3Settings
 
 from .errors import (
@@ -35,6 +34,7 @@ from .errors import (
     HHFailureKind,
     default_failure_disposition,
 )
+from .postgres import HHPostgresSettings, resolve_hh_account_id
 from .raw import HHRawPublisher
 from .tasks import SourceTaskRecord, SourceTaskRepository
 from .transport import HHApplicantToolTransport
@@ -47,29 +47,8 @@ from .worker import (
 
 
 @dataclass(frozen=True, slots=True)
-class V2PostgresSettings:
-    """Explicit v2 PostgreSQL target; never fall back to the legacy runtime DSN."""
-
-    dsn: str
-
-    @classmethod
-    def from_env(cls) -> V2PostgresSettings:
-        value = os.getenv("CAREEROPS_V2_POSTGRES_DSN", "").strip()
-        if not value:
-            raise RuntimeError(
-                "CAREEROPS_V2_POSTGRES_DSN is required by the HH v2 worker"
-            )
-        legacy = os.getenv("CAREEROPS_POSTGRES_DSN", "").strip()
-        if legacy and legacy == value:
-            raise RuntimeError(
-                "CAREEROPS_V2_POSTGRES_DSN must not point at the legacy CareerOPS database"
-            )
-        return cls(dsn=value)
-
-
-@dataclass(frozen=True, slots=True)
 class HHAccountWorkerSummary:
-    """Small machine-readable result for one bounded account worker invocation."""
+    """Машиночитаемый результат одного bounded запуска account worker"""
 
     account_key: str
     profile_key: str
@@ -90,14 +69,10 @@ class HHAccountWorkerSummary:
 
 
 def default_worker_id() -> str:
-    """Return a diagnostic worker id without embedding credentials or source data."""
-
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
 def default_accounts_config_path() -> Path:
-    """Expose the existing non-secret account topology pointer to the new CLI."""
-
     return accounts_config_path_from_env()
 
 
@@ -105,8 +80,6 @@ def _resolve_source_account(
     accounts: HHAccountsConfig,
     account_key: str,
 ) -> HHAccountConfig:
-    """Resolve an enabled source account without depending on resume policy bindings."""
-
     normalized = account_key.strip()
     if not normalized:
         raise ValueError("account_key must not be empty")
@@ -114,34 +87,6 @@ def _resolve_source_account(
         if account.key == normalized:
             return account
     raise HHConfigError(f"enabled HH source account not found: {normalized!r}")
-
-
-async def _resolve_v2_account_id(
-    conn: AsyncConnection[Any],
-    *,
-    account_key: str,
-    profile_key: str,
-) -> int:
-    cursor = await conn.execute(
-        """
-        SELECT a.id
-        FROM careerops_v2.accounts AS a
-        JOIN careerops_v2.sources AS s ON s.id = a.source_id
-        JOIN careerops_v2.profiles AS p
-          ON p.account_id = a.id AND p.source_id = a.source_id
-        WHERE s.source_key = 'hh'
-          AND a.account_key = %s
-          AND p.profile_key = %s
-        """,
-        (account_key, profile_key),
-    )
-    rows = await cursor.fetchall()
-    if len(rows) != 1:
-        raise RuntimeError(
-            "expected exactly one v2 HH account/profile mapping for "
-            f"account={account_key!r}, profile={profile_key!r}; found {len(rows)}"
-        )
-    return int(rows[0][0])
 
 
 def _advisory_lock_key(account_key: str) -> int:
@@ -166,8 +111,6 @@ async def _active_account_pause(
     *,
     account_id: int,
 ) -> tuple[datetime, str] | None:
-    """Return the latest active account-wide source pause encoded in task state."""
-
     cursor = await conn.execute(
         """
         SELECT next_attempt_at, error_category
@@ -202,13 +145,7 @@ async def _defer_account_after_pause(
     error_category: str,
     next_attempt_at: datetime,
 ) -> int:
-    """Persist account-wide source backpressure without extending later retries.
-
-    Only ready work that would run before the pause boundary, plus expired leases,
-    is moved to that boundary. Tasks already scheduled for a later retry keep their
-    original retry time and are not converted into an account-pause marker. A live
-    lease is never stolen.
-    """
+    """Сохраняет account-wide backpressure и не продлевает более поздние retry"""
 
     cursor = await conn.execute(
         """
@@ -280,14 +217,9 @@ async def _run_locked_account_worker(
         )
 
     failure_policy = HHSourceFailurePolicy()
-    guard = HHExternalWriteGuard(
-        runtime_mode=RuntimeMode.OBSERVE,
-        allow_external_writes=False,
-    )
     driver = HHApplicantToolCLI(
         config_dir=config_dir,
         profile=account.profile,
-        external_write_guard=guard,
     )
     transport = HHApplicantToolTransport(driver)
 
@@ -404,7 +336,7 @@ async def run_account_worker(
     lease_seconds: int = 300,
     worker_id: str | None = None,
 ) -> HHAccountWorkerSummary:
-    """Run a bounded, single-account HH source worker against PostgreSQL v2."""
+    """Запускает bounded HH source worker для одного account поверх PostgreSQL v2"""
 
     if max_tasks < 1:
         raise ValueError("max_tasks must be >= 1")
@@ -418,10 +350,10 @@ async def run_account_worker(
     if not resolved_worker_id:
         raise ValueError("worker_id must not be empty")
 
-    settings = V2PostgresSettings.from_env()
+    settings = HHPostgresSettings.from_env()
     conn = await psycopg.AsyncConnection.connect(settings.dsn, autocommit=True)
     try:
-        account_id = await _resolve_v2_account_id(
+        account_id = await resolve_hh_account_id(
             conn,
             account_key=account.key,
             profile_key=account.profile,
@@ -445,7 +377,4 @@ async def run_account_worker(
             worker_id=resolved_worker_id,
         )
     finally:
-        # PostgreSQL session advisory locks are released by closing this dedicated
-        # connection. Relying on session teardown avoids masking a worker exception
-        # with a secondary unlock failure.
         await conn.close()

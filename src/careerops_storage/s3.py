@@ -1,4 +1,4 @@
-"""Asynchronous SeaweedFS S3 JSON storage for CareerOPS RAW and audit data."""
+"""Асинхронное JSON-хранилище SeaweedFS S3 для RAW и аудита CareerOPS"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from botocore.config import Config  # type: ignore[import-untyped]
 
 
 def _json_bytes(payload: Any) -> bytes:
-    """Serialize a JSON payload deterministically for hashing and storage."""
+    """Детерминированно сериализует JSON для хранения и вычисления хеша"""
 
     return json.dumps(
         payload,
@@ -29,7 +29,7 @@ def _json_bytes(payload: Any) -> bytes:
 
 
 def _client_config() -> Config:
-    """Build the shared path-style S3 client configuration for SeaweedFS."""
+    """Возвращает общую path-style конфигурацию S3-клиента для SeaweedFS"""
 
     return Config(
         signature_version="s3v4",
@@ -39,7 +39,7 @@ def _client_config() -> Config:
 
 
 def _normalize_collected_at(value: datetime, field_name: str) -> datetime:
-    """Require a timezone-aware observation timestamp and normalize it to UTC."""
+    """Проверяет timezone-aware время наблюдения и приводит его к UTC"""
 
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
@@ -47,7 +47,7 @@ def _normalize_collected_at(value: datetime, field_name: str) -> datetime:
 
 
 def _parse_collected_at_metadata(value: Any, full_key: str) -> datetime | None:
-    """Parse strict collected_at S3 metadata without a legacy fallback."""
+    """Строго разбирает S3 metadata collected_at без запасного пути"""
 
     if value is None:
         return None
@@ -67,7 +67,7 @@ def _parse_collected_at_metadata(value: Any, full_key: str) -> datetime | None:
 
 @dataclass(frozen=True, slots=True)
 class S3Settings:
-    """Connection and key-space settings for the CareerOPS RAW bucket."""
+    """Настройки подключения и пространства ключей RAW bucket CareerOPS"""
 
     endpoint_url: str
     access_key: str
@@ -78,7 +78,7 @@ class S3Settings:
 
     @classmethod
     def from_env(cls) -> S3Settings:
-        """Load S3 settings from environment variables without defaulting secrets."""
+        """Загружает настройки S3 из env без значений по умолчанию для секретов"""
 
         access_key = os.getenv("CAREEROPS_S3_ACCESS_KEY")
         secret_key = os.getenv("CAREEROPS_S3_SECRET_KEY")
@@ -103,7 +103,7 @@ class S3Settings:
 
 @dataclass(frozen=True, slots=True)
 class S3ObjectRef:
-    """Provenance metadata for one immutable JSON object in S3."""
+    """Provenance одного неизменяемого JSON-объекта в S3"""
 
     bucket: str
     key: str
@@ -114,18 +114,18 @@ class S3ObjectRef:
 
     @property
     def uri(self) -> str:
-        """Return the canonical S3 URI for the object."""
+        """Возвращает канонический S3 URI объекта"""
 
         return f"s3://{self.bucket}/{self.key}"
 
 
 class _S3KeySpace:
-    """Centralize safe key normalization for the asynchronous S3 store."""
+    """Централизует безопасную нормализацию ключей асинхронного S3-хранилища"""
 
     settings: S3Settings
 
     def _full_key(self, key: str) -> str:
-        """Normalize a relative key, full key, or S3 URI to a bucket key."""
+        """Преобразует относительный ключ, полный ключ или S3 URI в ключ bucket"""
 
         value = key.strip()
         is_uri = value.startswith("s3://")
@@ -155,7 +155,7 @@ class _S3KeySpace:
         return f"{prefix}/{value}" if value else prefix
 
     def relative_key(self, key: str) -> str:
-        """Return a configured-prefix-relative key from any supported key form."""
+        """Возвращает ключ относительно настроенного prefix для любой допустимой формы"""
 
         full_key = self._full_key(key)
         prefix = self.settings.prefix.strip("/")
@@ -169,7 +169,7 @@ class _S3KeySpace:
         raise ValueError(f"S3 key {full_key!r} is outside configured prefix {prefix!r}")
 
     def _relative_from_full(self, full_key: str) -> str | None:
-        """Convert a listed full key to a relative key or reject another prefix."""
+        """Преобразует полный ключ из listing в относительный или отбрасывает чужой prefix"""
 
         configured_prefix = self.settings.prefix.strip("/")
         if not configured_prefix:
@@ -188,7 +188,7 @@ class _S3KeySpace:
         response: dict[str, Any],
         full_key: str,
     ) -> tuple[Any, S3ObjectRef]:
-        """Decode JSON and verify object hash and timestamp provenance."""
+        """Декодирует JSON и проверяет хеш и временной provenance объекта"""
 
         payload = json.loads(body.decode("utf-8"))
         digest = hashlib.sha256(body).hexdigest()
@@ -227,17 +227,17 @@ class _S3KeySpace:
 
 
 class S3JsonStore(_S3KeySpace):
-    """Read and write CareerOPS JSON through an asynchronous aioboto3 client."""
+    """Читает и пишет JSON CareerOPS через асинхронный клиент aioboto3"""
 
     def __init__(self, settings: S3Settings, *, client: Any | None = None) -> None:
-        """Prepare an async client, optionally injecting a fake client for tests."""
+        """Готовит async client с возможностью подставить внешний клиент"""
 
         self.settings = settings
         self.client = client
         self._client_context: Any | None = None
 
     async def __aenter__(self) -> S3JsonStore:
-        """Open the aioboto3 S3 client owned by this store."""
+        """Открывает принадлежащий хранилищу S3-клиент aioboto3"""
 
         if self.client is None:
             session = aioboto3.Session()
@@ -258,7 +258,7 @@ class S3JsonStore(_S3KeySpace):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        """Close the owned aioboto3 client while leaving injected clients alone."""
+        """Закрывает созданный хранилищем клиент и не трогает подставленный извне"""
 
         if self._client_context is not None:
             await self._client_context.__aexit__(exc_type, exc_value, traceback)
@@ -266,7 +266,7 @@ class S3JsonStore(_S3KeySpace):
             self.client = None
 
     def _require_client(self) -> Any:
-        """Return the active async client or explain the missing context manager."""
+        """Возвращает активный async client или сообщает об отсутствии context manager"""
 
         if self.client is None:
             raise RuntimeError("S3JsonStore must be used as an async context manager")
@@ -279,7 +279,7 @@ class S3JsonStore(_S3KeySpace):
         *,
         collected_at: datetime | None = None,
     ) -> S3ObjectRef:
-        """Write unmodified JSON plus checksum and observation-time metadata."""
+        """Пишет JSON без смысловых изменений вместе с checksum и временем наблюдения"""
 
         client = self._require_client()
         body = _json_bytes(payload)
@@ -309,13 +309,13 @@ class S3JsonStore(_S3KeySpace):
         )
 
     async def get_json(self, key: str) -> Any:
-        """Read and return one JSON value asynchronously."""
+        """Асинхронно читает и возвращает одно JSON-значение"""
 
         payload, _ = await self.get_json_with_metadata(key)
         return payload
 
     async def head(self, key: str) -> dict[str, Any]:
-        """Return raw S3 object metadata asynchronously."""
+        """Асинхронно возвращает исходные S3 metadata объекта"""
 
         client = self._require_client()
         return cast(
@@ -327,7 +327,7 @@ class S3JsonStore(_S3KeySpace):
         )
 
     async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
-        """Yield all paginated relative keys using the async S3 paginator."""
+        """Итерирует относительные ключи через асинхронный paginated S3 listing"""
 
         client = self._require_client()
         full_prefix = self._full_key(prefix)
@@ -342,7 +342,7 @@ class S3JsonStore(_S3KeySpace):
                     yield relative
 
     async def get_json_with_metadata(self, key: str) -> tuple[Any, S3ObjectRef]:
-        """Read JSON asynchronously and verify checksum and S3 metadata."""
+        """Асинхронно читает JSON и проверяет checksum и S3 metadata"""
 
         client = self._require_client()
         full_key = self._full_key(key)

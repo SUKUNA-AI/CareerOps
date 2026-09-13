@@ -1,0 +1,55 @@
+name: careerops-reranker
+
+services:
+  reranker:
+    container_name: careerops-reranker
+    image: careerops-reranker:2.14-cu132-fp16
+    build:
+      context: ../../..
+      dockerfile: infra/compose/reranker/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/reranker/env
+    environment:
+      HF_HOME: /cache/huggingface
+      HF_HUB_ETAG_TIMEOUT: "60"
+      HF_HUB_DOWNLOAD_TIMEOUT: "300"
+      XDG_CACHE_HOME: /cache
+      TRITON_CACHE_DIR: /cache/triton
+      HOME: /tmp
+    volumes:
+      - /var/lib/careerops/reranker-cache:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          port = os.getenv('CAREEROPS_RERANKER_PORT', '18082');
+          urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=3).read()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

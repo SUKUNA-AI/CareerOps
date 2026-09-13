@@ -1,0 +1,37 @@
+name: careerops-processing
+
+services:
+  processing:
+    container_name: careerops-processing
+    build:
+      context: ../../..
+      dockerfile: infra/compose/processing/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/processing/env
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          port = os.getenv('CAREEROPS_PROCESSING_HEALTH_PORT', '18081');
+          urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2).read()
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

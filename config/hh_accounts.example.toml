@@ -1,17 +1,9 @@
 schema_version = 1
-runtime_mode = "observe"
-
-[global]
-timezone = "Europe/Moscow"
 
 [[accounts]]
 key = "ml_3y"
 profile = "careerops-ml-3y"
 enabled = true
-observe_runs_per_day = 3
-apply_runs_per_day = 7
-apply_daily_cap = 100
-max_apply_per_run = 15
 
 [[accounts.bindings]]
 key = "ml_3y"
@@ -35,10 +27,6 @@ query_sets = [
 key = "ml_5y"
 profile = "careerops-ml-5y"
 enabled = true
-observe_runs_per_day = 3
-apply_runs_per_day = 7
-apply_daily_cap = 100
-max_apply_per_run = 15
 
 [[accounts.bindings]]
 key = "ml_5y"
@@ -63,10 +51,6 @@ query_sets = [
 key = "junior"
 profile = "careerops-junior"
 enabled = true
-observe_runs_per_day = 3
-apply_runs_per_day = 7
-apply_daily_cap = 100
-max_apply_per_run = 15
 
 [[accounts.bindings]]
 key = "de_junior"

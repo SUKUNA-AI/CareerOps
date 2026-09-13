@@ -1,8 +1,7 @@
-"""Application-owner current state and a conservative, non-expiring submission guard."""
+"""Current state Application Owner и консервативный non-expiring submission guard"""
 
 from sqlalchemy import (
     BigInteger,
-    Boolean,
     CheckConstraint,
     Column,
     ForeignKey,
@@ -49,14 +48,9 @@ applications = Table(
     Column("reason_code", Text),
     Column("upstream_evidence_uri", Text),
     Column("audit_uri", Text),
-    Column("imported_from_legacy", Boolean, nullable=False, server_default=text("false")),
-    Column("recovery_source", Text),
-    Column("recovery_record_key", Text),
-    Column("imported_at", TIMESTAMP(timezone=True)),
     *timestamps(),
     UniqueConstraint("account_id", "idempotency_key"),
     UniqueConstraint("id", "account_id", "source_vacancy_id"),
-    UniqueConstraint("recovery_source", "recovery_record_key"),
     ForeignKeyConstraint(["resume_id", "account_id"], [resumes.c.id, resumes.c.account_id]),
     ForeignKeyConstraint(
         ["account_id", "source_vacancy_id"],
@@ -131,15 +125,6 @@ applications = Table(
         "status NOT IN ('safe_failure', 'blocked', 'uncertain', 'reconciliation_required') "
         "OR (reason_code IS NOT NULL AND length(btrim(reason_code)) > 0)",
         name="reason",
-    ),
-    CheckConstraint(
-        "(imported_from_legacy AND recovery_source IS NOT NULL "
-        "AND length(btrim(recovery_source)) > 0 AND recovery_record_key IS NOT NULL "
-        "AND length(btrim(recovery_record_key)) > 0 AND imported_at IS NOT NULL "
-        "AND audit_uri IS NOT NULL AND audit_uri LIKE 's3://%') OR "
-        "(NOT imported_from_legacy AND recovery_source IS NULL "
-        "AND recovery_record_key IS NULL AND imported_at IS NULL)",
-        name="recovery_provenance",
     ),
 )
 Index("ix_applications_resume", applications.c.resume_id)

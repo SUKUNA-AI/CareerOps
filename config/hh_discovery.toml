@@ -3,15 +3,8 @@ schema_version = 1
 [defaults]
 area = 1
 period = 14
-pages = 1
 per_page = 50
 order_by = "publication_time"
-max_queries_per_run = 25
-search_query_delay_seconds = 2.0
-full_fetch_min_delay_seconds = 3.0
-full_fetch_max_delay_seconds = 5.0
-max_unique_vacancies_per_run = 60
-max_full_fetch_per_run = 25
 
 [query_sets.ml_core]
 version = 1
@@ -468,7 +461,6 @@ queries = [
   { key = "cv-intern-ru-e", text = "Стажер Computer Vision", enabled = true },
   { key = "cv-intern-ru-yo", text = "Стажёр Computer Vision", enabled = true },
 ]
-
 
 [query_sets.cpp_core]
 version = 1

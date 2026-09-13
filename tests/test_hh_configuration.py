@@ -14,7 +14,7 @@ DISCOVERY_PATH = Path("config/hh_discovery.toml")
 ACCOUNTS_PATH = Path("config/hh_accounts.example.toml")
 
 
-def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
+def test_committed_catalog_and_source_topology_load() -> None:
     discovery = load_discovery_config(DISCOVERY_PATH)
     accounts = load_accounts_config(ACCOUNTS_PATH, discovery=discovery)
 
@@ -27,22 +27,16 @@ def test_committed_catalog_and_n_account_n_binding_topology_load() -> None:
     ]
     junior = accounts.resolve_account("junior")
     assert [binding.key for binding in junior.enabled_bindings] == [
-    "de_junior",
-    "backend_junior",
-    "ml_ds_junior",
-    "cpp_junior",
+        "de_junior",
+        "backend_junior",
+        "ml_ds_junior",
+        "cpp_junior",
     ]
-
     assert len(junior.query_set_keys) == 15
-    assert discovery.defaults.pages == 1
+    assert discovery.defaults.area == 1
+    assert discovery.defaults.period == 14
     assert discovery.defaults.per_page == 50
-    assert discovery.defaults.max_queries_per_run == 25
-    assert discovery.defaults.max_unique_vacancies_per_run == 60
-    assert discovery.defaults.max_full_fetch_per_run == 25
-    assert discovery.defaults.search_query_delay_seconds == 2.0
-    assert discovery.defaults.full_fetch_min_delay_seconds == 3.0
-    assert discovery.defaults.full_fetch_max_delay_seconds == 5.0
-    assert junior.apply_runs_per_day * junior.max_apply_per_run >= junior.apply_daily_cap
+    assert discovery.defaults.order_by == "publication_time"
 
 
 def test_duplicate_query_set_reference_executes_once_per_account_union() -> None:
@@ -130,13 +124,10 @@ def test_disabled_accounts_and_bindings_are_ignored(workspace_tmp_dir: Path) -> 
     _write_minimal_discovery(discovery_path)
     accounts_path.write_text(
         """schema_version = 1
-runtime_mode = "observe"
 [[accounts]]
 key = "active"
 profile = "profile-active"
 enabled = true
-observe_runs_per_day = 1
-apply_daily_cap = 100
 [[accounts.bindings]]
 key = "active"
 source_resume_id = "resume-active"
@@ -153,8 +144,6 @@ query_sets = ["one"]
 key = "disabled"
 profile = "profile-disabled"
 enabled = false
-observe_runs_per_day = 1
-apply_daily_cap = 100
 [[accounts.bindings]]
 key = "only"
 source_resume_id = "resume-only"
@@ -278,51 +267,31 @@ query_sets = ["missing"]
         load_accounts_config(malformed)
 
 
-def test_credentials_are_not_supported_by_strict_schema(
+def test_credentials_and_retired_scheduler_fields_are_rejected(
     workspace_tmp_dir: Path,
 ) -> None:
-    path = workspace_tmp_dir / "accounts.toml"
-    path.write_text(
-        """schema_version = 1
-token = "must-not-be-supported"
-[[accounts]]
-key = "account"
-profile = "profile"
-[[accounts.bindings]]
-key = "binding"
-source_resume_id = "resume"
-target_key = "target"
-query_sets = ["one"]
-""",
-        encoding="utf-8",
-    )
-    with pytest.raises(HHConfigError, match="extra_forbidden"):
-        load_accounts_config(path)
-
-
-def test_apply_schedule_must_have_capacity_to_reach_daily_cap(
-    workspace_tmp_dir: Path,
-) -> None:
-    path = workspace_tmp_dir / "accounts.toml"
-    path.write_text(
-        """schema_version = 1
-[[accounts]]
-key = "account"
-profile = "profile"
-apply_runs_per_day = 3
-apply_daily_cap = 100
-max_apply_per_run = 15
-[[accounts.bindings]]
-key = "binding"
-source_resume_id = "resume"
-target_key = "target"
-query_sets = ["one"]
-""",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        HHConfigError,
-        match=r"apply_runs_per_day \* max_apply_per_run must be >= apply_daily_cap",
+    for retired in (
+        'runtime_mode = "observe"',
+        "observe_runs_per_day = 3",
+        "apply_runs_per_day = 7",
+        "apply_daily_cap = 100",
+        "max_apply_per_run = 15",
+        'token = "must-not-be-supported"',
     ):
-        load_accounts_config(path)
+        path = workspace_tmp_dir / "accounts.toml"
+        path.write_text(
+            f"""schema_version = 1
+{retired}
+[[accounts]]
+key = "account"
+profile = "profile"
+[[accounts.bindings]]
+key = "binding"
+source_resume_id = "resume"
+target_key = "target"
+query_sets = ["one"]
+""",
+            encoding="utf-8",
+        )
+        with pytest.raises(HHConfigError, match="extra_forbidden"):
+            load_accounts_config(path)

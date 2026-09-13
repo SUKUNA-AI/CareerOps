@@ -1,8 +1,18 @@
-"""Shared PostgreSQL v2 naming, timestamps and operational lease shape."""
+"""Общие naming, timestamps и lease-структуры PostgreSQL v2"""
 
 from typing import Any
 
-from sqlalchemy import BigInteger, CheckConstraint, Column, Identity, Integer, MetaData, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Identity,
+    Integer,
+    MetaData,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 
 SCHEMA = "careerops_v2"
@@ -34,6 +44,8 @@ def timestamps() -> list[Column[Any]]:
 
 
 def queue_columns() -> list[Column[Any]]:
+    """Возвращает общие operational columns durable queue"""
+
     return [
         Column("status", Text, nullable=False, server_default=text("'pending'")),
         Column("attempt_count", Integer, nullable=False, server_default=text("0")),
@@ -50,6 +62,8 @@ def queue_columns() -> list[Column[Any]]:
 
 
 def queue_constraints() -> list[CheckConstraint]:
+    """Возвращает общие invariants durable queue"""
+
     return [
         CheckConstraint(
             "status IN ('pending', 'claimed', 'running', 'deferred', 'retryable_failure', "
@@ -99,6 +113,8 @@ def queue_constraints() -> list[CheckConstraint]:
 
 
 def current_provenance() -> list[Column[Any] | CheckConstraint]:
+    """Общие поля current materialization без Processing-specific normalized ref"""
+
     return [
         Column(
             "materialization_state", Text, nullable=False, server_default=text("'identity_only'")
@@ -121,5 +137,60 @@ def current_provenance() -> list[Column[Any] | CheckConstraint]:
             "AND normalization_version IS NOT NULL AND length(btrim(normalization_version)) > 0 "
             "AND materialization_key IS NOT NULL AND length(btrim(materialization_key)) > 0)",
             name="current_provenance",
+        ),
+    ]
+
+
+def normalized_ref_provenance() -> list[Column[Any] | CheckConstraint]:
+    """Поля, из которых PostgreSQL может восстановить точный NormalizedRef Processing"""
+
+    return [
+        Column("raw_sha256", Text),
+        Column("normalized_uri", Text),
+        Column("normalized_sha256", Text),
+        Column("semantic_content_hash", Text),
+        Column("normalized_schema_version", Text),
+        Column("dictionary_version", Text),
+        Column("dq_status", Text),
+        Column("processing_ready", Boolean),
+        CheckConstraint(
+            "raw_sha256 IS NULL OR raw_sha256 ~ '^[0-9a-f]{64}$'",
+            name="normalized_raw_sha256",
+        ),
+        CheckConstraint(
+            "normalized_sha256 IS NULL OR normalized_sha256 ~ '^[0-9a-f]{64}$'",
+            name="normalized_sha256",
+        ),
+        CheckConstraint(
+            "semantic_content_hash IS NULL OR semantic_content_hash ~ '^[0-9a-f]{64}$'",
+            name="semantic_content_hash",
+        ),
+        CheckConstraint(
+            "normalized_uri IS NULL OR normalized_uri LIKE 's3://%'",
+            name="normalized_uri",
+        ),
+        CheckConstraint(
+            "dq_status IS NULL OR dq_status IN ('clean', 'warning', 'blocked')",
+            name="dq_status",
+        ),
+        CheckConstraint(
+            "(raw_sha256 IS NULL AND normalized_uri IS NULL AND normalized_sha256 IS NULL "
+            "AND semantic_content_hash IS NULL AND normalized_schema_version IS NULL "
+            "AND dictionary_version IS NULL AND dq_status IS NULL AND processing_ready IS NULL) "
+            "OR (raw_sha256 IS NOT NULL AND normalized_uri IS NOT NULL "
+            "AND normalized_sha256 IS NOT NULL AND semantic_content_hash IS NOT NULL "
+            "AND normalized_schema_version IS NOT NULL "
+            "AND length(btrim(normalized_schema_version)) > 0 "
+            "AND dictionary_version IS NOT NULL AND length(btrim(dictionary_version)) > 0 "
+            "AND dq_status IS NOT NULL AND processing_ready IS NOT NULL)",
+            name="normalized_ref_complete",
+        ),
+        CheckConstraint(
+            "normalized_uri IS NULL OR materialization_state = 'current'",
+            name="normalized_ref_requires_current",
+        ),
+        CheckConstraint(
+            "processing_ready IS DISTINCT FROM TRUE OR dq_status <> 'blocked'",
+            name="processing_ready_not_blocked",
         ),
     ]

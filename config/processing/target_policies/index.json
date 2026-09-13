@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "cpp_developer_junior": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "cpp_developer_junior/2026-09-07.1.json"
+    },
+    "data_engineer_junior": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "data_engineer_junior/2026-09-07.1.json"
+    },
+    "ml_3y": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "ml_3y/2026-09-07.1.json"
+    },
+    "ml_5y": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "ml_5y/2026-09-07.1.json"
+    },
+    "ml_ds_junior": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "ml_ds_junior/2026-09-07.1.json"
+    },
+    "python_backend_junior": {
+      "current_policy_version": "2026-09-07.1",
+      "path": "python_backend_junior/2026-09-07.1.json"
+    }
+  }
+}

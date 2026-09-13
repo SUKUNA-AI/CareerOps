@@ -1,4 +1,4 @@
-"""Persistent adapter work; limits preserve queued work by deferring it."""
+"""Persistent work HH source adapter и его durable control state"""
 
 from sqlalchemy import (
     BigInteger,
@@ -61,7 +61,7 @@ source_tasks = Table(
     CheckConstraint("length(btrim(task_key)) > 0", name="task_key"),
     CheckConstraint("parent_task_id IS NULL OR parent_task_id <> id", name="parent_not_self"),
     CheckConstraint(
-        "task_kind IN ('search', 'search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch')",
+        "task_kind IN ('search_page', 'vacancy_fetch', 'resume_sync', 'resume_fetch')",
         name="task_kind",
     ),
     CheckConstraint(

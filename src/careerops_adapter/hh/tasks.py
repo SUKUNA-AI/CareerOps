@@ -1,4 +1,4 @@
-"""Persistent PostgreSQL v2 source-task contracts owned by the HH adapter."""
+"""Persistent PostgreSQL v2 source tasks, которыми владеет HH adapter"""
 
 from __future__ import annotations
 
@@ -15,9 +15,8 @@ from psycopg.types.json import Jsonb
 
 
 class SourceTaskKind(StrEnum):
-    """HH work kinds admitted by the PostgreSQL v2 source_tasks schema."""
+    """Исполняемые виды HH work из схемы careerops_v2.source_tasks"""
 
-    SEARCH = "search"
     SEARCH_PAGE = "search_page"
     VACANCY_FETCH = "vacancy_fetch"
     RESUME_SYNC = "resume_sync"
@@ -25,7 +24,7 @@ class SourceTaskKind(StrEnum):
 
 
 class SourceTaskStatus(StrEnum):
-    """Operational states shared with careerops_v2.source_tasks."""
+    """Operational states, общие с careerops_v2.source_tasks"""
 
     PENDING = "pending"
     CLAIMED = "claimed"
@@ -38,7 +37,7 @@ class SourceTaskStatus(StrEnum):
 
 
 class SourceTaskLeaseLost(RuntimeError):
-    """Report a stale worker that no longer owns a live source-task lease."""
+    """Worker больше не владеет live lease для source task"""
 
 
 _FORBIDDEN_PARAMETER_KEYS = (
@@ -50,13 +49,6 @@ _FORBIDDEN_PARAMETER_KEYS = (
     "xsrf",
     "refresh_token",
     "access_token",
-)
-
-_EXECUTABLE_KINDS = (
-    SourceTaskKind.SEARCH_PAGE,
-    SourceTaskKind.VACANCY_FETCH,
-    SourceTaskKind.RESUME_SYNC,
-    SourceTaskKind.RESUME_FETCH,
 )
 
 
@@ -105,7 +97,7 @@ def _profile_key(parameters: dict[str, Any]) -> str:
 
 @dataclass(frozen=True, slots=True)
 class SourceTaskSpec:
-    """Immutable task identity and parameters before PostgreSQL enqueue."""
+    """Immutable identity и параметры task до enqueue в PostgreSQL"""
 
     kind: SourceTaskKind
     parameters: dict[str, Any]
@@ -134,7 +126,7 @@ class SourceTaskSpec:
 
 @dataclass(frozen=True, slots=True)
 class SourceTaskRecord:
-    """One claimed source task resolved with its stable HH account registry key."""
+    """Claimed source task со стабильным HH account registry key"""
 
     id: UUID
     account_id: int
@@ -160,10 +152,10 @@ def search_page_task(
     order_by: str = "publication_time",
     per_page: int = 50,
     professional_roles: tuple[int, ...] = (),
-    max_pages: int = 2,
+    max_pages: int,
     parent_task_id: UUID | None = None,
 ) -> SourceTaskSpec:
-    """Build one idempotent query-page task within an observation generation."""
+    """Создаёт idempotent query-page task внутри observation generation"""
 
     if max_pages < 1:
         raise ValueError("max_pages must be >= 1")
@@ -195,7 +187,7 @@ def vacancy_fetch_task(
     vacancy_id: str,
     parent_task_id: UUID | None = None,
 ) -> SourceTaskSpec:
-    """Build a generation-scoped full-vacancy fetch task."""
+    """Создаёт generation-scoped task загрузки full vacancy"""
 
     return SourceTaskSpec.build(
         SourceTaskKind.VACANCY_FETCH,
@@ -215,7 +207,7 @@ def resume_sync_task(
     page: int = 0,
     parent_task_id: UUID | None = None,
 ) -> SourceTaskSpec:
-    """Build one exact /resumes/mine page task for a sync generation."""
+    """Создаёт task одного точного page /resumes/mine для sync generation"""
 
     if page < 0:
         raise ValueError("page must be >= 0")
@@ -238,7 +230,7 @@ def resume_fetch_task(
     resume_id: str,
     parent_task_id: UUID | None = None,
 ) -> SourceTaskSpec:
-    """Build one generation-scoped full-resume fetch task."""
+    """Создаёт generation-scoped task загрузки full resume"""
 
     return SourceTaskSpec.build(
         SourceTaskKind.RESUME_FETCH,
@@ -252,11 +244,12 @@ def resume_fetch_task(
 
 
 class SourceTaskRepository:
-    """Explicit SQL owner for careerops_v2.source_tasks queue mechanics.
+    """SQL owner механики очереди careerops_v2.source_tasks
 
-    Queue transitions are independent transactional facts. The repository therefore
-    requires a dedicated autocommit connection; the one operation that must persist
-    children and parent success together opens its own explicit transaction.
+    Queue transitions являются независимыми transactional facts
+    Repository требует отдельное autocommit connection
+    Операция, которая должна атомарно сохранить children и успех parent task,
+    сама открывает explicit transaction
     """
 
     def __init__(self, conn: AsyncConnection[Any]) -> None:
@@ -265,7 +258,7 @@ class SourceTaskRepository:
         self._conn = conn
 
     async def enqueue(self, *, account_id: int, spec: SourceTaskSpec) -> UUID:
-        """Insert once for a registered HH account/profile without resetting state."""
+        """Добавляет task один раз и не сбрасывает существующий state"""
 
         if account_id <= 0:
             raise ValueError("account_id must be positive")
@@ -318,7 +311,7 @@ class SourceTaskRepository:
         lease_seconds: int = 300,
         account_id: int | None = None,
     ) -> SourceTaskRecord | None:
-        """Claim one due task or reclaim an expired lease using SKIP LOCKED fencing."""
+        """Claim одной due task или reclaim expired lease через SKIP LOCKED fencing"""
 
         normalized_worker = worker_id.strip()
         if not normalized_worker:
@@ -408,7 +401,7 @@ class SourceTaskRepository:
         )
 
     async def mark_running(self, task: SourceTaskRecord) -> None:
-        """Move a freshly claimed task to running while its lease is still live."""
+        """Переводит свежую claimed task в running при живом lease"""
 
         token = self._required_token(task)
         cursor = await self._conn.execute(
@@ -431,7 +424,7 @@ class SourceTaskRepository:
         result_artifact_uri: str,
         children: tuple[SourceTaskSpec, ...] = (),
     ) -> None:
-        """Persist child work before atomically acknowledging the parent task."""
+        """Сохраняет child work до атомарного подтверждения parent task"""
 
         if not result_artifact_uri.startswith("s3://"):
             raise ValueError("source task success requires an s3:// result URI")
@@ -466,7 +459,7 @@ class SourceTaskRepository:
         error_category: str,
         next_attempt_at: datetime,
     ) -> None:
-        """Defer throttled/quota/CAPTCHA work without discarding the task."""
+        """Откладывает throttled/CAPTCHA work без потери task"""
 
         await self._release_retryable(
             task,
@@ -482,7 +475,7 @@ class SourceTaskRepository:
         error_category: str,
         next_attempt_at: datetime,
     ) -> None:
-        """Release a transiently failed task for a later attempt."""
+        """Освобождает временно неуспешную task для следующей попытки"""
 
         await self._release_retryable(
             task,
@@ -497,7 +490,7 @@ class SourceTaskRepository:
         *,
         error_category: str,
     ) -> None:
-        """Record an explicit unrecoverable source error under a live lease."""
+        """Фиксирует unrecoverable source error при живом lease"""
 
         normalized_error = error_category.strip()
         if not normalized_error:

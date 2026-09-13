@@ -1,4 +1,4 @@
-"""HeadHunter adapter boundaries for CareerOPS v2."""
+"""Публичные границы HeadHunter adapter для CareerOPS v2"""
 
 from .errors import (
     HHFailureDisposition,

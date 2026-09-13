@@ -1,21 +1,14 @@
-from .driver import HHApplicantToolCLI
-from .mapper import map_hh_vacancy
-from .models import HHVacancyOperational, SyncedHHVacancy
-from .raw import LocalRawStore
-from .reader import HHUpstreamSQLiteReader
-from .resume_sync import reconcile_account_resumes
-from .runtime import HHExternalWriteGuard, RuntimeMode
-from .sync import HHVacancySync
+"""Общие read-only примитивы HH transport для source adapter v2
+
+Фильтрация, нормализация, orchestration и application side effects не принадлежат
+этому пакету. Vendored hh-applicant-tool остаётся pinned transport implementation
+и не изменяется в рамках обычного CareerOPS refactoring
+"""
+
+from .driver import HHApplicantToolCLI, HHDriverError, ParamValue
 
 __all__ = [
     "HHApplicantToolCLI",
-    "HHExternalWriteGuard",
-    "HHUpstreamSQLiteReader",
-    "HHVacancyOperational",
-    "HHVacancySync",
-    "LocalRawStore",
-    "RuntimeMode",
-    "SyncedHHVacancy",
-    "map_hh_vacancy",
-    "reconcile_account_resumes",
+    "HHDriverError",
+    "ParamValue",
 ]
