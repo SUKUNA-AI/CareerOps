@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
+from typing import TypeVar
 
 from careerops_processing.evaluation.reranker_metrics import (
     average_precision_at_k,
@@ -26,8 +28,10 @@ from .models import (
     RequirementImportanceLabel,
 )
 
+T = TypeVar("T")
 
-def _unique_by_pair[T](values: tuple[T, ...], pair_id: callable[[T], str]) -> dict[str, T]:
+
+def _unique_by_pair(values: tuple[T, ...], pair_id: Callable[[T], str]) -> dict[str, T]:
     result: dict[str, T] = {}
     for item in values:
         key = pair_id(item)
