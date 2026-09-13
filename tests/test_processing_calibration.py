@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from decimal import Decimal
 
 from careerops_processing.calibration import (
@@ -31,7 +30,6 @@ from careerops_processing.calibration.models import (
     DataSufficiency,
     P203Outcome,
     P204RequirementPrediction,
-    QualificationStateLabel,
     RequirementImportanceLabel,
     ScoreInterval,
     SupportInterval,
