@@ -112,20 +112,60 @@ jobs:
       - name: Install CareerOPS
         run: python -m pip install -e ".[dev]"
 
-      - name: Validate committed calibration manifest
+      - name: Validate committed calibration source manifest
         run: |
           python - <<'PY'
+          import json
+          import re
+          from decimal import Decimal
           from pathlib import Path
 
-          from careerops_processing.calibration.models import CalibrationManifest
-
           path = Path("calibration/manifests/astra-calibration-v1.json")
-          manifest = CalibrationManifest.model_validate_json(path.read_text(encoding="utf-8"))
-          if manifest.dataset_id != "astra-calibration-v1":
-              raise SystemExit(f"unexpected calibration dataset_id: {manifest.dataset_id}")
-          if manifest.pair_count <= 0 or manifest.unique_vacancies <= 0 or manifest.unique_resumes <= 0:
-              raise SystemExit("calibration manifest contains empty dataset dimensions")
-          print(manifest.model_dump_json(indent=2))
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+
+          if manifest.get("schema_version") != "careerops.calibration-source-manifest.v1":
+              raise SystemExit("unexpected calibration source-manifest schema")
+          if manifest.get("dataset_id") != "astra-calibration-v1":
+              raise SystemExit("unexpected calibration dataset_id")
+          if manifest.get("label_tier") != "weak_gold":
+              raise SystemExit("calibration labels must remain weak_gold")
+          if manifest.get("annotation_source") != "astra":
+              raise SystemExit("unexpected calibration annotation source")
+
+          artifacts = manifest.get("external_artifacts", {})
+          for name in ("annotations.jsonl", "astra_batches.jsonl"):
+              digest = artifacts.get(name, {}).get("sha256", "")
+              if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                  raise SystemExit(f"invalid SHA-256 for {name}")
+
+          counts = manifest.get("counts", {})
+          if counts.get("pairs", 0) <= 0:
+              raise SystemExit("calibration source manifest has no pairs")
+          if counts.get("unique_vacancies", 0) <= 0:
+              raise SystemExit("calibration source manifest has no vacancies")
+          if counts.get("unique_resumes", 0) <= 0:
+              raise SystemExit("calibration source manifest has no resumes")
+          if sum(counts.get(key, 0) for key in ("APPLICATION_CANDIDATE", "REVIEW", "SKIP")) != counts["pairs"]:
+              raise SystemExit("calibration decision counts do not sum to pair count")
+
+          split = manifest.get("split", {})
+          if split.get("group_key") != "source_vacancy_id":
+              raise SystemExit("calibration split must stay vacancy-grouped")
+          fractions = sum(
+              Decimal(split[key])
+              for key in (
+                  "calibration_fraction",
+                  "validation_fraction",
+                  "holdout_fraction",
+              )
+          )
+          if fractions != Decimal("1"):
+              raise SystemExit("calibration split fractions must sum to 1")
+
+          freeze_gate = manifest.get("freeze_gate", {})
+          if manifest.get("annotator_model") is None:
+              if freeze_gate.get("status") != "blocked_missing_annotator_model":
+                  raise SystemExit("missing annotator model must keep freeze gate blocked")
           PY
 
       - name: Verify calibration CLI
