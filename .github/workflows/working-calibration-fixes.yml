@@ -1,0 +1,143 @@
+name: Working calibration fixes
+
+on:
+  push:
+    branches:
+      - ar/pre-p208-cleanup-calibration
+
+permissions:
+  contents: write
+
+jobs:
+  apply-p203-fix:
+    if: ${{ !startsWith(github.event.head_commit.message, 'fix: сделать role filter high-recall') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ar/pre-p208-cleanup-calibration
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Apply P2-03 high-recall fix and update guards
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  if new in text:
+                      return
+                  raise SystemExit(f'expected block not found: {path}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace(
+              'src/careerops_processing/core/filtering.py',
+              '''    allowed = set(policy.allowed_primary_roles)\n    forbidden = set(policy.forbidden_primary_roles)\n    disjoint_from_allowed = bool(allowed) and families.isdisjoint(allowed)\n    wholly_forbidden = bool(forbidden) and families <= forbidden\n    if not (disjoint_from_allowed or wholly_forbidden):\n        return None\n\n    return _exclude(\n        rule_id="filter.role.primary_disjoint.v1",\n        reason_code="filter.primary_role_disjoint",\n        target_policy=target_policy,\n        evidence=(_evidence("vacancy.title", vacancy.title.value),),\n    )\n''',
+              '''    # allowed_primary_roles is advisory for downstream scoring/prioritization.\n    # High-recall admission may exclude a role only when policy explicitly\n    # marks every detected primary role family as forbidden.\n    forbidden = set(policy.forbidden_primary_roles)\n    wholly_forbidden = bool(forbidden) and families <= forbidden\n    if not wholly_forbidden:\n        return None\n\n    return _exclude(\n        rule_id="filter.role.primary_forbidden.v1",\n        reason_code="filter.primary_role_forbidden",\n        target_policy=target_policy,\n        evidence=(_evidence("vacancy.title", vacancy.title.value),),\n    )\n''',
+          )
+
+          replace(
+              'src/careerops_processing/contracts/reasons.py',
+              '    "filter.primary_role_disjoint",\n',
+              '    "filter.primary_role_forbidden",\n',
+          )
+
+          bootstrap = Path('src/careerops_processing/evaluation/filter_bootstrap.py')
+          text = bootstrap.read_text(encoding='utf-8')
+          for title, role in (
+              ('Java Backend Developer', 'java_backend'),
+              ('Frontend Developer', 'frontend'),
+              ('C++ Engineer', 'cpp'),
+          ):
+              old = f'''            expected=exclude,\n            title="{title}",\n            expected_reason_codes=("filter.primary_role_disjoint",),\n'''
+              new = f'''            expected=exclude,\n            title="{title}",\n            policy_overrides={{"forbidden_primary_roles": ["{role}"]}},\n            expected_reason_codes=("filter.primary_role_forbidden",),\n'''
+              if old in text:
+                  text = text.replace(old, new)
+              elif new not in text:
+                  raise SystemExit(f'bootstrap case not found: {title}')
+          bootstrap.write_text(text, encoding='utf-8')
+
+          replace(
+              'tests/test_processing_filtering.py',
+              '''def test_proven_primary_role_disjoint_is_excluded() -> None:\n    target = policy(allowed_primary_roles=["data_engineering"])\n    result = evaluate_filter(vacancy(title="Java Backend Developer"), target)\n    assert result.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert result.exclusions[0].reason_code == "filter.primary_role_disjoint"\n    assert result.exclusions[0].evidence[0].source_path == "vacancy.title"\n''',
+              '''def test_allowed_role_mismatch_is_advisory_and_kept() -> None:\n    target = policy(allowed_primary_roles=["data_engineering"])\n    result = evaluate_filter(vacancy(title="Java Backend Developer"), target)\n    assert result.outcome is FilterOutcome.KEEP\n\n\ndef test_explicitly_forbidden_primary_role_is_excluded() -> None:\n    target = policy(\n        allowed_primary_roles=["data_engineering"],\n        forbidden_primary_roles=["java_backend"],\n    )\n    result = evaluate_filter(vacancy(title="Java Backend Developer"), target)\n    assert result.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert result.exclusions[0].reason_code == "filter.primary_role_forbidden"\n    assert result.exclusions[0].evidence[0].source_path == "vacancy.title"\n''',
+          )
+
+          p = Path('tests/test_processing_filtering_ambiguity_guards.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace(
+              'def _policy(*, role: str) -> TargetPolicy:\n',
+              'def _policy(*, role: str, forbidden_roles: tuple[str, ...] = ()) -> TargetPolicy:\n',
+          ).replace(
+              '                "allowed_primary_roles": [role],\n',
+              '                "allowed_primary_roles": [role],\n                "forbidden_primary_roles": list(forbidden_roles),\n',
+          )
+          old = '''def test_explicit_titles_still_prove_their_occupation(title: str, role: str) -> None:\n    compatible = evaluate_filter(_vacancy(title), _policy(role=role))\n    foreign = evaluate_filter(_vacancy(title), _policy(role="cpp"))\n    assert compatible.outcome is FilterOutcome.KEEP\n    assert foreign.outcome is FilterOutcome.EXCLUDE_PROVEN\n'''
+          new = '''def test_allowed_role_mismatch_stays_keep_until_explicitly_forbidden(\n    title: str, role: str\n) -> None:\n    compatible = evaluate_filter(_vacancy(title), _policy(role=role))\n    advisory_foreign = evaluate_filter(_vacancy(title), _policy(role="cpp"))\n    explicitly_forbidden = evaluate_filter(\n        _vacancy(title),\n        _policy(role="cpp", forbidden_roles=(role,)),\n    )\n    assert compatible.outcome is FilterOutcome.KEEP\n    assert advisory_foreign.outcome is FilterOutcome.KEEP\n    assert explicitly_forbidden.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert (\n        explicitly_forbidden.exclusions[0].reason_code\n        == "filter.primary_role_forbidden"\n    )\n'''
+          if old in text:
+              text = text.replace(old, new)
+          elif new not in text:
+              raise SystemExit('ambiguity guard block not found')
+          p.write_text(text, encoding='utf-8')
+
+          replace(
+              'tests/test_processing_filtering_false_exclusion_guards.py',
+              '''def test_java_backend_title_is_a_proven_foreign_occupation() -> None:\n    result = evaluate_filter(\n        _vacancy(title="Java Backend Developer"),\n        _policy(allowed_primary_roles=["data_engineering"]),\n    )\n    assert result.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert result.exclusions[0].reason_code == "filter.primary_role_disjoint"\n''',
+              '''def test_java_backend_allowed_role_mismatch_is_not_a_proven_exclusion() -> None:\n    result = evaluate_filter(\n        _vacancy(title="Java Backend Developer"),\n        _policy(allowed_primary_roles=["data_engineering"]),\n    )\n    assert result.outcome is FilterOutcome.KEEP\n\n\ndef test_java_backend_explicit_forbidden_role_is_a_proven_exclusion() -> None:\n    result = evaluate_filter(\n        _vacancy(title="Java Backend Developer"),\n        _policy(\n            allowed_primary_roles=["data_engineering"],\n            forbidden_primary_roles=["java_backend"],\n        ),\n    )\n    assert result.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert result.exclusions[0].reason_code == "filter.primary_role_forbidden"\n''',
+          )
+
+          replace(
+              'tests/test_processing_filtering_false_exclusion_guards.py',
+              '''def test_cpp_token_boundary_recognizes_cpp_occupation() -> None:\n    foreign = evaluate_filter(\n        _vacancy(title="Senior C++ Engineer"),\n        _policy(allowed_primary_roles=["data_engineering"]),\n    )\n    compatible = evaluate_filter(\n        _vacancy(title="Senior C++ Engineer"),\n        _policy(allowed_primary_roles=["cpp"]),\n    )\n    assert foreign.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert compatible.outcome is FilterOutcome.KEEP\n''',
+              '''def test_cpp_token_boundary_recognizes_cpp_occupation_without_over_excluding() -> None:\n    advisory_foreign = evaluate_filter(\n        _vacancy(title="Senior C++ Engineer"),\n        _policy(allowed_primary_roles=["data_engineering"]),\n    )\n    explicitly_forbidden = evaluate_filter(\n        _vacancy(title="Senior C++ Engineer"),\n        _policy(\n            allowed_primary_roles=["data_engineering"],\n            forbidden_primary_roles=["cpp"],\n        ),\n    )\n    compatible = evaluate_filter(\n        _vacancy(title="Senior C++ Engineer"),\n        _policy(allowed_primary_roles=["cpp"]),\n    )\n    assert advisory_foreign.outcome is FilterOutcome.KEEP\n    assert explicitly_forbidden.outcome is FilterOutcome.EXCLUDE_PROVEN\n    assert compatible.outcome is FilterOutcome.KEEP\n''',
+          )
+
+          leftovers = []
+          for root in ('src', 'tests'):
+              for file in Path(root).rglob('*.py'):
+                  if 'filter.primary_role_disjoint' in file.read_text(encoding='utf-8'):
+                      leftovers.append(str(file))
+          if leftovers:
+              raise SystemExit(f'old role reason remains: {leftovers}')
+
+      - name: Install project
+        run: python -m pip install -e '.[dev]'
+
+      - name: Targeted checks
+        run: |
+          ruff check \
+            src/careerops_processing/core/filtering.py \
+            src/careerops_processing/contracts/reasons.py \
+            src/careerops_processing/evaluation/filter_bootstrap.py \
+            tests/test_processing_filtering.py \
+            tests/test_processing_filtering_ambiguity_guards.py \
+            tests/test_processing_filtering_false_exclusion_guards.py
+          pytest -q \
+            tests/test_processing_filter_policy.py \
+            tests/test_processing_filtering.py \
+            tests/test_processing_filtering_ambiguity_guards.py \
+            tests/test_processing_filtering_false_exclusion_guards.py
+
+      - name: Commit verified fix
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            src/careerops_processing/core/filtering.py \
+            src/careerops_processing/contracts/reasons.py \
+            src/careerops_processing/evaluation/filter_bootstrap.py \
+            tests/test_processing_filtering.py \
+            tests/test_processing_filtering_ambiguity_guards.py \
+            tests/test_processing_filtering_false_exclusion_guards.py
+          git commit -m 'fix: сделать role filter high-recall'
+          git push origin HEAD:ar/pre-p208-cleanup-calibration
