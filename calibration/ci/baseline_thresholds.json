@@ -1,0 +1,8 @@
+{
+  "schema_version": "careerops.ci-baseline-thresholds.v1",
+  "reranker_recall_at_2_min": 1.0,
+  "reranker_mrr_min": 0.75,
+  "positive_filter_outcome": "keep",
+  "positive_decision": "application_candidate",
+  "proven_skip_filter_outcome": "exclude_proven"
+}

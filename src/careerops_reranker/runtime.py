@@ -61,7 +61,7 @@ class RerankerRuntimeIdentity:
 
 
 class JinaRerankerRuntime:
-    """Владеет одной GPU model и последовательно исполняет rerank requests"""
+    """Владеет одной model и последовательно исполняет rerank requests"""
 
     def __init__(
         self,
@@ -81,12 +81,18 @@ class JinaRerankerRuntime:
     def load(cls, config: RerankerRuntimeConfig) -> JinaRerankerRuntime:
         """Загружает exact pinned model/code/tokenizer revisions на заданное устройство"""
 
-        if config.runtime_backend != "transformers-cuda":
-            raise ValueError("первый P2-05 runtime поддерживает только transformers-cuda")
-        if config.dtype_or_quantization != "float16":
-            raise ValueError("первый P2-05 runtime поддерживает только float16 baseline")
-        if not config.device.startswith("cuda"):
-            raise ValueError("transformers-cuda runtime требует CUDA device")
+        if config.runtime_backend == "transformers-cuda":
+            if config.dtype_or_quantization != "float16":
+                raise ValueError("transformers-cuda runtime поддерживает только float16 baseline")
+            if not config.device.startswith("cuda"):
+                raise ValueError("transformers-cuda runtime требует CUDA device")
+        elif config.runtime_backend == "transformers-cpu":
+            if config.dtype_or_quantization != "float32":
+                raise ValueError("transformers-cpu runtime поддерживает только float32 CI baseline")
+            if config.device != "cpu":
+                raise ValueError("transformers-cpu runtime требует device=cpu")
+        else:
+            raise ValueError("поддерживаются только transformers-cuda и transformers-cpu")
 
         try:
             import torch
@@ -96,8 +102,12 @@ class JinaRerankerRuntime:
                 "для careerops-reranker нужны optional dependencies reranker-runtime"
             ) from exc
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA недоступна для careerops-reranker")
+        if config.runtime_backend == "transformers-cuda":
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA недоступна для careerops-reranker")
+            model_dtype = torch.float16
+        else:
+            model_dtype = torch.float32
 
         tokenizer = AutoTokenizer.from_pretrained(
             config.model_id,
@@ -108,7 +118,7 @@ class JinaRerankerRuntime:
             config.model_id,
             revision=config.model_revision,
             code_revision=config.model_code_revision,
-            dtype=torch.float16,
+            dtype=model_dtype,
             trust_remote_code=True,
         )
         model = model.to(config.device)
