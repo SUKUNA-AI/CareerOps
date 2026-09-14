@@ -8,7 +8,7 @@
   "provenance_complete": false,
   "external_artifacts": {
     "annotations.jsonl": {
-      "sha256": "7e9eb11e6a9bcedaa7146b19c90f7fe0737de5e6ce665b54de2f6b10cb3fac8",
+      "sha256": "7e9eb11e6a9bcedaa7146b19c90f7fe0737de5e6ce665b54de2f6b10cb3fac8c",
       "rows": 1500
     },
     "astra_batches.jsonl": {

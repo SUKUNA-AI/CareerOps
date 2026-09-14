@@ -3,23 +3,27 @@ name: CI
 on:
   push:
     branches:
-      - "ar/p2-*"
+      - main
+      - architecture-reset
+      - "ar/**"
   pull_request:
     branches:
       - main
       - architecture-reset
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   quality:
-    name: Quality
+    name: Quality / Python
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -36,7 +40,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Ruff
-        run: python -m ruff check src tests
+        run: python -m ruff check src tests alembic
 
       - name: mypy
         run: python -m mypy src
@@ -44,9 +48,156 @@ jobs:
       - name: Check dependency consistency
         run: python -m pip check
 
+  architecture-contracts:
+    name: Architecture contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CareerOPS
+        run: python -m pip install -e ".[dev]"
+
+      - name: Verify current architecture boundaries
+        run: |
+          mkdir -p reports
+          python -m pytest \
+            -q \
+            --tb=short \
+            -p no:cacheprovider \
+            tests/test_no_legacy_runtime.py \
+            tests/test_project_dependencies.py \
+            tests/test_hh_driver_readonly.py \
+            tests/test_hh_discovery_contract.py \
+            tests/test_processing_contracts.py \
+            --junitxml=reports/architecture-contracts.xml
+
+      - name: Verify HH adapter CLI contract
+        run: python -m careerops_adapter.hh --help
+
+      - name: Upload architecture diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: architecture-contracts
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  calibration-contract:
+    name: Processing / calibration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CareerOPS
+        run: python -m pip install -e ".[dev]"
+
+      - name: Validate committed calibration source manifest
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from decimal import Decimal
+          from pathlib import Path
+
+          path = Path("calibration/manifests/astra-calibration-v1.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+
+          if manifest.get("schema_version") != "careerops.calibration-source-manifest.v1":
+              raise SystemExit("unexpected calibration source-manifest schema")
+          if manifest.get("dataset_id") != "astra-calibration-v1":
+              raise SystemExit("unexpected calibration dataset_id")
+          if manifest.get("label_tier") != "weak_gold":
+              raise SystemExit("calibration labels must remain weak_gold")
+          if manifest.get("annotation_source") != "astra":
+              raise SystemExit("unexpected calibration annotation source")
+
+          artifacts = manifest.get("external_artifacts", {})
+          for name in ("annotations.jsonl", "astra_batches.jsonl"):
+              digest = artifacts.get(name, {}).get("sha256", "")
+              if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                  raise SystemExit(f"invalid SHA-256 for {name}")
+
+          counts = manifest.get("counts", {})
+          if counts.get("pairs", 0) <= 0:
+              raise SystemExit("calibration source manifest has no pairs")
+          if counts.get("unique_vacancies", 0) <= 0:
+              raise SystemExit("calibration source manifest has no vacancies")
+          if counts.get("unique_resumes", 0) <= 0:
+              raise SystemExit("calibration source manifest has no resumes")
+          if sum(counts.get(key, 0) for key in ("APPLICATION_CANDIDATE", "REVIEW", "SKIP")) != counts["pairs"]:
+              raise SystemExit("calibration decision counts do not sum to pair count")
+
+          split = manifest.get("split", {})
+          if split.get("group_key") != "source_vacancy_id":
+              raise SystemExit("calibration split must stay vacancy-grouped")
+          fractions = sum(
+              Decimal(split[key])
+              for key in (
+                  "calibration_fraction",
+                  "validation_fraction",
+                  "holdout_fraction",
+              )
+          )
+          if fractions != Decimal("1"):
+              raise SystemExit("calibration split fractions must sum to 1")
+
+          freeze_gate = manifest.get("freeze_gate", {})
+          if manifest.get("annotator_model") is None:
+              if freeze_gate.get("status") != "blocked_missing_annotator_model":
+                  raise SystemExit("missing annotator model must keep freeze gate blocked")
+          PY
+
+      - name: Verify calibration CLI
+        run: python -m careerops_processing.calibration --help
+
+      - name: Run calibration and policy contract tests
+        run: |
+          mkdir -p reports
+          python -m pytest \
+            -q \
+            --tb=short \
+            -p no:cacheprovider \
+            tests/test_processing_calibration.py \
+            tests/test_reranker_metrics.py \
+            tests/test_reranker_quality_metrics.py \
+            tests/test_processing_p206_p207_contracts.py \
+            tests/test_processing_p207_structured_scoring.py \
+            --junitxml=reports/calibration-contract.xml
+
+      - name: Upload calibration diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: calibration-contract
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
   fast-tests:
     name: Fast tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     strategy:
       fail-fast: false
@@ -111,7 +262,7 @@ jobs:
           retention-days: 7
 
   postgres-integration:
-    name: PostgreSQL integration
+    name: PostgreSQL 18 / integration
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
