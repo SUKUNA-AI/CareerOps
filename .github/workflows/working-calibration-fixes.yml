@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   apply-p203-fix:
-    if: ${{ !startsWith(github.event.head_commit.message, 'fix: сделать role filter high-recall') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
