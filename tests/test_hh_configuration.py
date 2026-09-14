@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from careerops_integrations.hh.configuration import (
+from careerops_adapter.hh.configuration import (
     HHConfigError,
     load_accounts_config,
     load_discovery_config,
