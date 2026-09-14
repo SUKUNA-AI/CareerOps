@@ -23,7 +23,7 @@ from uuid import UUID
 
 import psycopg
 
-from careerops_integrations.hh.configuration import (
+from .configuration import (
     DiscoveryConfig,
     HHAccountConfig,
     HHConfigError,
@@ -32,7 +32,6 @@ from careerops_integrations.hh.configuration import (
     load_accounts_config,
     load_discovery_config,
 )
-
 from .postgres import HHPostgresSettings, resolve_hh_account_id
 from .tasks import (
     SourceTaskKind,
