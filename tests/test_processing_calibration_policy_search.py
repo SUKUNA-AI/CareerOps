@@ -86,13 +86,13 @@ def test_search_p207_policy_prioritizes_candidates_meeting_recall_floor() -> Non
         annotations,
         replay_cases,
         candidates,
-        min_apply_recall=0.80,
+        min_application_candidate_recall=0.80,
     )
 
     assert results[0]["candidate"]["candidate_id"] == "recall-first"
-    assert results[0]["meets_min_apply_recall"] is True
+    assert results[0]["meets_min_application_candidate_recall"] is True
     assert results[1]["candidate"]["candidate_id"] == "strict"
-    assert results[1]["meets_min_apply_recall"] is False
+    assert results[1]["meets_min_application_candidate_recall"] is False
 
 
 def test_search_p207_policy_keeps_candidates_below_floor_for_frontier_analysis() -> None:
@@ -117,9 +117,9 @@ def test_search_p207_policy_keeps_candidates_below_floor_for_frontier_analysis()
         annotations,
         replay_cases,
         candidates,
-        min_apply_recall=0.80,
+        min_application_candidate_recall=0.80,
     )
 
     assert len(results) == 1
-    assert results[0]["meets_min_apply_recall"] is False
-    assert results[0]["min_apply_recall"] == 0.80
+    assert results[0]["meets_min_application_candidate_recall"] is False
+    assert results[0]["min_application_candidate_recall"] == 0.80
