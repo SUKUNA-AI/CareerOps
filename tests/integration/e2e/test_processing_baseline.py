@@ -168,6 +168,9 @@ def _write_report(payload: dict[str, object]) -> None:
 @pytest.mark.integration_e2e_baseline
 @pytest.mark.asyncio
 async def test_processing_live_jina_baseline() -> None:
+    if os.environ.get("CAREEROPS_E2E_BASELINE") != "1":
+        pytest.skip("live Jina baseline runs only in the dedicated CI job")
+
     endpoint = os.environ["CAREEROPS_TEST_RERANKER_URL"]
     thresholds = json.loads(
         Path("calibration/ci/baseline_thresholds.json").read_text(encoding="utf-8")
