@@ -136,11 +136,20 @@ def test_incidental_technology_does_not_change_primary_occupation() -> None:
     assert result.outcome is FilterOutcome.KEEP
 
 
-def test_proven_primary_role_disjoint_is_excluded() -> None:
+def test_allowed_role_mismatch_is_advisory_and_kept() -> None:
     target = policy(allowed_primary_roles=["data_engineering"])
     result = evaluate_filter(vacancy(title="Java Backend Developer"), target)
+    assert result.outcome is FilterOutcome.KEEP
+
+
+def test_explicitly_forbidden_primary_role_is_excluded() -> None:
+    target = policy(
+        allowed_primary_roles=["data_engineering"],
+        forbidden_primary_roles=["java_backend"],
+    )
+    result = evaluate_filter(vacancy(title="Java Backend Developer"), target)
     assert result.outcome is FilterOutcome.EXCLUDE_PROVEN
-    assert result.exclusions[0].reason_code == "filter.primary_role_disjoint"
+    assert result.exclusions[0].reason_code == "filter.primary_role_forbidden"
     assert result.exclusions[0].evidence[0].source_path == "vacancy.title"
 
 

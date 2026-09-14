@@ -28,7 +28,7 @@ class ReasonNamespace(StrEnum):
 
 
 INITIAL_REASON_CODES: tuple[ReasonCode, ...] = (
-    "filter.primary_role_disjoint",
+    "filter.primary_role_forbidden",
     "filter.seniority_forbidden",
     "filter.management_forbidden",
     "filter.experience_gap_exceeded",
