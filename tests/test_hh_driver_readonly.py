@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from careerops_integrations.hh.driver import HHApplicantToolCLI
+from careerops_adapter.hh.driver import HHApplicantToolCLI
 
 
 def test_driver_is_structurally_read_only() -> None:
