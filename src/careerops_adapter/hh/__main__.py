@@ -8,8 +8,7 @@ import json
 from pathlib import Path
 from uuid import UUID
 
-from careerops_integrations.hh.configuration import discovery_config_path_from_env
-
+from .configuration import discovery_config_path_from_env
 from .producer import SourceSeedKind, seed_source_generation
 from .service import default_accounts_config_path, default_worker_id, run_account_worker
 
