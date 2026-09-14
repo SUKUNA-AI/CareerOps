@@ -18,7 +18,7 @@ from .models import (
 
 _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
-_DEFAULT_MIN_APPLY_RECALL = 0.80
+_DEFAULT_MIN_APPLICATION_CANDIDATE_RECALL = 0.80
 
 
 def _weighted_score(
@@ -125,18 +125,18 @@ def search_p207_policy(
     candidates: tuple[P207PolicyCandidate, ...],
     *,
     allowed_pair_ids: set[str] | None = None,
-    min_apply_recall: float = _DEFAULT_MIN_APPLY_RECALL,
+    min_application_candidate_recall: float = _DEFAULT_MIN_APPLICATION_CANDIDATE_RECALL,
 ) -> tuple[dict[str, object], ...]:
     """Rank policies with a recall floor, without hiding candidates below the floor.
 
     The recall floor is a search constraint, not a production constant. Candidates that
     satisfy it are ranked ahead of candidates that do not, then by weighted error cost,
-    higher APPLY recall and lower REVIEW rate. Keeping all rows in the result makes
-    threshold sweeps and Pareto/frontier analysis possible during calibration.
+    higher APPLICATION_CANDIDATE recall and lower REVIEW rate. Keeping all rows in the
+    result makes threshold sweeps and Pareto/frontier analysis possible during calibration.
     """
 
-    if not 0.0 <= min_apply_recall <= 1.0:
-        raise ValueError("min_apply_recall must be between 0 and 1")
+    if not 0.0 <= min_application_candidate_recall <= 1.0:
+        raise ValueError("min_application_candidate_recall must be between 0 and 1")
 
     annotation_by_pair = {item.pair_id: item for item in annotations}
     case_by_pair = {item.pair_id: item for item in replay_cases}
@@ -170,23 +170,27 @@ def search_p207_policy(
             ),
             _ZERO,
         )
-        apply_recall_value = metrics["application_candidate_recall"]
+        application_candidate_recall_value = metrics["application_candidate_recall"]
         review_rate_value = metrics["review_rate"]
-        if not isinstance(apply_recall_value, float) or not isinstance(review_rate_value, float):
+        if not isinstance(application_candidate_recall_value, float) or not isinstance(
+            review_rate_value, float
+        ):
             raise TypeError("P2-07 evaluator returned non-float policy metrics")
-        meets_recall_floor = apply_recall_value >= min_apply_recall
+        meets_recall_floor = (
+            application_candidate_recall_value >= min_application_candidate_recall
+        )
         payload: dict[str, object] = {
             "candidate": candidate.model_dump(mode="json"),
             "weighted_cost": str(total_cost),
-            "min_apply_recall": min_apply_recall,
-            "meets_min_apply_recall": meets_recall_floor,
+            "min_application_candidate_recall": min_application_candidate_recall,
+            "meets_min_application_candidate_recall": meets_recall_floor,
             "metrics": metrics,
         }
         ranked_entries.append(
             (
                 not meets_recall_floor,
                 total_cost,
-                -apply_recall_value,
+                -application_candidate_recall_value,
                 review_rate_value,
                 payload,
             )
