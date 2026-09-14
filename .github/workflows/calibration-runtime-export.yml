@@ -1,9 +1,11 @@
 name: Calibration Runtime Export
 
 on:
-  pull_request:
+  push:
     branches:
-      - architecture-reset
+      - ar/pre-p208-cleanup-calibration
+    paths:
+      - .github/workflows/calibration-runtime-export.yml
   workflow_dispatch:
 
 permissions:
@@ -11,7 +13,7 @@ permissions:
 
 jobs:
   export-runtime:
-    name: Экспорт offline Jina runtime
+    name: Export offline Jina runtime chunks
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -71,29 +73,66 @@ jobs:
           cat runtime-export/reranker.log >&2 || true
           exit 1
 
-      - name: Build offline wheelhouse
+      - name: Pack small runtime dependencies and source
         run: |
-          mkdir -p runtime-export/wheels
-          python -m pip download --dest runtime-export/wheels ".[dev]"
-          python -m pip download \
-            --dest runtime-export/wheels \
-            --index-url https://download.pytorch.org/whl/cpu \
-            "torch==2.14.0"
-          python -m pip download --dest runtime-export/wheels "transformers==4.57.3"
-
-      - name: Pack CareerOPS source
-        run: |
+          set -euo pipefail
+          mkdir -p runtime-export/wheels runtime-export/chunks
+          python -m pip download --dest runtime-export/wheels \
+            "transformers==4.57.3" \
+            "tokenizers==0.22.2" \
+            "huggingface-hub==0.36.2"
           tar -czf runtime-export/careerops-source.tar.gz \
             src config pyproject.toml
+          tar -cf runtime-export/huggingface-cache.tar -C .cache huggingface
+          split -b 350M -d -a 2 \
+            runtime-export/huggingface-cache.tar \
+            runtime-export/chunks/hf-cache.part-
+          ls -lh runtime-export/chunks
 
-      - name: Copy Hugging Face cache
-        run: cp -a .cache/huggingface runtime-export/huggingface
-
-      - name: Upload calibration runtime
+      - name: Upload runtime core
         uses: actions/upload-artifact@v7
         with:
-          name: careerops-calibration-runtime
-          path: runtime-export/
+          name: careerops-calibration-runtime-core
+          path: |
+            runtime-export/careerops-source.tar.gz
+            runtime-export/wheels/
+            runtime-export/reranker-ready.json
           if-no-files-found: error
           retention-days: 2
           compression-level: 1
+
+      - name: Upload HF cache part 00
+        uses: actions/upload-artifact@v7
+        with:
+          name: careerops-jina-cache-00
+          path: runtime-export/chunks/hf-cache.part-00
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload HF cache part 01
+        uses: actions/upload-artifact@v7
+        with:
+          name: careerops-jina-cache-01
+          path: runtime-export/chunks/hf-cache.part-01
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload HF cache part 02
+        uses: actions/upload-artifact@v7
+        with:
+          name: careerops-jina-cache-02
+          path: runtime-export/chunks/hf-cache.part-02
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+      - name: Upload HF cache part 03
+        uses: actions/upload-artifact@v7
+        with:
+          name: careerops-jina-cache-03
+          path: runtime-export/chunks/hf-cache.part-03
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
