@@ -6,6 +6,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 REMOVED_RUNTIME_PATHS = (
+    "src/careerops_integrations",
     "src/careerops_scheduler",
     "src/careerops_etl",
     "src/careerops_contracts",
@@ -13,23 +14,6 @@ REMOVED_RUNTIME_PATHS = (
     "src/careerops_storage/postgres.py",
     "src/careerops_storage/schema.py",
     "src/careerops_storage/legacy",
-    "src/careerops_integrations/hh/application_audit.py",
-    "src/careerops_integrations/hh/application_claims.py",
-    "src/careerops_integrations/hh/application_cli.py",
-    "src/careerops_integrations/hh/apply_batch.py",
-    "src/careerops_integrations/hh/batch_cli.py",
-    "src/careerops_integrations/hh/cli.py",
-    "src/careerops_integrations/hh/cover_letters.py",
-    "src/careerops_integrations/hh/filtering.py",
-    "src/careerops_integrations/hh/mapper.py",
-    "src/careerops_integrations/hh/models.py",
-    "src/careerops_integrations/hh/observe.py",
-    "src/careerops_integrations/hh/raw.py",
-    "src/careerops_integrations/hh/reader.py",
-    "src/careerops_integrations/hh/resume_sync.py",
-    "src/careerops_integrations/hh/runtime.py",
-    "src/careerops_integrations/hh/sync.py",
-    "src/careerops_integrations/hh/test_bridge.py",
     "infra/compose/hh-worker",
     "infra/systemd",
     "scripts",
@@ -37,10 +21,7 @@ REMOVED_RUNTIME_PATHS = (
 )
 
 FORBIDDEN_RUNTIME_IMPORTS = (
-    "careerops_integrations.hh.filtering",
-    "careerops_integrations.hh.mapper",
-    "careerops_integrations.hh.observe",
-    "careerops_integrations.hh.runtime",
+    "careerops_integrations",
     "careerops_etl.hh_s3_to_postgres",
     "careerops_storage.alembic_cutover",
     "careerops_storage.postgres",
