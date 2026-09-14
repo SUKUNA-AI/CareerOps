@@ -67,6 +67,12 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("--split", choices=[item.value for item in SplitName], required=True)
     search.add_argument("--output", required=True)
     search.add_argument("--top", type=int, default=100)
+    search.add_argument(
+        "--min-apply-recall",
+        type=float,
+        default=0.80,
+        help="search recall floor for APPLICATION_CANDIDATE; candidates below it remain in output",
+    )
     return parser
 
 
@@ -171,6 +177,8 @@ def _evaluate(args: argparse.Namespace) -> int:
 def _search_p207(args: argparse.Namespace) -> int:
     if args.top <= 0:
         raise ValueError("--top must be positive")
+    if not 0.0 <= args.min_apply_recall <= 1.0:
+        raise ValueError("--min-apply-recall must be between 0 and 1")
     annotations = load_annotations(args.annotations)
     assignments = load_jsonl(args.assignments, SplitAssignment)
     replay_cases = load_jsonl(args.replay, P207ReplayCase)
@@ -182,18 +190,29 @@ def _search_p207(args: argparse.Namespace) -> int:
         replay_cases,
         candidates,
         allowed_pair_ids=allowed,
+        min_apply_recall=args.min_apply_recall,
     )
     payload = {
         "schema_version": "careerops.p207-policy-search.v1",
         "split": split.value,
         "candidate_count": len(results),
+        "min_apply_recall": args.min_apply_recall,
         "results": results[: args.top],
     }
     Path(args.output).write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({"split": split.value, "candidate_count": len(results)}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "split": split.value,
+                "candidate_count": len(results),
+                "min_apply_recall": args.min_apply_recall,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
