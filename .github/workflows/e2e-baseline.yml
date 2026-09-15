@@ -1,9 +1,6 @@
 name: E2E Baseline
 
 on:
-  push:
-    branches:
-      - ar/pre-p208-cleanup-calibration
   pull_request:
     branches:
       - main
