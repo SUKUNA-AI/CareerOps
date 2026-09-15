@@ -246,6 +246,11 @@ def test_not_required_member_is_neutral_inside_any_group() -> None:
     groups = (
         RequirementGroup(
             group_id="root",
+            operator=RequirementGroupOperator.ALL,
+            child_group_ids=("language",),
+        ),
+        RequirementGroup(
+            group_id="language",
             operator=RequirementGroupOperator.ANY,
             requirement_ids=("req-legacy", "req-python"),
         ),
@@ -254,10 +259,10 @@ def test_not_required_member_is_neutral_inside_any_group() -> None:
 
     qualification = qualify(requirements, evidence_set())
 
-    root = qualification.groups[0]
+    language = next(item for item in qualification.groups if item.group_id == "language")
     assert qualification.ignored_requirement_ids == ("req-legacy",)
-    assert root.support.lower == Decimal("0")
-    assert root.support.upper == Decimal("1")
+    assert language.support.lower == Decimal("0")
+    assert language.support.upper == Decimal("1")
 
 
 def test_required_mandatory_contradiction_uses_policy_not_critical_gate() -> None:
