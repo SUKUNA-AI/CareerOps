@@ -20,6 +20,7 @@ from careerops_processing.contracts import (
     RequirementGroup,
     RequirementGroupOperator,
     RequirementImportance,
+    RequirementModality,
     RequirementQualificationState,
     RequirementThreshold,
     RequirementThresholdMetric,
@@ -232,6 +233,30 @@ def test_any_group_uses_max_support_and_is_one_scoring_unit() -> None:
     mandatory = next(item for item in decision.components if item.key == "mandatory_coverage")
     assert mandatory.lower == Decimal("100")
     assert decision.decision is MatchDecision.APPLICATION_CANDIDATE
+
+
+def test_not_required_member_is_neutral_inside_any_group() -> None:
+    ignored = requirement(
+        "req-legacy",
+        "Legacy stack",
+        modality=RequirementModality.NOT_REQUIRED,
+    )
+    required = requirement("req-python", "Python")
+    groups = (
+        RequirementGroup(
+            group_id="root",
+            operator=RequirementGroupOperator.ANY,
+            requirement_ids=("req-legacy", "req-python"),
+        ),
+    )
+    requirements = requirement_set(ignored, required, groups=groups)
+
+    qualification = qualify(requirements, evidence_set())
+
+    root = qualification.groups[0]
+    assert qualification.ignored_requirement_ids == ("req-legacy",)
+    assert root.support.lower == Decimal("0")
+    assert root.support.upper == Decimal("1")
 
 
 def test_required_mandatory_contradiction_uses_policy_not_critical_gate() -> None:
