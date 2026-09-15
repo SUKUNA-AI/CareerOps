@@ -122,6 +122,7 @@ def _target_policy() -> TargetPolicy:
             "filtering": {
                 "schema_version": 1,
                 "allowed_primary_roles": ["data_engineering"],
+                "forbidden_primary_roles": ["backend"],
             },
             "scoring": {
                 "schema_version": 1,
