@@ -10,11 +10,19 @@ from pydantic import BaseModel
 from careerops_processing.contracts import (
     EVIDENCE_CANDIDATE_SET_SCHEMA_VERSION,
     MATCH_DECISION_SCHEMA_VERSION,
+    P204_RESULT_SCHEMA_VERSION,
+    P205_RESULT_SCHEMA_VERSION,
+    P206_RESULT_SCHEMA_VERSION,
+    P207_RESULT_SCHEMA_VERSION,
     REQUIREMENT_QUALIFICATION_SET_SCHEMA_VERSION,
     REQUIREMENT_SET_SCHEMA_VERSION,
     RESUME_EVIDENCE_SET_SCHEMA_VERSION,
     EvidenceCandidateSet,
     MatchDecisionBundle,
+    P204ResultArtifact,
+    P205ResultArtifact,
+    P206ResultArtifact,
+    P207ResultArtifact,
     ProcessingArtifactKind,
     ProcessingArtifactRef,
     RequirementQualificationSet,
@@ -124,4 +132,36 @@ class ProcessingArtifactLoader:
             expected_kind=ProcessingArtifactKind.MATCH_DECISION,
             expected_schema_version=MATCH_DECISION_SCHEMA_VERSION,
             model=MatchDecisionBundle,
+        )
+
+    async def load_p204_result(self, ref: ProcessingArtifactRef) -> P204ResultArtifact:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.P2_04_RESULT,
+            expected_schema_version=P204_RESULT_SCHEMA_VERSION,
+            model=P204ResultArtifact,
+        )
+
+    async def load_p205_result(self, ref: ProcessingArtifactRef) -> P205ResultArtifact:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.P2_05_RESULT,
+            expected_schema_version=P205_RESULT_SCHEMA_VERSION,
+            model=P205ResultArtifact,
+        )
+
+    async def load_p206_result(self, ref: ProcessingArtifactRef) -> P206ResultArtifact:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.P2_06_RESULT,
+            expected_schema_version=P206_RESULT_SCHEMA_VERSION,
+            model=P206ResultArtifact,
+        )
+
+    async def load_p207_result(self, ref: ProcessingArtifactRef) -> P207ResultArtifact:
+        return await self._load(
+            ref,
+            expected_kind=ProcessingArtifactKind.P2_07_RESULT,
+            expected_schema_version=P207_RESULT_SCHEMA_VERSION,
+            model=P207ResultArtifact,
         )
