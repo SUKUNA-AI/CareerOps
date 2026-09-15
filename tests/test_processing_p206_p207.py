@@ -239,6 +239,7 @@ def test_not_required_member_is_neutral_inside_any_group() -> None:
     ignored = requirement(
         "req-legacy",
         "Legacy stack",
+        importance=RequirementImportance.OPTIONAL,
         modality=RequirementModality.NOT_REQUIRED,
     )
     required = requirement("req-python", "Python")
