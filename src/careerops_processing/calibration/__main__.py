@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,7 @@ from .models import (
     SplitAssignment,
     SplitName,
 )
+from .p205_runner import execute_p205_calibration
 from .policy_search import search_p207_policy
 from .reporting import write_json_report, write_markdown_report
 
@@ -50,6 +52,17 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--dataset-id", default="astra-calibration-v1")
     prepare.add_argument("--split-seed", default="careerops-calibration-v1")
     prepare.add_argument("--annotator-model")
+
+    run_p205 = subparsers.add_parser(
+        "run-p205",
+        help="run full-pool P2-05 against a live Jina endpoint and emit p205.jsonl",
+    )
+    run_p205.add_argument("--cases", required=True)
+    run_p205.add_argument("--endpoint", required=True)
+    run_p205.add_argument("--output", required=True)
+    run_p205.add_argument("--top-k", type=int, default=5)
+    run_p205.add_argument("--token-budget", type=int, required=True)
+    run_p205.add_argument("--timeout-seconds", type=float, default=300.0)
 
     evaluate = subparsers.add_parser("evaluate", help="evaluate available P2 stage predictions")
     evaluate.add_argument("--annotations", required=True)
@@ -124,6 +137,21 @@ def _prepare(args: argparse.Namespace) -> int:
             sort_keys=True,
         )
     )
+    return 0
+
+
+def _run_p205(args: argparse.Namespace) -> int:
+    summary = asyncio.run(
+        execute_p205_calibration(
+            cases_path=Path(args.cases),
+            endpoint=args.endpoint,
+            output_path=Path(args.output),
+            top_k=args.top_k,
+            token_budget=args.token_budget,
+            timeout_seconds=args.timeout_seconds,
+        )
+    )
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0
 
 
@@ -222,6 +250,8 @@ def main() -> int:
     args = _build_parser().parse_args()
     if args.command == "prepare":
         return _prepare(args)
+    if args.command == "run-p205":
+        return _run_p205(args)
     if args.command == "evaluate":
         return _evaluate(args)
     if args.command == "search-p207":

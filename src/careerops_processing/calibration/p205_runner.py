@@ -229,20 +229,7 @@ def write_p205_predictions(path: Path, predictions: tuple[P205Prediction, ...]) 
     temporary.replace(path)
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run full-pool P2-05 Jina calibration and emit p205.jsonl"
-    )
-    parser.add_argument("--cases", type=Path, required=True)
-    parser.add_argument("--endpoint", required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument("--token-budget", type=int, required=True)
-    parser.add_argument("--timeout-seconds", type=float, default=300.0)
-    return parser
-
-
-async def _execute(
+async def execute_p205_calibration(
     *,
     cases_path: Path,
     endpoint: str,
@@ -251,6 +238,8 @@ async def _execute(
     token_budget: int,
     timeout_seconds: float,
 ) -> dict[str, object]:
+    """Execute the live full-pool P2-05 calibration against one Jina endpoint."""
+
     cases = load_p205_runtime_cases(cases_path)
     jina = await discover_jina_version(
         endpoint,
@@ -283,10 +272,23 @@ async def _execute(
     }
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run full-pool P2-05 Jina calibration and emit p205.jsonl"
+    )
+    parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--endpoint", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--token-budget", type=int, required=True)
+    parser.add_argument("--timeout-seconds", type=float, default=300.0)
+    return parser
+
+
 def main() -> int:
     args = _build_parser().parse_args()
     summary = asyncio.run(
-        _execute(
+        execute_p205_calibration(
             cases_path=args.cases,
             endpoint=args.endpoint,
             output_path=args.output,
