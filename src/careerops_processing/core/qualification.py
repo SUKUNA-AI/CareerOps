@@ -337,11 +337,6 @@ def _group_qualifications(
     group_by_id = {item.group_id: item for item in requirement_set.groups}
     memo: dict[str, RequirementGroupQualification] = {}
 
-    def requirement_bounds(requirement_id: str) -> SupportBounds:
-        if requirement_id in ignored:
-            return _bounds(_ONE, _ONE)
-        return evaluation_by_id[requirement_id].support
-
     def evaluate(group: RequirementGroup) -> RequirementGroupQualification:
         cached = memo.get(group.group_id)
         if cached is not None:
@@ -356,7 +351,11 @@ def _group_qualifications(
             memo[group.group_id] = result
             return result
 
-        bounds = [requirement_bounds(item) for item in group.requirement_ids]
+        bounds = [
+            evaluation_by_id[item].support
+            for item in group.requirement_ids
+            if item not in ignored
+        ]
         bounds.extend(evaluate(group_by_id[item]).support for item in group.child_group_ids)
         if not bounds:
             support = _bounds(_ONE, _ONE)
