@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <google/protobuf/struct.pb.h>
 
 namespace careerops::matching_core {

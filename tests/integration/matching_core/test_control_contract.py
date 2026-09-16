@@ -45,13 +45,15 @@ def _generate_python_stubs(tmp_path: Path) -> tuple[ModuleType, ModuleType, Modu
     grpc_tools_protoc = importlib.import_module("grpc_tools.protoc")
     proto_root = _repo_root() / "proto"
     proto_file = proto_root / "careerops/matching_core/v1/control.proto"
-    result = grpc_tools_protoc.main([
-        "grpc_tools.protoc",
-        f"-I{proto_root}",
-        f"--python_out={tmp_path}",
-        f"--grpc_python_out={tmp_path}",
-        str(proto_file),
-    ])
+    result = grpc_tools_protoc.main(
+        [
+            "grpc_tools.protoc",
+            f"-I{proto_root}",
+            f"--python_out={tmp_path}",
+            f"--grpc_python_out={tmp_path}",
+            str(proto_file),
+        ]
+    )
     assert result == 0
     sys.path.insert(0, str(tmp_path))
     try:
@@ -67,7 +69,10 @@ def _wait_for_channel(grpc: ModuleType, channel: object, process: subprocess.Pop
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            pytest.fail(f"matching-core exited before gRPC became ready: returncode={process.returncode}")
+            pytest.fail(
+                "matching-core exited before gRPC became ready: "
+                f"returncode={process.returncode}"
+            )
         try:
             grpc.channel_ready_future(channel).result(timeout=0.2)
             return
@@ -108,10 +113,19 @@ def test_python_and_cpp_share_the_canonical_control_contract(tmp_path: Path) -> 
         assert health.service_version == SERVICE_VERSION
         assert health.protocol_version == CONTROL_PROTOCOL_VERSION
         capabilities = stub.GetCapabilities(control_pb2.CapabilitiesRequest(), timeout=2)
-        assert list(capabilities.supported_control_protocol_versions) == [CONTROL_PROTOCOL_VERSION]
+        assert list(capabilities.supported_control_protocol_versions) == [
+            CONTROL_PROTOCOL_VERSION
+        ]
         assert capabilities.evaluate_match_available is True
         assert capabilities.evaluate_batch_available is True
-        healthcheck = subprocess.run([str(binary), "--healthcheck"], env=env, capture_output=True, text=True, timeout=4, check=False)
+        healthcheck = subprocess.run(
+            [str(binary), "--healthcheck"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
         assert healthcheck.returncode == 0, healthcheck.stderr
     finally:
         channel.close()

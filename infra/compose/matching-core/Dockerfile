@@ -4,6 +4,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
+        libboost-dev \
         libgrpc++-dev \
         libprotobuf-dev \
         pkg-config \
