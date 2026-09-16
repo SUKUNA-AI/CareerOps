@@ -11,6 +11,8 @@ dependencies = [
     "SQLAlchemy>=2.0,<3",
     "alembic>=1.19,<2",
     "httpx>=0.28,<1",
+    "grpcio>=1.74,<2",
+    "protobuf>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +28,6 @@ reranker-runtime = [
     "transformers==4.57.3",
 ]
 matching-core-test = [
-    "grpcio>=1.74,<2",
     "grpcio-tools>=1.74,<2",
 ]
 
