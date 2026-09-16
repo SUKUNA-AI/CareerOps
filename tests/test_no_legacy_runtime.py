@@ -14,6 +14,8 @@ REMOVED_RUNTIME_PATHS = (
     "src/careerops_storage/postgres.py",
     "src/careerops_storage/schema.py",
     "src/careerops_storage/legacy",
+    "src/careerops_processing/core/qualification.py",
+    "src/careerops_processing/core/scoring.py",
     "infra/compose/hh-worker",
     "infra/systemd",
     "scripts",
@@ -27,6 +29,8 @@ FORBIDDEN_RUNTIME_IMPORTS = (
     "careerops_storage.postgres",
     "careerops_storage.schema",
     "careerops_scheduler",
+    "careerops_processing.core.qualification",
+    "careerops_processing.core.scoring",
 )
 
 FORBIDDEN_SOURCE_TOKENS = (
@@ -35,6 +39,8 @@ FORBIDDEN_SOURCE_TOKENS = (
     "RuntimeMode.OBSERVE",
     "submit_application(",
     "submit_application_with_test(",
+    "qualify_requirements(",
+    "score_match(",
 )
 
 FORBIDDEN_RETIRED_NAMING = (

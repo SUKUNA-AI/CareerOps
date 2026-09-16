@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import date
 
 from careerops_processing.contracts import (
     EvidenceActorScope,
@@ -11,8 +10,6 @@ from careerops_processing.contracts import (
     EvidenceKind,
     EvidenceStrength,
     JinaVersionBundle,
-    MatchDecisionBundle,
-    NormalizedVacancy,
     Requirement,
     RequirementContext,
     RequirementEvidenceCandidates,
@@ -33,7 +30,6 @@ from careerops_processing.contracts import (
     SemanticTimeSpan,
     TargetPolicy,
 )
-from careerops_processing.core import qualify_requirements, score_match
 
 HASH_A = "a" * 64
 HASH_B = "b" * 64
@@ -235,24 +231,6 @@ def candidate_set(
     )
 
 
-def qualify(
-    requirements: RequirementSet,
-    resume_evidence: ResumeEvidenceSet,
-    candidates: EvidenceCandidateSet | None = None,
-) -> RequirementQualificationSet:
-    return qualify_requirements(
-        input_fingerprint=HASH_C,
-        requirement_set_ref_sha256=HASH_A,
-        resume_evidence_set_ref_sha256=HASH_B,
-        evidence_candidate_set_ref_sha256=HASH_D,
-        requirement_set=requirements,
-        evidence_set=resume_evidence,
-        candidate_set=candidates or candidate_set(requirements, resume_evidence),
-        qualification_version="qualification-v1",
-        as_of=date(2026, 9, 10),
-    )
-
-
 def policy(
     *,
     calibrated: bool = True,
@@ -278,35 +256,6 @@ def policy(
         schema_version="target-policy-v1",
         policy_version="policy-v1",
         content=content,
-    )
-
-
-def score(
-    requirements: RequirementSet,
-    qualification: RequirementQualificationSet,
-    *,
-    calibrated: bool = True,
-    threshold: str = "80",
-    mandatory_min_support: str = "1",
-    weights: Mapping[str, str] | None = None,
-    filtering: Mapping[str, object] | None = None,
-    vacancy: NormalizedVacancy | None = None,
-) -> MatchDecisionBundle:
-    return score_match(
-        input_fingerprint=HASH_C,
-        qualification_set_ref_sha256=HASH_D,
-        requirement_set=requirements,
-        qualification_set=qualification,
-        target_policy=policy(
-            calibrated=calibrated,
-            threshold=threshold,
-            mandatory_min_support=mandatory_min_support,
-            weights=weights,
-            filtering=filtering,
-        ),
-        scoring_version="scoring-v1",
-        calibration_version="gold-v1" if calibrated else "calibration-unset",
-        vacancy=vacancy,
     )
 
 

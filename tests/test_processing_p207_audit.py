@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 from support.processing import (
     HASH_A,
     HASH_B,
+    candidate_set,
     evidence,
     evidence_set,
     jina,
     policy,
-    qualify,
     requirement,
     requirement_set,
 )
@@ -36,11 +37,17 @@ from careerops_processing.contracts import (
     ProcessingInputManifest,
     ProcessingVersionBundle,
     RawObservationRef,
+    RequirementGroupQualification,
+    RequirementQualification,
+    RequirementQualificationSet,
+    RequirementQualificationState,
+    ScoreBounds,
     ScoringPolicy,
     SourceValue,
+    SupportBounds,
     ValueState,
 )
-from careerops_processing.core.scoring import score_match
+from careerops_processing.native_decision import NativeDecisionResult
 from careerops_processing.replay import verify_p207_replay
 
 HASH_C = "c" * 64
@@ -104,7 +111,7 @@ def _manifest() -> ProcessingInputManifest:
         ),
         target_policy=policy(calibrated=True),
         versions=ProcessingVersionBundle(
-            pipeline_version="processing-v2-p207",
+            pipeline_version="processing-v2-p207-native",
             dictionary_version="dict-v1",
             filter_version="filter-v1",
             requirement_extraction_version="requirements-v2",
@@ -128,45 +135,35 @@ def _vacancy() -> NormalizedVacancy:
 
 
 class _ArtifactReader:
-    def __init__(
-        self,
-        *,
-        p204: P204ResultArtifact,
-        p205: P205ResultArtifact,
-        p206: P206ResultArtifact,
-        p207: P207ResultArtifact,
-        decision: MatchDecisionBundle,
-        requirements,
-        qualification,
-    ) -> None:
-        self.p204 = p204
-        self.p205 = p205
-        self.p206 = p206
-        self.p207 = p207
-        self.decision = decision
-        self.requirements = requirements
-        self.qualification = qualification
+    def __init__(self, **values: Any) -> None:
+        self.values = values
 
     async def load_p207_result(self, _ref: ProcessingArtifactRef) -> P207ResultArtifact:
-        return self.p207
+        return self.values["p207"]
 
     async def load_p206_result(self, _ref: ProcessingArtifactRef) -> P206ResultArtifact:
-        return self.p206
+        return self.values["p206"]
 
     async def load_p205_result(self, _ref: ProcessingArtifactRef) -> P205ResultArtifact:
-        return self.p205
+        return self.values["p205"]
 
     async def load_p204_result(self, _ref: ProcessingArtifactRef) -> P204ResultArtifact:
-        return self.p204
+        return self.values["p204"]
 
     async def load_match_decision(self, _ref: ProcessingArtifactRef) -> MatchDecisionBundle:
-        return self.decision
+        return self.values["stored_decision"]
 
     async def load_requirement_set(self, _ref: ProcessingArtifactRef):
-        return self.requirements
+        return self.values["requirements"]
+
+    async def load_resume_evidence_set(self, _ref: ProcessingArtifactRef):
+        return self.values["evidence"]
+
+    async def load_evidence_candidate_set(self, _ref: ProcessingArtifactRef):
+        return self.values["candidates"]
 
     async def load_requirement_qualification_set(self, _ref: ProcessingArtifactRef):
-        return self.qualification
+        return self.values["qualification"]
 
 
 class _InputReader:
@@ -177,23 +174,84 @@ class _InputReader:
         return self.vacancy
 
 
+class _DecisionCore:
+    def __init__(
+        self,
+        qualification: RequirementQualificationSet,
+        decision: MatchDecisionBundle,
+    ) -> None:
+        self.qualification = qualification
+        self.decision = decision
+        self.calls = 0
+
+    async def evaluate(self, **_kwargs: Any) -> NativeDecisionResult:
+        self.calls += 1
+        return NativeDecisionResult(
+            qualification_set=self.qualification,
+            decision=self.decision,
+        )
+
+
 def _replay_fixture(*, wrong_decision: bool = False):
     manifest = _manifest()
     fingerprint = manifest.input_fingerprint()
     requirements = requirement_set(
         requirement("req-python", "Python", statement="Python обязателен")
     )
-    qualification = qualify(
-        requirements,
-        evidence_set(evidence("ev-python", "Python")),
-    ).model_copy(
+    resume_evidence = evidence_set(evidence("ev-python", "Python"))
+    candidates = candidate_set(requirements, resume_evidence).model_copy(
         update={
             "input_fingerprint": fingerprint,
             "requirement_set_sha256": HASH_A,
-            "qualification_version": manifest.versions.qualification_version,
+            "resume_evidence_set_sha256": HASH_B,
+            "jina": manifest.versions.jina,
         }
     )
-    vacancy = _vacancy()
+    qualification = RequirementQualificationSet(
+        input_fingerprint=fingerprint,
+        requirement_set_sha256=HASH_A,
+        resume_evidence_set_sha256=HASH_B,
+        evidence_candidate_set_sha256=HASH_E,
+        qualification_version=manifest.versions.qualification_version,
+        evaluations=(
+            RequirementQualification(
+                requirement_id="req-python",
+                state=RequirementQualificationState.MATCHED,
+                support=SupportBounds(lower=Decimal("1"), upper=Decimal("1")),
+                selection_complete=True,
+                ranked_evidence_ids=("ev-python",),
+                supporting_evidence_ids=("ev-python",),
+                reason_codes=("requirements.direct_support",),
+            ),
+        ),
+        groups=(
+            RequirementGroupQualification(
+                group_id="root",
+                support=SupportBounds(lower=Decimal("1"), upper=Decimal("1")),
+            ),
+        ),
+    )
+    native_decision = MatchDecisionBundle(
+        input_fingerprint=fingerprint,
+        requirement_qualification_set_sha256=None,
+        scoring_version=manifest.versions.scoring_version,
+        calibration_version=manifest.versions.calibration_version,
+        policy_version=manifest.target_policy.policy_version,
+        decision=MatchDecision.APPLICATION_CANDIDATE,
+        score=ScoreBounds(lower=Decimal("100"), upper=Decimal("100")),
+        deterministic_score=Decimal("100"),
+        reason_codes=("match.policy_satisfied",),
+    )
+    stored_decision = native_decision.model_copy(
+        update={"requirement_qualification_set_sha256": HASH_1}
+    )
+    if wrong_decision:
+        stored_decision = stored_decision.model_copy(
+            update={
+                "decision": MatchDecision.REVIEW,
+                "reason_codes": ("match.policy_uncertain",),
+            }
+        )
 
     requirement_ref = _artifact(
         ProcessingArtifactKind.REQUIREMENT_SET,
@@ -270,26 +328,6 @@ def _replay_fixture(*, wrong_decision: bool = False):
         p2_05_result_ref=p205_ref,
         requirement_qualification_set_ref=qualification_ref,
     )
-
-    decision = score_match(
-        input_fingerprint=fingerprint,
-        qualification_set_ref_sha256=qualification_ref.sha256,
-        requirement_set=requirements,
-        qualification_set=qualification,
-        target_policy=manifest.target_policy,
-        scoring_version=manifest.versions.scoring_version,
-        calibration_version=manifest.versions.calibration_version,
-        vacancy=vacancy,
-    )
-    if wrong_decision:
-        decision = MatchDecisionBundle.model_validate(
-            {
-                **decision.model_dump(mode="python"),
-                "decision": MatchDecision.REVIEW,
-                "reason_codes": ("match.policy_uncertain",),
-            }
-        )
-
     p207 = P207ResultArtifact(
         input_fingerprint=fingerprint,
         manifest=manifest,
@@ -297,19 +335,19 @@ def _replay_fixture(*, wrong_decision: bool = False):
         p2_06_result_ref=p206_ref,
         match_decision_ref=decision_ref,
     )
-    return (
-        p207_ref,
-        _ArtifactReader(
-            p204=p204,
-            p205=p205,
-            p206=p206,
-            p207=p207,
-            decision=decision,
-            requirements=requirements,
-            qualification=qualification,
-        ),
-        _InputReader(vacancy),
+    artifacts = _ArtifactReader(
+        p204=p204,
+        p205=p205,
+        p206=p206,
+        p207=p207,
+        stored_decision=stored_decision,
+        requirements=requirements,
+        evidence=resume_evidence,
+        candidates=candidates,
+        qualification=qualification,
     )
+    core = _DecisionCore(qualification, native_decision)
+    return p207_ref, artifacts, _InputReader(_vacancy()), core
 
 
 def test_scoring_policy_rejects_requirement_double_counting() -> None:
@@ -340,25 +378,28 @@ def test_calibration_candidate_rejects_requirement_double_counting() -> None:
 
 
 @pytest.mark.asyncio
-async def test_p207_replay_reproduces_stored_decision_from_pinned_chain() -> None:
-    result_ref, artifacts, inputs = _replay_fixture()
+async def test_p207_replay_reproduces_native_decision_from_pinned_chain() -> None:
+    result_ref, artifacts, inputs, core = _replay_fixture()
 
     replayed = await verify_p207_replay(
         p207_result_ref=result_ref,
         artifact_loader=artifacts,
         input_loader=inputs,
+        decision_core=core,
     )
 
+    assert core.calls == 1
     assert replayed.decision is MatchDecision.APPLICATION_CANDIDATE
 
 
 @pytest.mark.asyncio
 async def test_p207_replay_rejects_non_reproducible_stored_decision() -> None:
-    result_ref, artifacts, inputs = _replay_fixture(wrong_decision=True)
+    result_ref, artifacts, inputs, core = _replay_fixture(wrong_decision=True)
 
     with pytest.raises(ValueError, match="replay mismatch"):
         await verify_p207_replay(
             p207_result_ref=result_ref,
             artifact_loader=artifacts,
             input_loader=inputs,
+            decision_core=core,
         )

@@ -29,15 +29,22 @@ def test_processing_runtime_config_from_env() -> None:
     assert config.reranker_endpoint_url == "http://10.42.0.62:18082"
     assert config.reranker_timeout_seconds == 60.0
     assert config.reranker_unavailable_delay_seconds == 120.0
+    assert config.matching_core_target == "127.0.0.1:50051"
+    assert config.matching_core_timeout_seconds == 5.0
     assert config.worker_id == "core-processing-1"
     assert config.worker_lease_seconds == 300
     assert config.worker_idle_sleep_seconds == 1.0
 
 
-def test_processing_runtime_config_does_not_require_future_matching_core() -> None:
-    config = ProcessingRuntimeConfig.from_env(_env())
+def test_processing_runtime_config_accepts_matching_core_override() -> None:
+    env = _env()
+    env["CAREEROPS_PROCESSING_MATCHING_CORE_TARGET"] = "192.168.0.20:50051"
+    env["CAREEROPS_PROCESSING_MATCHING_CORE_TIMEOUT_SECONDS"] = "7.5"
 
-    assert not hasattr(config, "matching_core_target")
+    config = ProcessingRuntimeConfig.from_env(env)
+
+    assert config.matching_core_target == "192.168.0.20:50051"
+    assert config.matching_core_timeout_seconds == 7.5
 
 
 def test_processing_runtime_config_requires_reranker_at_p205() -> None:
@@ -85,6 +92,7 @@ def test_processing_runtime_safe_summary_does_not_expose_secrets() -> None:
     assert summary["postgres_configured"] is True
     assert summary["s3_credentials_configured"] is True
     assert summary["reranker_endpoint_url"] == "http://10.42.0.62:18082"
+    assert summary["matching_core_target"] == "127.0.0.1:50051"
     assert "postgres_dsn" not in summary
     assert "s3_access_key" not in summary
     assert "s3_secret_key" not in summary

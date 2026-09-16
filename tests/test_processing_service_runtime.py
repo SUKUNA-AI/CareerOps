@@ -22,6 +22,8 @@ def _config() -> ProcessingRuntimeConfig:
         reranker_endpoint_url="http://127.0.0.1:18082",
         reranker_timeout_seconds=30.0,
         reranker_unavailable_delay_seconds=90.0,
+        matching_core_target="127.0.0.1:50051",
+        matching_core_timeout_seconds=5.0,
         worker_id="processing-test",
         worker_lease_seconds=60,
         worker_idle_sleep_seconds=0.01,
@@ -78,6 +80,15 @@ class _FakeRerankerClient(_AsyncResource):
         type(self).instance = self
 
 
+class _FakeDecisionClient(_AsyncResource):
+    instance: _FakeDecisionClient | None = None
+
+    def __init__(self, target: str, *, timeout_seconds: float) -> None:
+        self.target = target
+        self.timeout_seconds = timeout_seconds
+        type(self).instance = self
+
+
 class _FakeHealthServer:
     instance: _FakeHealthServer | None = None
 
@@ -120,12 +131,14 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     _FakeS3Store.created.clear()
     _FakeHealthServer.instance = None
     _FakeRerankerClient.instance = None
+    _FakeDecisionClient.instance = None
     _FakeWorker.instance = None
 
     monkeypatch.setattr(service_main, "AsyncConnection", _FakeConnection)
     monkeypatch.setattr(service_main, "S3JsonStore", _FakeS3Store)
     monkeypatch.setattr(service_main, "ProcessingArtifactStore", _FakeArtifactStore)
     monkeypatch.setattr(service_main, "HttpJinaRerankerClient", _FakeRerankerClient)
+    monkeypatch.setattr(service_main, "MatchingCoreDecisionClient", _FakeDecisionClient)
     monkeypatch.setattr(service_main, "HealthServer", _FakeHealthServer)
     monkeypatch.setattr(service_main, "ProcessingWorker", _FakeWorker)
     monkeypatch.setattr(service_main, "_install_signal_handlers", lambda _stop: None)
@@ -146,6 +159,11 @@ async def test_serve_composes_worker_and_exposes_readiness_only_after_wiring(
     assert reranker is not None
     assert reranker.endpoint_url == "http://127.0.0.1:18082"
     assert reranker.timeout_seconds == 30.0
+
+    decision_core = _FakeDecisionClient.instance
+    assert decision_core is not None
+    assert decision_core.target == "127.0.0.1:50051"
+    assert decision_core.timeout_seconds == 5.0
 
     health = _FakeHealthServer.instance
     assert health is not None

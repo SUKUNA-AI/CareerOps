@@ -1,4 +1,4 @@
-"""Связь стадий P2-03–P2-07 с постоянным Processing worker."""
+"""Processing stage orchestration; P2-06/P2-07 execute only in matching-core C++."""
 
 from __future__ import annotations
 
@@ -29,7 +29,12 @@ from .contracts import (
     ScoreBounds,
     ScoringPolicy,
 )
-from .core import evaluate_filter, qualify_requirements, score_match
+from .core import evaluate_filter
+from .native_decision import (
+    DecisionCore,
+    MatchingCoreProtocolError,
+    MatchingCoreUnavailableError,
+)
 from .queue import ProcessingJobRecord
 from .selector import (
     RerankerProtocolError,
@@ -41,97 +46,56 @@ from .worker import ProcessingExecutionDisposition, ProcessingExecutionResult
 
 
 class ProcessingInputLoader(Protocol):
-    """Загружает зафиксированные входы и проверяет их identity и checksum."""
-
     async def load_manifest(self, uri: str) -> ProcessingInputManifest: ...
-
     async def load_vacancy(self, ref: NormalizedRef) -> NormalizedVacancy: ...
-
     async def load_resume(self, ref: NormalizedRef) -> NormalizedResume: ...
 
 
 class P204ArtifactPublisher(Protocol):
     async def publish_filter_trace(
-        self,
-        manifest: ProcessingInputManifest,
-        decision: FilterDecision,
+        self, manifest: ProcessingInputManifest, decision: FilterDecision
     ) -> ProcessingArtifactRef: ...
-
-    async def publish_p204_result(
-        self,
-        result: P204ResultArtifact,
-    ) -> ProcessingArtifactRef: ...
+    async def publish_p204_result(self, result: P204ResultArtifact) -> ProcessingArtifactRef: ...
 
 
 class P205ArtifactPublisher(P204ArtifactPublisher, Protocol):
     async def publish_evidence_candidate_set(
-        self,
-        candidate_set: EvidenceCandidateSet,
+        self, candidate_set: EvidenceCandidateSet
     ) -> ProcessingArtifactRef: ...
-
-    async def publish_p205_result(
-        self,
-        result: P205ResultArtifact,
-    ) -> ProcessingArtifactRef: ...
+    async def publish_p205_result(self, result: P205ResultArtifact) -> ProcessingArtifactRef: ...
 
 
 class P206ArtifactPublisher(P205ArtifactPublisher, Protocol):
     async def publish_requirement_qualification_set(
-        self,
-        qualification_set: RequirementQualificationSet,
+        self, qualification_set: RequirementQualificationSet
     ) -> ProcessingArtifactRef: ...
-
-    async def publish_p206_result(
-        self,
-        result: P206ResultArtifact,
-    ) -> ProcessingArtifactRef: ...
+    async def publish_p206_result(self, result: P206ResultArtifact) -> ProcessingArtifactRef: ...
 
 
 class P207ArtifactPublisher(P206ArtifactPublisher, Protocol):
     async def publish_match_decision(
-        self,
-        decision: MatchDecisionBundle,
+        self, decision: MatchDecisionBundle
     ) -> ProcessingArtifactRef: ...
-
-    async def publish_p207_result(
-        self,
-        result: P207ResultArtifact,
-    ) -> ProcessingArtifactRef: ...
+    async def publish_p207_result(self, result: P207ResultArtifact) -> ProcessingArtifactRef: ...
 
 
 class P204SemanticResolver(Protocol):
     async def resolve_requirements(
-        self,
-        vacancy: NormalizedVacancy,
-        *,
-        extraction_version: str,
+        self, vacancy: NormalizedVacancy, *, extraction_version: str
     ) -> ProcessingArtifactRef: ...
-
     async def resolve_evidence(
-        self,
-        resume: NormalizedResume,
-        *,
-        evidence_version: str,
+        self, resume: NormalizedResume, *, evidence_version: str
     ) -> ProcessingArtifactRef: ...
 
 
 class ProcessingArtifactReader(Protocol):
     async def load_requirement_set(self, ref: ProcessingArtifactRef) -> RequirementSet: ...
-
     async def load_resume_evidence_set(
-        self,
-        ref: ProcessingArtifactRef,
+        self, ref: ProcessingArtifactRef
     ) -> ResumeEvidenceSet: ...
-
     async def load_evidence_candidate_set(
-        self,
-        ref: ProcessingArtifactRef,
+        self, ref: ProcessingArtifactRef
     ) -> EvidenceCandidateSet: ...
-
-    async def load_requirement_qualification_set(
-        self,
-        ref: ProcessingArtifactRef,
-    ) -> RequirementQualificationSet: ...
 
 
 class P205CandidateSelector(Protocol):
@@ -182,10 +146,11 @@ class P206StageResult:
     p205_stage: P205StageResult
     qualification_set: RequirementQualificationSet | None = None
     qualification_ref: ProcessingArtifactRef | None = None
+    native_decision: MatchDecisionBundle | None = None
 
 
 class P204Executor:
-    """Исполняет детерминированные стадии P2-03 и P2-04."""
+    """Execute deterministic P2-03 and semantic P2-04 orchestration."""
 
     def __init__(
         self,
@@ -200,8 +165,7 @@ class P204Executor:
 
     @staticmethod
     def _job_matches_manifest(
-        job: ProcessingJobRecord,
-        manifest: ProcessingInputManifest,
+        job: ProcessingJobRecord, manifest: ProcessingInputManifest
     ) -> bool:
         return (
             job.input_fingerprint == manifest.input_fingerprint()
@@ -218,8 +182,7 @@ class P204Executor:
         )
 
     async def run_stage(
-        self,
-        job: ProcessingJobRecord,
+        self, job: ProcessingJobRecord
     ) -> P204StageResult | ProcessingExecutionResult:
         try:
             manifest = await self._loader.load_manifest(job.input_manifest_uri)
@@ -227,7 +190,6 @@ class P204Executor:
             return self._terminal("processing.input_manifest_missing")
         except ValueError:
             return self._terminal("processing.input_manifest_invalid")
-
         if not self._job_matches_manifest(job, manifest):
             return self._terminal("processing.input_identity_mismatch")
 
@@ -351,13 +313,11 @@ class P205Executor:
         )
 
     async def run_stage(
-        self,
-        job: ProcessingJobRecord,
+        self, job: ProcessingJobRecord
     ) -> P205StageResult | ProcessingExecutionResult:
         p204_stage = await self._p204.run_stage(job)
         if isinstance(p204_stage, ProcessingExecutionResult):
             return p204_stage
-
         manifest = p204_stage.manifest
         jina = manifest.versions.jina
         if jina is None:
@@ -385,7 +345,6 @@ class P205Executor:
         evidence_ref = p204_stage.result.resume_evidence_set_ref
         assert requirement_ref is not None
         assert evidence_ref is not None
-
         try:
             requirements = await self._artifact_loader.load_requirement_set(requirement_ref)
             evidence = await self._artifact_loader.load_resume_evidence_set(evidence_ref)
@@ -393,7 +352,6 @@ class P205Executor:
             return self._terminal("processing.p205.semantic_input_missing")
         except ValueError:
             return self._terminal("processing.p205.semantic_input_invalid")
-
         if not self._semantic_inputs_match_manifest(manifest, requirements, evidence):
             return self._terminal("processing.p205.semantic_input_identity_mismatch")
 
@@ -446,7 +404,7 @@ class P205Executor:
 
 
 class P206Executor:
-    """P2-06 deterministic qualification over P2-04 semantics and P2-05 selection."""
+    """P2-06 orchestration around the native P2-06/P2-07 decision core."""
 
     def __init__(
         self,
@@ -454,10 +412,16 @@ class P206Executor:
         p205: P205Executor,
         artifact_loader: ProcessingArtifactReader,
         publisher: P206ArtifactPublisher,
+        decision_core: DecisionCore,
+        unavailable_delay: timedelta = timedelta(seconds=30),
     ) -> None:
+        if unavailable_delay <= timedelta(0):
+            raise ValueError("unavailable_delay должен быть положительным")
         self._p205 = p205
         self._artifact_loader = artifact_loader
         self._publisher = publisher
+        self._decision_core = decision_core
+        self._unavailable_delay = unavailable_delay
 
     @staticmethod
     def _terminal(error_category: str) -> ProcessingExecutionResult:
@@ -466,15 +430,21 @@ class P206Executor:
             error_category=error_category,
         )
 
+    def _deferred(self, error_category: str) -> ProcessingExecutionResult:
+        return ProcessingExecutionResult(
+            disposition=ProcessingExecutionDisposition.DEFERRED,
+            error_category=error_category,
+            next_attempt_at=datetime.now(UTC) + self._unavailable_delay,
+        )
+
     async def run_stage(
-        self,
-        job: ProcessingJobRecord,
+        self, job: ProcessingJobRecord
     ) -> P206StageResult | ProcessingExecutionResult:
         p205_stage = await self._p205.run_stage(job)
         if isinstance(p205_stage, ProcessingExecutionResult):
             return p205_stage
-
         manifest = p205_stage.manifest
+
         if p205_stage.result.filter_outcome is FilterOutcome.EXCLUDE_PROVEN:
             result = P206ResultArtifact(
                 input_fingerprint=manifest.input_fingerprint(),
@@ -500,7 +470,6 @@ class P206Executor:
         assert requirement_ref is not None
         assert evidence_ref is not None
         assert candidate_ref is not None
-
         try:
             requirements = await self._artifact_loader.load_requirement_set(requirement_ref)
             evidence = await self._artifact_loader.load_resume_evidence_set(evidence_ref)
@@ -521,26 +490,32 @@ class P206Executor:
             return self._terminal("processing.p206.input_identity_mismatch")
 
         try:
-            qualification_set = qualify_requirements(
-                input_fingerprint=manifest.input_fingerprint(),
-                requirement_set_ref_sha256=requirement_ref.sha256,
-                resume_evidence_set_ref_sha256=evidence_ref.sha256,
-                evidence_candidate_set_ref_sha256=candidate_ref.sha256,
+            native = await self._decision_core.evaluate(
+                manifest=manifest,
+                requirement_set_sha256=requirement_ref.sha256,
+                resume_evidence_set_sha256=evidence_ref.sha256,
+                evidence_candidate_set_sha256=candidate_ref.sha256,
                 requirement_set=requirements,
                 evidence_set=evidence,
                 candidate_set=candidates,
-                qualification_version=manifest.versions.qualification_version,
-                as_of=manifest.as_of.date(),
+                vacancy=p205_stage.p204_stage.vacancy,
             )
-        except ValueError:
-            return self._terminal("processing.p206.qualification_contract_invalid")
+        except MatchingCoreUnavailableError:
+            return self._deferred("processing.matching_core_unavailable")
+        except (MatchingCoreProtocolError, ValueError):
+            return self._terminal("processing.matching_core_contract_invalid")
 
+        qualification_set = native.qualification_set
         try:
             qualification_ref = await self._publisher.publish_requirement_qualification_set(
                 qualification_set
             )
         except ValueError:
             return self._terminal("processing.p206.artifact_integrity_invalid")
+
+        decision = native.decision.model_copy(
+            update={"requirement_qualification_set_sha256": qualification_ref.sha256}
+        )
         result = P206ResultArtifact(
             input_fingerprint=manifest.input_fingerprint(),
             manifest=manifest,
@@ -559,6 +534,7 @@ class P206Executor:
             p205_stage=p205_stage,
             qualification_set=qualification_set,
             qualification_ref=qualification_ref,
+            native_decision=decision,
         )
 
     async def execute(self, job: ProcessingJobRecord) -> ProcessingExecutionResult:
@@ -572,7 +548,7 @@ class P206Executor:
 
 
 class P207Executor:
-    """P2-07 deterministic scoring, decision artifact and fenced current publication."""
+    """Publish the native P2-07 result and fence the current candidate state."""
 
     def __init__(
         self,
@@ -598,7 +574,6 @@ class P207Executor:
         p206_stage = await self._p206.run_stage(job)
         if isinstance(p206_stage, ProcessingExecutionResult):
             return p206_stage
-
         manifest = p206_stage.manifest
         candidate_ttl_seconds: int | None = None
 
@@ -615,46 +590,17 @@ class P207Executor:
                 reason_codes=("filter.proven_exclusion",),
             )
         else:
-            qualification_set = p206_stage.qualification_set
-            qualification_ref = p206_stage.qualification_ref
-            requirement_ref = p206_stage.p205_stage.p204_stage.result.requirement_set_ref
-            assert qualification_set is not None
-            assert qualification_ref is not None
-            assert requirement_ref is not None
-
-            try:
-                requirements = await self._artifact_loader.load_requirement_set(requirement_ref)
-            except FileNotFoundError:
-                return self._terminal("processing.p207.input_artifact_missing")
-            except ValueError:
-                return self._terminal("processing.p207.input_artifact_invalid")
-
-            if (
-                qualification_set.input_fingerprint != manifest.input_fingerprint()
-                or qualification_set.requirement_set_sha256 != requirement_ref.sha256
-                or qualification_set.qualification_version
-                != manifest.versions.qualification_version
-            ):
-                return self._terminal("processing.p207.input_identity_mismatch")
-
-            try:
-                decision = score_match(
-                    input_fingerprint=manifest.input_fingerprint(),
-                    qualification_set_ref_sha256=qualification_ref.sha256,
-                    requirement_set=requirements,
-                    qualification_set=qualification_set,
-                    target_policy=manifest.target_policy,
-                    scoring_version=manifest.versions.scoring_version,
-                    calibration_version=manifest.versions.calibration_version,
-                    vacancy=p206_stage.p205_stage.p204_stage.vacancy,
-                )
-                if decision.decision is MatchDecision.APPLICATION_CANDIDATE:
+            decision = p206_stage.native_decision
+            if decision is None:
+                return self._terminal("processing.p207.native_decision_missing")
+            if decision.decision is MatchDecision.APPLICATION_CANDIDATE:
+                try:
                     scoring_policy = ScoringPolicy.from_target_policy(manifest.target_policy)
-                    if scoring_policy is None:
-                        return self._terminal("processing.p207.scoring_policy_missing")
-                    candidate_ttl_seconds = scoring_policy.candidate_ttl_seconds
-            except ValueError:
-                return self._terminal("processing.p207.scoring_contract_invalid")
+                except ValueError:
+                    return self._terminal("processing.p207.scoring_policy_invalid")
+                if scoring_policy is None:
+                    return self._terminal("processing.p207.scoring_policy_missing")
+                candidate_ttl_seconds = scoring_policy.candidate_ttl_seconds
 
         try:
             decision_ref = await self._publisher.publish_match_decision(decision)
@@ -671,7 +617,6 @@ class P207Executor:
             result_ref = await self._publisher.publish_p207_result(result)
         except ValueError:
             return self._terminal("processing.p207.artifact_integrity_invalid")
-
         try:
             await self._current_publisher.publish_current(
                 job,

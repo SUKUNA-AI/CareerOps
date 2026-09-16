@@ -117,6 +117,7 @@ def _requirement(
     importance: str = "mandatory",
     modality: str = "required",
     polarity: str = "positive",
+    threshold: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "requirement_id": requirement_id,
@@ -128,7 +129,7 @@ def _requirement(
         "importance": importance,
         "modality": modality,
         "polarity": polarity,
-        "threshold": None,
+        "threshold": threshold,
         "source_refs": [{"source_path": "test", "rendered_value": subject}],
     }
 
@@ -139,6 +140,7 @@ def _evidence(
     *,
     actor: str = "self",
     polarity: str = "positive",
+    time_span: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "evidence_id": evidence_id,
@@ -150,7 +152,7 @@ def _evidence(
         "context": "commercial",
         "polarity": polarity,
         "strength": "direct",
-        "time_span": None,
+        "time_span": time_span,
         "source_refs": [{"source_path": "test", "rendered_value": subject}],
     }
 
@@ -292,6 +294,67 @@ def test_native_direct_match_and_low_jina_score(decision_stub: tuple[ModuleType,
     assert evaluation["support"] == {"lower": "1", "upper": "1"}
     assert result["decision"]["decision"] == "application_candidate"
     assert result["decision"]["reason_codes"] == ["match.policy_satisfied"]
+
+
+def test_native_empty_evidence_is_not_evidenced(decision_stub: tuple[ModuleType, Any]) -> None:
+    _grpc, stub = decision_stub
+    request = _request(
+        requirements=[_requirement("req-python", "Python")],
+        evidence=[],
+        selections=[_selection("req-python", [], state="no_evidence")],
+    )
+
+    result = _call(stub, request)
+
+    evaluation = result["qualification_set"]["evaluations"][0]
+    assert evaluation["state"] == "not_evidenced"
+    assert evaluation["support"] == {"lower": "0", "upper": "1"}
+    assert evaluation["contradicting_evidence_ids"] == []
+
+
+def test_native_truncated_selection_remains_unknown(decision_stub: tuple[ModuleType, Any]) -> None:
+    _grpc, stub = decision_stub
+    request = _request(
+        requirements=[_requirement("req-python", "Python")],
+        evidence=[_evidence("ev-python", "Python"), _evidence("ev-sql", "SQL")],
+        selections=[
+            _selection(
+                "req-python",
+                ["ev-python", "ev-sql"],
+                selected_ids=["ev-sql"],
+            )
+        ],
+    )
+
+    result = _call(stub, request)
+
+    evaluation = result["qualification_set"]["evaluations"][0]
+    assert evaluation["state"] == "unknown"
+    assert evaluation["selection_complete"] is False
+    assert evaluation["supporting_evidence_ids"] == []
+
+
+def test_native_experience_duration_handles_months_after_february(
+    decision_stub: tuple[ModuleType, Any],
+) -> None:
+    _grpc, stub = decision_stub
+    threshold = {"metric": "experience_years", "minimum": "3", "maximum": None}
+    span = {
+        "start_date": "2023-03-01",
+        "end_date": "2026-09-01",
+        "currently_active": False,
+    }
+    request = _request(
+        requirements=[_requirement("req-python", "Python", threshold=threshold)],
+        evidence=[_evidence("ev-python", "Python", time_span=span)],
+        selections=[_selection("req-python", ["ev-python"])],
+    )
+
+    result = _call(stub, request)
+
+    evaluation = result["qualification_set"]["evaluations"][0]
+    assert evaluation["state"] == "matched"
+    assert evaluation["support"] == {"lower": "1", "upper": "1"}
 
 
 def test_native_uncertainty_and_critical_contradiction(

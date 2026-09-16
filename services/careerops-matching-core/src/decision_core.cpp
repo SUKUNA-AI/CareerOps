@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <optional>
@@ -159,7 +160,6 @@ std::string Normalize(std::string_view input) {
     }
     if (i + 1 < input.size()) {
       const unsigned char c2 = static_cast<unsigned char>(input[i + 1]);
-      // Cyrillic upper А-П -> а-п.
       if (c == 0xD0 && c2 >= 0x90 && c2 <= 0x9F) {
         out.push_back(static_cast<char>(0xD0));
         out.push_back(static_cast<char>(c2 + 0x20));
@@ -167,7 +167,6 @@ std::string Normalize(std::string_view input) {
         i += 2;
         continue;
       }
-      // Cyrillic upper Р-Я -> р-я.
       if (c == 0xD0 && c2 >= 0xA0 && c2 <= 0xAF) {
         out.push_back(static_cast<char>(0xD1));
         out.push_back(static_cast<char>(c2 - 0x20));
@@ -175,7 +174,6 @@ std::string Normalize(std::string_view input) {
         i += 2;
         continue;
       }
-      // Ё/ё -> е to mirror Python normalizer.
       if ((c == 0xD0 && c2 == 0x81) || (c == 0xD1 && c2 == 0x91)) {
         out.push_back(static_cast<char>(0xD0));
         out.push_back(static_cast<char>(0xB5));
@@ -395,7 +393,9 @@ std::int64_t DaysFromCivil(int year, unsigned month, unsigned day) {
   year -= month <= 2;
   const int era = (year >= 0 ? year : year - 399) / 400;
   const unsigned yoe = static_cast<unsigned>(year - era * 400);
-  const unsigned doy = (153 * (month + (month > 2 ? static_cast<unsigned>(-3) : 9)) + 2) / 5 + day - 1;
+  const int adjusted_month = static_cast<int>(month) + (month > 2 ? -3 : 9);
+  const unsigned doy =
+      (153 * static_cast<unsigned>(adjusted_month) + 2) / 5 + day - 1;
   const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return static_cast<std::int64_t>(era) * 146097 + static_cast<std::int64_t>(doe) - 719468;
 }

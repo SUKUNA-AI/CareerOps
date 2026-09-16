@@ -1,20 +1,15 @@
-"""Эталонная детерминированная логика Processing v2 на Python
+"""Deterministic Python core retained for P2-03/P2-04 only.
 
-Пакет не зависит от PostgreSQL, S3, HTTP и model serving
-Он задаёт эталонную семантику для вычислительных частей Processing
-C++20 сервис careerops-matching-core подключается только к измеренным горячим путям
+P2-06 qualification and P2-07 scoring/decision are owned exclusively by the
+C++20 careerops-matching-core service and are reached through the gRPC boundary.
 """
 
 from .evidence import extract_resume_evidence
 from .filtering import evaluate_filter
-from .qualification import qualify_requirements
 from .requirements import extract_requirements
-from .scoring import score_match
 
 __all__ = [
     "evaluate_filter",
     "extract_requirements",
     "extract_resume_evidence",
-    "qualify_requirements",
-    "score_match",
 ]

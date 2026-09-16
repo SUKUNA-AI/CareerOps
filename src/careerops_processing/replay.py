@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from careerops_processing.contracts import (
+    EvidenceCandidateSet,
     FilterOutcome,
     MatchDecision,
     MatchDecisionBundle,
@@ -19,58 +20,61 @@ from careerops_processing.contracts import (
     ProcessingInputManifest,
     RequirementQualificationSet,
     RequirementSet,
+    ResumeEvidenceSet,
     ScoreBounds,
 )
-from careerops_processing.core.scoring import score_match
+from careerops_processing.native_decision import DecisionCore
 
 
 class P207ReplayArtifactReader(Protocol):
     async def load_p207_result(
         self,
         ref: ProcessingArtifactRef,
-    ) -> P207ResultArtifact:
-        ...
+    ) -> P207ResultArtifact: ...
 
     async def load_p206_result(
         self,
         ref: ProcessingArtifactRef,
-    ) -> P206ResultArtifact:
-        ...
+    ) -> P206ResultArtifact: ...
 
     async def load_p205_result(
         self,
         ref: ProcessingArtifactRef,
-    ) -> P205ResultArtifact:
-        ...
+    ) -> P205ResultArtifact: ...
 
     async def load_p204_result(
         self,
         ref: ProcessingArtifactRef,
-    ) -> P204ResultArtifact:
-        ...
+    ) -> P204ResultArtifact: ...
 
     async def load_match_decision(
         self,
         ref: ProcessingArtifactRef,
-    ) -> MatchDecisionBundle:
-        ...
+    ) -> MatchDecisionBundle: ...
 
     async def load_requirement_set(
         self,
         ref: ProcessingArtifactRef,
-    ) -> RequirementSet:
-        ...
+    ) -> RequirementSet: ...
+
+    async def load_resume_evidence_set(
+        self,
+        ref: ProcessingArtifactRef,
+    ) -> ResumeEvidenceSet: ...
+
+    async def load_evidence_candidate_set(
+        self,
+        ref: ProcessingArtifactRef,
+    ) -> EvidenceCandidateSet: ...
 
     async def load_requirement_qualification_set(
         self,
         ref: ProcessingArtifactRef,
-    ) -> RequirementQualificationSet:
-        ...
+    ) -> RequirementQualificationSet: ...
 
 
 class P207ReplayInputReader(Protocol):
-    async def load_vacancy(self, ref: NormalizedRef) -> NormalizedVacancy:
-        ...
+    async def load_vacancy(self, ref: NormalizedRef) -> NormalizedVacancy: ...
 
 
 def _validate_stage_identity(
@@ -106,8 +110,9 @@ async def verify_p207_replay(
     p207_result_ref: ProcessingArtifactRef,
     artifact_loader: P207ReplayArtifactReader,
     input_loader: P207ReplayInputReader,
+    decision_core: DecisionCore,
 ) -> MatchDecisionBundle:
-    """Recompute a stored P2-07 decision from its pinned immutable inputs."""
+    """Recompute P2-06/P2-07 through the same native core from pinned inputs."""
 
     p207 = await artifact_loader.load_p207_result(p207_result_ref)
     manifest = p207.manifest
@@ -138,32 +143,54 @@ async def verify_p207_replay(
         replayed = _excluded_decision(manifest)
     else:
         requirement_ref = p204.requirement_set_ref
+        evidence_ref = p204.resume_evidence_set_ref
+        candidate_ref = p205.evidence_candidate_set_ref
         qualification_ref = p206.requirement_qualification_set_ref
-        if requirement_ref is None or qualification_ref is None:
+        if (
+            requirement_ref is None
+            or evidence_ref is None
+            or candidate_ref is None
+            or qualification_ref is None
+        ):
             raise ValueError("P2-07 replay KEEP chain is missing semantic artifacts")
 
         requirements = await artifact_loader.load_requirement_set(requirement_ref)
+        evidence = await artifact_loader.load_resume_evidence_set(evidence_ref)
+        candidates = await artifact_loader.load_evidence_candidate_set(candidate_ref)
         qualification = await artifact_loader.load_requirement_qualification_set(
             qualification_ref
         )
         if (
+            candidates.input_fingerprint != fingerprint
+            or candidates.requirement_set_sha256 != requirement_ref.sha256
+            or candidates.resume_evidence_set_sha256 != evidence_ref.sha256
+        ):
+            raise ValueError("P2-07 replay candidate identity mismatch")
+        if (
             qualification.input_fingerprint != fingerprint
             or qualification.requirement_set_sha256 != requirement_ref.sha256
+            or qualification.resume_evidence_set_sha256 != evidence_ref.sha256
+            or qualification.evidence_candidate_set_sha256 != candidate_ref.sha256
             or qualification.qualification_version
             != manifest.versions.qualification_version
         ):
             raise ValueError("P2-07 replay qualification identity mismatch")
 
         vacancy = await input_loader.load_vacancy(manifest.vacancy)
-        replayed = score_match(
-            input_fingerprint=fingerprint,
-            qualification_set_ref_sha256=qualification_ref.sha256,
+        native = await decision_core.evaluate(
+            manifest=manifest,
+            requirement_set_sha256=requirement_ref.sha256,
+            resume_evidence_set_sha256=evidence_ref.sha256,
+            evidence_candidate_set_sha256=candidate_ref.sha256,
             requirement_set=requirements,
-            qualification_set=qualification,
-            target_policy=manifest.target_policy,
-            scoring_version=manifest.versions.scoring_version,
-            calibration_version=manifest.versions.calibration_version,
+            evidence_set=evidence,
+            candidate_set=candidates,
             vacancy=vacancy,
+        )
+        if native.qualification_set != qualification:
+            raise ValueError("P2-06 replay mismatch with stored RequirementQualificationSet")
+        replayed = native.decision.model_copy(
+            update={"requirement_qualification_set_sha256": qualification_ref.sha256}
         )
 
     if replayed != stored:
