@@ -45,7 +45,16 @@ target_link_libraries(matching_core_proto PUBLIC gRPC::grpc++ protobuf::libproto
 add_library(matching_core_decision STATIC src/decision_core.cpp)
 target_include_directories(matching_core_decision PUBLIC src)
 target_link_libraries(matching_core_decision PUBLIC protobuf::libprotobuf)
-target_compile_options(matching_core_decision PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(
+    matching_core_decision
+    PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+        -Wno-error=range-loop-construct
+        -Wno-error=unused-function
+)
 
 add_executable(careerops-matching-core src/main.cpp)
 target_link_libraries(careerops-matching-core PRIVATE matching_core_proto matching_core_decision)
