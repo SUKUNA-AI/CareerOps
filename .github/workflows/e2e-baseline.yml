@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   live-jina-baseline:
-    name: E2E baseline / live Jina
+    name: E2E baseline / live Jina + native matching core
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -30,12 +30,34 @@ jobs:
       CAREEROPS_RERANKER_HOST: 127.0.0.1
       CAREEROPS_RERANKER_PORT: "18082"
       CAREEROPS_TEST_RERANKER_URL: http://127.0.0.1:18082
+      CAREEROPS_TEST_MATCHING_CORE_TARGET: 127.0.0.1:18083
       CAREEROPS_E2E_BASELINE: "1"
       CAREEROPS_CI_BASELINE_REPORT: reports/e2e-baseline.json
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Install matching core build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            libboost-dev \
+            libgrpc++-dev \
+            libprotobuf-dev \
+            pkg-config \
+            protobuf-compiler \
+            protobuf-compiler-grpc
+
+      - name: Build matching core
+        run: |
+          cmake \
+            -S services/careerops-matching-core \
+            -B build/matching-core \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/matching-core --parallel
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -59,6 +81,30 @@ jobs:
             "torch==2.14.0"
           python -m pip install "transformers==4.57.3"
           python -m pip check
+
+      - name: Start native matching core
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          nohup env \
+            CAREEROPS_MATCHING_CORE_LISTEN_ADDR="${CAREEROPS_TEST_MATCHING_CORE_TARGET}" \
+            build/matching-core/careerops-matching-core \
+            > reports/matching-core.log 2>&1 &
+          echo $! > reports/matching-core.pid
+
+      - name: Wait for matching core readiness
+        run: |
+          python - <<'PY'
+          import grpc
+          import os
+
+          target = os.environ["CAREEROPS_TEST_MATCHING_CORE_TARGET"]
+          channel = grpc.insecure_channel(target)
+          try:
+              grpc.channel_ready_future(channel).result(timeout=15)
+          finally:
+              channel.close()
+          PY
 
       - name: Start pinned Jina reranker
         run: |
@@ -114,11 +160,14 @@ jobs:
             http://127.0.0.1:18082/metrics \
             -o reports/reranker-metrics-after.txt || true
 
-      - name: Stop reranker
+      - name: Stop native services
         if: ${{ always() }}
         run: |
           if test -f reports/reranker.pid; then
             kill "$(cat reports/reranker.pid)" 2>/dev/null || true
+          fi
+          if test -f reports/matching-core.pid; then
+            kill "$(cat reports/matching-core.pid)" 2>/dev/null || true
           fi
 
       - name: Upload E2E baseline artifacts

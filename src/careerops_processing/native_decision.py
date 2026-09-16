@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-import grpc
-from google.protobuf.json_format import MessageToDict, ParseDict
-from google.protobuf.struct_pb2 import Struct
+import grpc  # type: ignore[import-untyped]
+from google.protobuf.json_format import (  # type: ignore[import-untyped]
+    MessageToDict,
+    ParseDict,
+)
+from google.protobuf.struct_pb2 import Struct  # type: ignore[import-untyped]
 
 from .contracts import (
     EvidenceCandidateSet,

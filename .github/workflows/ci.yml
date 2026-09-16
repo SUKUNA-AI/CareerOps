@@ -182,7 +182,6 @@ jobs:
             tests/test_reranker_metrics.py \
             tests/test_reranker_quality_metrics.py \
             tests/test_processing_p206_p207_contracts.py \
-            tests/test_processing_p207_structured_scoring.py \
             --junitxml=reports/calibration-contract.xml
 
       - name: Upload calibration diagnostics

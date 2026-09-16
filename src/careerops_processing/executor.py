@@ -590,9 +590,10 @@ class P207Executor:
                 reason_codes=("filter.proven_exclusion",),
             )
         else:
-            decision = p206_stage.native_decision
-            if decision is None:
+            native_decision = p206_stage.native_decision
+            if native_decision is None:
                 return self._terminal("processing.p207.native_decision_missing")
+            decision = native_decision
             if decision.decision is MatchDecision.APPLICATION_CANDIDATE:
                 try:
                     scoring_policy = ScoringPolicy.from_target_policy(manifest.target_policy)

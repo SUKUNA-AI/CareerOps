@@ -8,15 +8,19 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
+from support.processing import evidence, evidence_set, requirement, requirement_set
 
 from careerops_processing.contracts import (
+    BindingSnapshot,
+    DataQualityStatus,
+    EntityType,
     JinaVersionBundle,
     MatchDecision,
-    RequirementImportance,
-)
-from careerops_processing.contracts.common import (
-    DataQualityStatus,
+    NormalizedRef,
+    ProcessingInputManifest,
+    ProcessingVersionBundle,
     RawObservationRef,
+    RequirementImportance,
     SourceValue,
     ValueState,
 )
@@ -28,12 +32,12 @@ from careerops_processing.contracts.normalized import (
     NormalizedVacancy,
 )
 from careerops_processing.contracts.policy import TargetPolicy
-from careerops_processing.core import evaluate_filter, qualify_requirements, score_match
+from careerops_processing.core import evaluate_filter
 from careerops_processing.evaluation import recall_at_k, reciprocal_rank
 from careerops_processing.infrastructure.reranker_http import HttpJinaRerankerClient
+from careerops_processing.native_decision import MatchingCoreDecisionClient
 from careerops_processing.selector import EvidenceCandidateSelector
 from careerops_reranker.config import DEFAULT_JINA_MODEL_ID, DEFAULT_JINA_REVISION
-from tests.support.processing import evidence, evidence_set, requirement, requirement_set
 
 HASH_RAW = "1" * 64
 HASH_VACANCY = "2" * 64
@@ -42,7 +46,8 @@ HASH_REQUIREMENTS_REF = "4" * 64
 HASH_EVIDENCE_REF = "5" * 64
 HASH_CANDIDATES_REF = "6" * 64
 HASH_QUALIFICATION_REF = "7" * 64
-INPUT_FINGERPRINT = "8" * 64
+HASH_NORMALIZED_VACANCY = "9" * 64
+HASH_NORMALIZED_RESUME = "a" * 64
 
 
 def _known(value):
@@ -76,7 +81,7 @@ def _vacancy(title: str) -> NormalizedVacancy:
         dictionary_version="dict-v1",
         materialization_key=f"vacancy:{title.casefold().replace(' ', '-')}",
         source_key="hh",
-        source_entity_id="ci-vacancy-1",
+        source_entity_id="vacancy-1",
         raw=_raw_ref(),
         semantic_content_hash=HASH_VACANCY,
         title=_known(title),
@@ -98,8 +103,8 @@ def _resume() -> NormalizedResume:
         dictionary_version="dict-v1",
         materialization_key="resume:ci-data-engineer",
         source_key="hh",
-        account_key="ci",
-        source_entity_id="ci-resume-1",
+        account_key="account-1",
+        source_entity_id="resume-1",
         raw=_raw_ref(),
         semantic_content_hash=HASH_RESUME,
         headline=_known("Data Engineer"),
@@ -157,6 +162,69 @@ def _jina_version() -> JinaVersionBundle:
     )
 
 
+def _manifest(
+    vacancy: NormalizedVacancy,
+    resume: NormalizedResume,
+    target: TargetPolicy,
+    jina: JinaVersionBundle,
+) -> ProcessingInputManifest:
+    vacancy_ref = NormalizedRef(
+        entity_type=EntityType.VACANCY,
+        source_key=vacancy.source_key,
+        source_entity_id=vacancy.source_entity_id,
+        raw=vacancy.raw,
+        normalized_uri="s3://careerops-ci/normalized/vacancy.json",
+        normalized_sha256=HASH_NORMALIZED_VACANCY,
+        semantic_content_hash=vacancy.semantic_content_hash,
+        schema_version=vacancy.schema_version,
+        normalization_version=vacancy.normalization_version,
+        dictionary_version=vacancy.dictionary_version,
+        materialization_key=vacancy.materialization_key,
+        processing_ready=True,
+        dq_status=DataQualityStatus.CLEAN,
+    )
+    resume_ref = NormalizedRef(
+        entity_type=EntityType.RESUME,
+        source_key=resume.source_key,
+        source_entity_id=resume.source_entity_id,
+        account_key=resume.account_key,
+        raw=resume.raw,
+        normalized_uri="s3://careerops-ci/normalized/resume.json",
+        normalized_sha256=HASH_NORMALIZED_RESUME,
+        semantic_content_hash=resume.semantic_content_hash,
+        schema_version=resume.schema_version,
+        normalization_version=resume.normalization_version,
+        dictionary_version=resume.dictionary_version,
+        materialization_key=resume.materialization_key,
+        processing_ready=True,
+        dq_status=DataQualityStatus.CLEAN,
+    )
+    return ProcessingInputManifest(
+        vacancy=vacancy_ref,
+        resume=resume_ref,
+        binding=BindingSnapshot(
+            binding_key="ci-binding-1",
+            binding_version=1,
+            account_key=resume.account_key,
+            source_resume_id=resume.source_entity_id,
+            target_key=target.target_key,
+        ),
+        target_policy=target,
+        versions=ProcessingVersionBundle(
+            pipeline_version="ci-baseline-v1",
+            dictionary_version=vacancy.dictionary_version,
+            filter_version="ci-filter-v1",
+            requirement_extraction_version="requirements-v2",
+            evidence_version="evidence-v2",
+            qualification_version="ci-qualification-v1",
+            scoring_version="ci-scoring-v1",
+            calibration_version="ci-baseline-v1",
+            jina=jina,
+        ),
+        as_of=datetime(2026, 9, 14, 13, tzinfo=UTC),
+    )
+
+
 def _write_report(payload: dict[str, object]) -> None:
     path = Path(os.environ.get("CAREEROPS_CI_BASELINE_REPORT", "reports/e2e-baseline.json"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +240,8 @@ async def test_processing_live_jina_baseline() -> None:
     if os.environ.get("CAREEROPS_E2E_BASELINE") != "1":
         pytest.skip("live Jina baseline runs only in the dedicated CI job")
 
-    endpoint = os.environ["CAREEROPS_TEST_RERANKER_URL"]
+    reranker_endpoint = os.environ["CAREEROPS_TEST_RERANKER_URL"]
+    matching_core_target = os.environ["CAREEROPS_TEST_MATCHING_CORE_TARGET"]
     thresholds = json.loads(
         Path("calibration/ci/baseline_thresholds.json").read_text(encoding="utf-8")
     )
@@ -193,18 +262,35 @@ async def test_processing_live_jina_baseline() -> None:
             "Spark",
             importance=RequirementImportance.PREFERRED,
         ),
+    ).model_copy(
+        update={
+            "source_entity_id": good_vacancy.source_entity_id,
+            "semantic_content_hash": good_vacancy.semantic_content_hash,
+            "normalized_schema_version": good_vacancy.schema_version,
+            "normalization_version": good_vacancy.normalization_version,
+        }
     )
     evidence_items = evidence_set(
         evidence("ev-python", "Python"),
         evidence("ev-postgresql", "PostgreSQL"),
         evidence("ev-spark", "Spark"),
         evidence("ev-java", "Java"),
+    ).model_copy(
+        update={
+            "account_key": resume.account_key,
+            "source_entity_id": resume.source_entity_id,
+            "semantic_content_hash": resume.semantic_content_hash,
+            "normalized_schema_version": resume.schema_version,
+            "normalization_version": resume.normalization_version,
+        }
     )
     jina = _jina_version()
+    manifest = _manifest(good_vacancy, resume, target, jina)
+    input_fingerprint = manifest.input_fingerprint()
 
-    async with HttpJinaRerankerClient(endpoint, timeout_seconds=300) as client:
+    async with HttpJinaRerankerClient(reranker_endpoint, timeout_seconds=300) as client:
         candidates = await EvidenceCandidateSelector(client).select(
-            input_fingerprint=INPUT_FINGERPRINT,
+            input_fingerprint=input_fingerprint,
             requirement_set_ref_sha256=HASH_REQUIREMENTS_REF,
             resume_evidence_set_ref_sha256=HASH_EVIDENCE_REF,
             requirement_set=requirements,
@@ -227,26 +313,20 @@ async def test_processing_live_jina_baseline() -> None:
         recalls_at_2.append(recall_at_k(ranked, relevant, 2))
         reciprocal_ranks.append(reciprocal_rank(ranked, relevant))
 
-    qualification = qualify_requirements(
-        input_fingerprint=INPUT_FINGERPRINT,
-        requirement_set_ref_sha256=HASH_REQUIREMENTS_REF,
-        resume_evidence_set_ref_sha256=HASH_EVIDENCE_REF,
-        evidence_candidate_set_ref_sha256=HASH_CANDIDATES_REF,
-        requirement_set=requirements,
-        evidence_set=evidence_items,
-        candidate_set=candidates,
-        qualification_version="ci-qualification-v1",
-        as_of=datetime(2026, 9, 14, tzinfo=UTC).date(),
-    )
-    decision = score_match(
-        input_fingerprint=INPUT_FINGERPRINT,
-        qualification_set_ref_sha256=HASH_QUALIFICATION_REF,
-        requirement_set=requirements,
-        qualification_set=qualification,
-        target_policy=target,
-        scoring_version="ci-scoring-v1",
-        calibration_version="ci-baseline-v1",
-        vacancy=good_vacancy,
+    async with MatchingCoreDecisionClient(matching_core_target, timeout_seconds=30) as core:
+        native = await core.evaluate(
+            manifest=manifest,
+            requirement_set_sha256=HASH_REQUIREMENTS_REF,
+            resume_evidence_set_sha256=HASH_EVIDENCE_REF,
+            evidence_candidate_set_sha256=HASH_CANDIDATES_REF,
+            requirement_set=requirements,
+            evidence_set=evidence_items,
+            candidate_set=candidates,
+            vacancy=good_vacancy,
+        )
+    qualification = native.qualification_set
+    decision = native.decision.model_copy(
+        update={"requirement_qualification_set_sha256": HASH_QUALIFICATION_REF}
     )
 
     recall_at_2_mean = sum(recalls_at_2) / len(recalls_at_2)
@@ -260,6 +340,7 @@ async def test_processing_live_jina_baseline() -> None:
             "dtype_or_quantization": jina.dtype_or_quantization,
             "torch_version": jina.torch_version,
             "transformers_version": jina.transformers_version,
+            "matching_core_target": matching_core_target,
         },
         "p203": {
             "positive_filter_outcome": positive_filter.outcome.value,
