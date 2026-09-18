@@ -111,7 +111,8 @@ class ApplicationRepository(Protocol):
 
 
 class ApplicationUnitOfWork(Protocol):
-    applications: ApplicationRepository
+    @property
+    def applications(self) -> ApplicationRepository: ...
 
     async def __aenter__(self) -> ApplicationUnitOfWork: ...
     async def __aexit__(
