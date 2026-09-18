@@ -12,7 +12,7 @@ _ACTIVE_PROCESSING_STATUSES = "'pending','claimed','running','deferred','retryab
 _ACTIVE_APPLICATION_STATUSES = "'preparing','precheck','submitting','reconciliation_required'"
 
 
-async def recover_expired_leases(connection: psycopg.AsyncConnection[object]) -> int:
+async def recover_expired_leases(connection: psycopg.AsyncConnection[Any]) -> int:
     cursor = await connection.execute(
         """
         WITH recovered AS (
@@ -60,7 +60,7 @@ async def recover_expired_leases(connection: psycopg.AsyncConnection[object]) ->
 
 
 async def _lock_account(
-    connection: psycopg.AsyncConnection[object],
+    connection: psycopg.AsyncConnection[Any],
     *,
     account_id: int,
 ) -> None:
@@ -71,7 +71,7 @@ async def _lock_account(
 
 
 async def _account_gate_open(
-    connection: psycopg.AsyncConnection[object],
+    connection: psycopg.AsyncConnection[Any],
     *,
     account_id: int,
     exclude_application_id: UUID | None,
@@ -110,7 +110,7 @@ async def _account_gate_open(
 
 
 async def claim_retry(
-    connection: psycopg.AsyncConnection[object],
+    connection: psycopg.AsyncConnection[Any],
     *,
     worker_id: str,
     lease_seconds: int,
@@ -217,7 +217,7 @@ async def claim_retry(
 
 
 async def claim_new_candidate(
-    connection: psycopg.AsyncConnection[object],
+    connection: psycopg.AsyncConnection[Any],
     *,
     worker_id: str,
     lease_seconds: int,
@@ -372,7 +372,7 @@ async def claim_new_candidate(
 
 
 async def claim_reconciliation(
-    connection: psycopg.AsyncConnection[object],
+    connection: psycopg.AsyncConnection[Any],
     *,
     worker_id: str,
     lease_seconds: int,
