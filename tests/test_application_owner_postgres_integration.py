@@ -7,10 +7,10 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 import pytest_asyncio
-from alembic import command
 from alembic.config import Config
 from support.postgres import PostgresTestTarget
 
+from alembic import command
 from careerops_application.infrastructure.postgres import PostgresApplicationUnitOfWork
 
 pytestmark = pytest.mark.integration_postgres

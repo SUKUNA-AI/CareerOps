@@ -8,8 +8,8 @@ from typing import Any
 import requests
 
 from hh_applicant_tool.api import errors as hh_errors
+from hh_applicant_tool.application_transport import ApplicantTransport as VendorApplicantTransport
 from hh_applicant_tool.application_transport import (
-    ApplicantTransport as VendorApplicantTransport,
     QuestionnaireRequired,
     SubmissionOutcomeUnknown,
 )
