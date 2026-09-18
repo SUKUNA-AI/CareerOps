@@ -11,6 +11,7 @@ dependencies = [
     "SQLAlchemy>=2.0,<3",
     "alembic>=1.19,<2",
     "httpx>=0.28,<1",
+    "requests>=2.32,<3",
     "grpcio>=1.74,<2",
     "protobuf>=6,<7",
 ]
@@ -22,6 +23,7 @@ dev = [
     "pytest-cov>=6,<8",
     "ruff>=0.12,<1",
     "mypy>=1.17,<2",
+    "types-requests>=2.32,<3",
 ]
 reranker-runtime = [
     "torch==2.14.0",

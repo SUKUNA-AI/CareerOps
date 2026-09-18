@@ -1,12 +1,7 @@
 #!/bin/bash
-echo "[$(date)] Running startup tasks..."
+set -euo pipefail
 
-# echo "Current user: $(whoami)"
-# echo "$CONFIG_DIR"
-
-# Выполняем цепочку
+echo "[$(date)] Running applicant session maintenance..."
 /usr/local/bin/python -m hh_applicant_tool refresh-token
 /usr/local/bin/python -m hh_applicant_tool update-resumes
-/usr/local/bin/python -m hh_applicant_tool apply-vacancies
-
-echo "[$(date)] Startup tasks finished."
+echo "[$(date)] Applicant session maintenance finished."

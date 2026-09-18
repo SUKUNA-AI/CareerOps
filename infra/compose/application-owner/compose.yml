@@ -1,0 +1,39 @@
+name: careerops-application-owner
+
+services:
+  application-owner:
+    container_name: careerops-application-owner
+    build:
+      context: ../../..
+      dockerfile: infra/compose/application-owner/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/application-owner/env
+    volumes:
+      - /etc/careerops/hh-applicant-tool:/var/lib/careerops/hh-applicant-tool:rw
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          port = os.getenv('CAREEROPS_APPLICATION_HEALTH_PORT', '18082');
+          urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2).read()
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
