@@ -209,10 +209,11 @@ class HHApplicantTransport:
     ) -> str | None:
         tool = self._tool(account_key)
         try:
-            return VendorApplicantTransport(tool).find_negotiation(
+            negotiation_id = VendorApplicantTransport(tool).find_negotiation(
                 vacancy_id=vacancy_id,
                 resume_id=resume_id,
             )
+            return None if negotiation_id is None else str(negotiation_id)
         except (hh_errors.BadResponse, requests.RequestException):
             return None
         finally:
