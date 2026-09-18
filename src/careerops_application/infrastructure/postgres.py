@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import TracebackType
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -12,7 +13,7 @@ from . import postgres_claims
 class PostgresApplicationRepository:
     def __init__(
         self,
-        connection: psycopg.AsyncConnection[object],
+        connection: psycopg.AsyncConnection[Any],
         *,
         account_limit_cooldown_seconds: int = 900,
     ) -> None:
@@ -332,7 +333,7 @@ class PostgresApplicationUnitOfWork:
     def __init__(self, dsn: str, *, account_limit_cooldown_seconds: int = 900) -> None:
         self._dsn = dsn
         self._account_limit_cooldown_seconds = account_limit_cooldown_seconds
-        self._connection: psycopg.AsyncConnection[object] | None = None
+        self._connection: psycopg.AsyncConnection[Any] | None = None
         self.applications: PostgresApplicationRepository
 
     async def __aenter__(self) -> PostgresApplicationUnitOfWork:
@@ -361,7 +362,7 @@ class PostgresApplicationUnitOfWork:
     async def commit(self) -> None:
         await self._require_connection().commit()
 
-    def _require_connection(self) -> psycopg.AsyncConnection[object]:
+    def _require_connection(self) -> psycopg.AsyncConnection[Any]:
         if self._connection is None:
             raise RuntimeError("PostgresApplicationUnitOfWork is not active")
         return self._connection
