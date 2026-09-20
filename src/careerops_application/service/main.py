@@ -27,6 +27,7 @@ async def _run(settings: ApplicationServiceSettings) -> None:
         except NotImplementedError:
             pass
 
+    audit = S3ApplicationAuditStore(settings.s3)
     owner = ApplicationOwner(
         uow_factory=lambda: PostgresApplicationUnitOfWork(
             settings.postgres_dsn,
@@ -36,7 +37,7 @@ async def _run(settings: ApplicationServiceSettings) -> None:
             config_dir=settings.hh_config_dir,
             request_timeout_seconds=settings.transport_timeout_seconds,
         ),
-        audit=S3ApplicationAuditStore(settings.s3),
+        audit=audit,
         worker_id=settings.worker_id,
         lease_seconds=settings.lease_seconds,
         retry_after_seconds=settings.retry_after_seconds,
@@ -47,17 +48,19 @@ async def _run(settings: ApplicationServiceSettings) -> None:
     health = HealthServer(settings.health_host, settings.health_port, ready_event=ready)
     health.start()
     reconciliation_burst = 0
+    dependencies_ready = False
     try:
-        recovered = await owner.recover_expired_leases()
-        if recovered:
-            logger.warning("recovered %d expired application leases", recovered)
-        ready.set()
         while not stop.is_set():
             did_work = False
             try:
                 recovered = await owner.recover_expired_leases()
                 if recovered:
                     logger.warning("recovered %d expired application leases", recovered)
+                if not dependencies_ready:
+                    await audit.check_ready()
+                    dependencies_ready = True
+                    ready.set()
+                    logger.info("application owner dependencies are ready")
 
                 if reconciliation_burst >= settings.max_reconciliation_burst:
                     did_work = await owner.execute_next()
@@ -76,6 +79,10 @@ async def _run(settings: ApplicationServiceSettings) -> None:
                         if did_work:
                             reconciliation_burst = 0
             except Exception:
+                if dependencies_ready:
+                    logger.warning("application owner dependency state became unhealthy")
+                dependencies_ready = False
+                ready.clear()
                 logger.exception("application owner iteration failed")
             if not did_work:
                 try:
