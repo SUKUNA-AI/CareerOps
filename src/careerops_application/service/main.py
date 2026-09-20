@@ -36,6 +36,7 @@ async def _run(settings: ApplicationServiceSettings) -> None:
         transport=HHApplicantTransport(
             config_dir=settings.hh_config_dir,
             request_timeout_seconds=settings.transport_timeout_seconds,
+            operation_timeout_seconds=settings.operation_timeout_seconds,
         ),
         audit=audit,
         worker_id=settings.worker_id,
