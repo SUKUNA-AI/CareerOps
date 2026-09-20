@@ -11,6 +11,13 @@ class S3ApplicationAuditStore:
     def __init__(self, settings: S3Settings) -> None:
         self._settings = settings
 
+    async def check_ready(self) -> None:
+        """Prove that the configured audit bucket is reachable without mutating it."""
+
+        async with S3JsonStore(self._settings) as store:
+            async for _key in store.iter_keys():
+                break
+
     async def write_event(
         self,
         *,
