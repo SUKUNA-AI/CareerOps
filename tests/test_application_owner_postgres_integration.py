@@ -167,15 +167,13 @@ async def _replace_with_newer_candidate(
             id, vacancy_id, binding_id, binding_version,
             input_fingerprint, input_manifest_uri,
             pipeline_version, policy_version,
-            status, next_attempt_at, finished_at, result_artifact_uri,
-            created_at, updated_at
+            status, next_attempt_at, finished_at, result_artifact_uri
         )
         VALUES (
             %s, %s, %s, 1,
             %s, 's3://careerops-artifacts/manifests/p208-new.json',
             'processing-v2-test', 'policy-v1',
-            'succeeded', NULL, now(), 's3://careerops-artifacts/p2-07/p208-new.json',
-            now() + interval '1 second', now() + interval '1 second'
+            'succeeded', NULL, now(), 's3://careerops-artifacts/p2-07/p208-new.json'
         )
         """,
         (new_job_id, vacancy_id, binding_id, "b" * 64),
