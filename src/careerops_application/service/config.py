@@ -20,6 +20,7 @@ class ApplicationServiceSettings:
     reconcile_after_seconds: int = 120
     transport_timeout_seconds: float = 45.0
     operation_timeout_seconds: float = 90.0
+    max_reconciliation_burst: int = 8
     account_limit_cooldown_seconds: int = 900
     health_host: str = "127.0.0.1"
     health_port: int = 18082
@@ -91,6 +92,10 @@ class ApplicationServiceSettings:
             ),
             transport_timeout_seconds=transport_timeout_seconds,
             operation_timeout_seconds=operation_timeout_seconds,
+            max_reconciliation_burst=_int_env(
+                "CAREEROPS_APPLICATION_MAX_RECONCILIATION_BURST",
+                8,
+            ),
             account_limit_cooldown_seconds=_int_env(
                 "CAREEROPS_APPLICATION_ACCOUNT_LIMIT_COOLDOWN_SECONDS",
                 900,
