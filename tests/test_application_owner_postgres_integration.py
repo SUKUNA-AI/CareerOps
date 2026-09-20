@@ -144,6 +144,75 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
     return candidate_id
 
 
+async def _replace_with_newer_candidate(
+    connection: psycopg.AsyncConnection[object],
+    old_candidate_id: UUID,
+) -> UUID:
+    current = await connection.execute(
+        """
+        SELECT vacancy_id, binding_id, processing_job_id
+        FROM careerops_v2.application_candidates
+        WHERE id = %s
+        """,
+        (old_candidate_id,),
+    )
+    row = await current.fetchone()
+    assert row is not None
+    vacancy_id, binding_id, old_job_id = int(row[0]), int(row[1]), UUID(str(row[2]))
+
+    new_job_id = uuid4()
+    await connection.execute(
+        """
+        INSERT INTO careerops_v2.processing_jobs (
+            id, vacancy_id, binding_id, binding_version,
+            input_fingerprint, input_manifest_uri,
+            pipeline_version, policy_version,
+            status, next_attempt_at, finished_at, result_artifact_uri,
+            created_at, updated_at
+        )
+        VALUES (
+            %s, %s, %s, 1,
+            %s, 's3://careerops-artifacts/manifests/p208-new.json',
+            'processing-v2-test', 'policy-v1',
+            'succeeded', NULL, now(), 's3://careerops-artifacts/p2-07/p208-new.json',
+            now() + interval '1 second', now() + interval '1 second'
+        )
+        """,
+        (new_job_id, vacancy_id, binding_id, "b" * 64),
+    )
+    await connection.execute(
+        """
+        UPDATE careerops_v2.match_results
+        SET processing_job_id = %s,
+            deterministic_score = 96,
+            artifact_uri = 's3://careerops-artifacts/p2-07/p208-new.json',
+            computed_at = now()
+        WHERE vacancy_id = %s AND binding_id = %s AND processing_job_id = %s
+        """,
+        (new_job_id, vacancy_id, binding_id, old_job_id),
+    )
+    await connection.execute(
+        """
+        UPDATE careerops_v2.application_candidates
+        SET status = 'withdrawn', updated_at = now()
+        WHERE id = %s
+        """,
+        (old_candidate_id,),
+    )
+    new_candidate_id = uuid4()
+    await connection.execute(
+        """
+        INSERT INTO careerops_v2.application_candidates (
+            id, vacancy_id, binding_id, processing_job_id,
+            status, expires_at
+        )
+        VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
+        """,
+        (new_candidate_id, vacancy_id, binding_id, new_job_id),
+    )
+    return new_candidate_id
+
+
 @pytest.mark.asyncio
 async def test_claim_creates_permanent_account_vacancy_guard_atomically(
     application_target: PostgresTestTarget,
@@ -220,6 +289,10 @@ async def test_expired_submitting_lease_requires_reconciliation_not_retry(
     assert row[2] is not None
     assert row[3] == "application.submit_outcome_unknown"
 
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        assert await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120) is None
+        await uow.commit()
+
 
 @pytest.mark.asyncio
 async def test_withdrawn_candidate_cannot_cross_precheck_to_submitting(
@@ -248,6 +321,87 @@ async def test_withdrawn_candidate_cannot_cross_precheck_to_submitting(
         )
         assert current is False
         await uow.commit()
+
+
+@pytest.mark.asyncio
+async def test_stale_pre_submit_guard_rebinds_to_new_processing_candidate(
+    application_target: PostgresTestTarget,
+    application_connection: psycopg.AsyncConnection[object],
+) -> None:
+    old_candidate_id = await _seed_candidate(application_connection)
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
+        assert lease is not None
+        await uow.commit()
+
+    new_candidate_id = await _replace_with_newer_candidate(
+        application_connection,
+        old_candidate_id,
+    )
+
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        assert await uow.applications.mark_submitting(
+            lease,
+            audit_uri="s3://careerops-artifacts/application-owner/precheck-old.json",
+        ) is False
+        await uow.applications.mark_blocked(
+            lease,
+            reason_code="application.candidate_stale_before_submit",
+            audit_uri="s3://careerops-artifacts/application-owner/stale.json",
+        )
+        await uow.commit()
+
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        rebound = await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120)
+        assert rebound is not None
+        assert rebound.application_id == lease.application_id
+        assert rebound.candidate_id == new_candidate_id
+        assert rebound.processing_job_id != lease.processing_job_id
+        assert rebound.attempt_count == 2
+        await uow.commit()
+
+    guard = await application_connection.execute(
+        """
+        SELECT application_id
+        FROM careerops_v2.application_guards
+        WHERE account_id = %s AND source_vacancy_id = %s
+        """,
+        (lease.account_id, lease.source_vacancy_id),
+    )
+    guard_row = await guard.fetchone()
+    assert guard_row is not None
+    assert UUID(str(guard_row[0])) == lease.application_id
+
+
+@pytest.mark.asyncio
+async def test_expired_lease_cannot_commit_terminal_transition(
+    application_target: PostgresTestTarget,
+    application_connection: psycopg.AsyncConnection[object],
+) -> None:
+    await _seed_candidate(application_connection)
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
+        assert lease is not None
+        await uow.commit()
+
+    await application_connection.execute(
+        """
+        UPDATE careerops_v2.applications
+        SET leased_at = now() - interval '2 minutes',
+            lease_expires_at = now() - interval '1 minute'
+        WHERE id = %s
+        """,
+        (lease.application_id,),
+    )
+
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        with pytest.raises(RuntimeError, match="application lease lost"):
+            await uow.applications.mark_safe_failure(
+                lease,
+                reason_code="application.test",
+                audit_uri="s3://careerops-artifacts/application-owner/test.json",
+                retry_after_seconds=1,
+            )
 
 
 @pytest.mark.asyncio
