@@ -37,6 +37,14 @@ class PostgresApplicationRepository:
         )
         if retry is not None:
             return retry
+        rebound = await postgres_claims.claim_rebind_candidate(
+            self._connection,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            limit_cooldown_seconds=self._account_limit_cooldown_seconds,
+        )
+        if rebound is not None:
+            return rebound
         return await postgres_claims.claim_new_candidate(
             self._connection,
             worker_id=worker_id,
@@ -57,6 +65,29 @@ class PostgresApplicationRepository:
             limit_cooldown_seconds=self._account_limit_cooldown_seconds,
         )
 
+    async def renew_lease(self, lease: ApplicationLease, *, lease_seconds: int) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        cursor = await self._connection.execute(
+            """
+            UPDATE careerops_v2.applications
+            SET lease_expires_at = now() + make_interval(secs => %(lease_seconds)s),
+                updated_at = now()
+            WHERE id = %(application_id)s
+              AND lease_token = %(lease_token)s
+              AND lease_expires_at > now()
+              AND status IN ('preparing', 'precheck', 'submitting', 'reconciliation_required')
+            RETURNING id
+            """,
+            {
+                "application_id": lease.application_id,
+                "lease_token": lease.lease_token,
+                "lease_seconds": lease_seconds,
+            },
+        )
+        if await cursor.fetchone() is None:
+            raise RuntimeError(f"application lease lost: {lease.application_id}")
+
     async def mark_submitting(self, lease: ApplicationLease, *, audit_uri: str) -> bool:
         cursor = await self._connection.execute(
             """
@@ -71,6 +102,7 @@ class PostgresApplicationRepository:
                 updated_at = now()
             WHERE app.id = %(application_id)s
               AND app.lease_token = %(lease_token)s
+              AND app.lease_expires_at > now()
               AND EXISTS (
                   SELECT 1
                   FROM careerops_v2.application_candidates ac
@@ -316,7 +348,9 @@ class PostgresApplicationRepository:
         query = f"""
             UPDATE careerops_v2.applications
             SET {assignments_sql}
-            WHERE id = %(application_id)s AND lease_token = %(lease_token)s
+            WHERE id = %(application_id)s
+              AND lease_token = %(lease_token)s
+              AND lease_expires_at > now()
             RETURNING id
         """
         values = {
