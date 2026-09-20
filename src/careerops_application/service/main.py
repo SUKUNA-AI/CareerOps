@@ -41,10 +41,12 @@ async def _run(settings: ApplicationServiceSettings) -> None:
         lease_seconds=settings.lease_seconds,
         retry_after_seconds=settings.retry_after_seconds,
         reconcile_after_seconds=settings.reconcile_after_seconds,
+        operation_timeout_seconds=settings.operation_timeout_seconds,
         cover_letter=settings.cover_letter,
     )
     health = HealthServer(settings.health_host, settings.health_port, ready_event=ready)
     health.start()
+    reconciliation_burst = 0
     try:
         recovered = await owner.recover_expired_leases()
         if recovered:
@@ -56,9 +58,23 @@ async def _run(settings: ApplicationServiceSettings) -> None:
                 recovered = await owner.recover_expired_leases()
                 if recovered:
                     logger.warning("recovered %d expired application leases", recovered)
-                did_work = await owner.reconcile_next()
-                if not did_work:
+
+                if reconciliation_burst >= settings.max_reconciliation_burst:
                     did_work = await owner.execute_next()
+                    if did_work:
+                        reconciliation_burst = 0
+                    else:
+                        did_work = await owner.reconcile_next()
+                        if did_work:
+                            reconciliation_burst = 1
+                else:
+                    did_work = await owner.reconcile_next()
+                    if did_work:
+                        reconciliation_burst += 1
+                    else:
+                        did_work = await owner.execute_next()
+                        if did_work:
+                            reconciliation_burst = 0
             except Exception:
                 logger.exception("application owner iteration failed")
             if not did_work:
