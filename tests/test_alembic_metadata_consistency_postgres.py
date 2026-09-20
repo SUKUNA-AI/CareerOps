@@ -15,10 +15,22 @@ from careerops_storage.v2 import SCHEMA, metadata
 
 pytestmark = pytest.mark.integration_postgres
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ALEMBIC_VERSION_TABLE = "alembic_version_v2"
 
 
 def _config() -> Config:
     return Config(str(PROJECT_ROOT / "alembic.ini"))
+
+
+def _include_object(
+    object_: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object | None,
+) -> bool:
+    del object_, reflected, compare_to
+    return not (type_ == "table" and name == ALEMBIC_VERSION_TABLE)
 
 
 def test_alembic_head_has_no_schema_drift_from_canonical_metadata(
@@ -40,6 +52,7 @@ def test_alembic_head_has_no_schema_drift_from_canonical_metadata(
                     "include_name": lambda name, type_, parent_names: (
                         type_ != "schema" or name in {None, SCHEMA}
                     ),
+                    "include_object": _include_object,
                 },
             )
             differences = compare_metadata(context, metadata)
