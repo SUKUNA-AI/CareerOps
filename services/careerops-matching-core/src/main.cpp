@@ -2,7 +2,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include <grpcpp/grpcpp.h>
 
@@ -21,6 +23,65 @@ namespace {
 constexpr char kServiceName[] = "careerops-matching-core";
 constexpr char kControlProtocolVersion[] = "careerops.matching-core.control.v1";
 constexpr char kDefaultListenAddress[] = "127.0.0.1:50051";
+
+bool IsDigit(char value) { return value >= '0' && value <= '9'; }
+
+int ParseDigits(std::string_view value, std::size_t offset, std::size_t count) {
+  int result = 0;
+  for (std::size_t index = offset; index < offset + count; ++index) {
+    if (!IsDigit(value[index])) throw std::invalid_argument("invalid date");
+    result = result * 10 + (value[index] - '0');
+  }
+  return result;
+}
+
+bool IsLeapYear(int year) {
+  return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+void ValidateIsoDate(std::string_view value) {
+  if (value.size() != 10 || value[4] != '-' || value[7] != '-') {
+    throw std::invalid_argument("invalid date");
+  }
+  const int year = ParseDigits(value, 0, 4);
+  const int month = ParseDigits(value, 5, 2);
+  const int day = ParseDigits(value, 8, 2);
+  if (year < 1 || month < 1 || month > 12 || day < 1) {
+    throw std::invalid_argument("invalid date");
+  }
+  constexpr int kDaysByMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  int max_day = kDaysByMonth[month - 1];
+  if (month == 2 && IsLeapYear(year)) max_day = 29;
+  if (day > max_day) throw std::invalid_argument("invalid date");
+}
+
+bool IsDateField(std::string_view field_name) {
+  return field_name == "as_of" || field_name == "start_date" || field_name == "end_date";
+}
+
+void ValidateDecisionValue(const google::protobuf::Value& value, std::string_view field_name);
+
+void ValidateDecisionStruct(const google::protobuf::Struct& object) {
+  for (const auto& [name, value] : object.fields()) ValidateDecisionValue(value, name);
+}
+
+void ValidateDecisionValue(const google::protobuf::Value& value, std::string_view field_name) {
+  switch (value.kind_case()) {
+    case google::protobuf::Value::kStringValue:
+      if (IsDateField(field_name) && !value.string_value().empty()) {
+        ValidateIsoDate(value.string_value());
+      }
+      return;
+    case google::protobuf::Value::kStructValue:
+      ValidateDecisionStruct(value.struct_value());
+      return;
+    case google::protobuf::Value::kListValue:
+      for (const auto& item : value.list_value().values()) ValidateDecisionValue(item, field_name);
+      return;
+    default:
+      return;
+  }
+}
 
 class MatchingCoreControlService final : public matching::MatchingCoreControl::Service {
  public:
@@ -55,6 +116,7 @@ class MatchingCoreDecisionService final : public matching::MatchingCoreDecision:
                         google::protobuf::Struct* response) override {
     (void)context;
     try {
+      ValidateDecisionStruct(*request);
       *response = core::EvaluateDecision(*request);
       return grpc::Status::OK;
     } catch (const std::exception& error) {
@@ -67,6 +129,7 @@ class MatchingCoreDecisionService final : public matching::MatchingCoreDecision:
                              google::protobuf::Struct* response) override {
     (void)context;
     try {
+      ValidateDecisionStruct(*request);
       *response = core::EvaluateBatch(*request);
       return grpc::Status::OK;
     } catch (const std::exception& error) {
