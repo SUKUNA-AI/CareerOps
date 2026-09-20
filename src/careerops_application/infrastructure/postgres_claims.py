@@ -306,7 +306,10 @@ async def claim_rebind_candidate(
                   )
               )
           )
-          AND ac.id <> app.candidate_id
+          AND (
+              ac.id <> app.candidate_id
+              OR ac.processing_job_id <> app.processing_job_id
+          )
           AND ac.status = 'eligible'
           AND ac.expires_at > now()
           AND pj.status = 'succeeded'
