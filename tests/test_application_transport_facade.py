@@ -35,7 +35,11 @@ class _Vendor:
 
 def _transport(monkeypatch: pytest.MonkeyPatch, vendor: _Vendor) -> HHApplicantTransport:
     transport = HHApplicantTransport(config_dir=Path("."))
-    monkeypatch.setattr(transport, "_tool", lambda _account_key: object())
+    monkeypatch.setattr(
+        transport,
+        "_tool",
+        lambda _account_key, *, deadline: object(),
+    )
     monkeypatch.setattr(transport, "_persist", lambda _tool: None)
     monkeypatch.setattr(transport_module, "VendorApplicantTransport", lambda _tool: vendor)
     return transport
@@ -107,3 +111,27 @@ def test_find_submission_transport_failure_is_unknown_not_absence_proof(
 
     transport = _transport(monkeypatch, _FindVendor())
     assert transport._find_submission_sync("primary", "123", "resume") is None
+
+
+def test_http_request_timeout_is_capped_by_remaining_operation_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[float] = []
+
+    class _Session:
+        def request(self, method: str, url: str, **kwargs: object) -> object:
+            del method, url
+            calls.append(float(kwargs["timeout"]))
+            return object()
+
+    tool = SimpleNamespace(session=_Session())
+    transport = HHApplicantTransport(
+        config_dir=Path("."),
+        request_timeout_seconds=45,
+        operation_timeout_seconds=90,
+    )
+    monkeypatch.setattr(transport_module.time, "monotonic", lambda: 100.0)
+    transport._install_request_timeout(tool, deadline=112.5)
+    tool.session.request("GET", "https://example.invalid")
+
+    assert calls == [12.5]
