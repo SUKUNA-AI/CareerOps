@@ -181,14 +181,6 @@ async def _supersede_candidate(
     )
     await connection.execute(
         """
-        UPDATE careerops_v2.application_candidates
-        SET status = 'withdrawn', updated_at = now()
-        WHERE id = %s
-        """,
-        (candidate_id,),
-    )
-    await connection.execute(
-        """
         UPDATE careerops_v2.match_results
         SET processing_job_id = %s,
             artifact_uri = 's3://careerops-artifacts/p2-07/p208-new.json',
@@ -197,18 +189,18 @@ async def _supersede_candidate(
         """,
         (new_job_id, vacancy_id, binding_id),
     )
-    new_candidate_id = uuid4()
     await connection.execute(
         """
-        INSERT INTO careerops_v2.application_candidates (
-            id, vacancy_id, binding_id, processing_job_id,
-            status, expires_at
-        )
-        VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
+        UPDATE careerops_v2.application_candidates
+        SET processing_job_id = %s,
+            status = 'eligible',
+            expires_at = now() + interval '1 hour',
+            updated_at = now()
+        WHERE id = %s
         """,
-        (new_candidate_id, vacancy_id, binding_id, new_job_id),
+        (new_job_id, candidate_id),
     )
-    return new_candidate_id, new_job_id
+    return candidate_id, new_job_id
 
 
 @pytest.mark.asyncio
@@ -277,7 +269,7 @@ async def test_stale_candidate_rebinds_existing_guard_without_new_application(
         assert first is not None
         await uow.commit()
 
-    new_candidate_id, new_job_id = await _supersede_candidate(
+    current_candidate_id, new_job_id = await _supersede_candidate(
         application_connection,
         old_candidate_id,
     )
@@ -299,7 +291,7 @@ async def test_stale_candidate_rebinds_existing_guard_without_new_application(
         await uow.commit()
 
     assert rebound.application_id == first.application_id
-    assert rebound.candidate_id == new_candidate_id
+    assert rebound.candidate_id == current_candidate_id == first.candidate_id
     assert rebound.processing_job_id == new_job_id
     assert rebound.attempt_count == 2
 
