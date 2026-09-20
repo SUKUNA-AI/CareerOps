@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 from uuid import UUID
 
 from .domain import (
@@ -14,6 +17,8 @@ from .ports import (
     ApplicationUnitOfWorkFactory,
 )
 
+_T = TypeVar("_T")
+
 
 class ApplicationOwner:
     def __init__(
@@ -26,8 +31,13 @@ class ApplicationOwner:
         lease_seconds: int = 120,
         retry_after_seconds: int = 900,
         reconcile_after_seconds: int = 120,
+        operation_timeout_seconds: float = 90.0,
         cover_letter: str = "",
     ) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        if operation_timeout_seconds <= 0 or operation_timeout_seconds >= lease_seconds:
+            raise ValueError("operation_timeout_seconds must be > 0 and smaller than lease_seconds")
         self._uow_factory = uow_factory
         self._transport = transport
         self._audit = audit
@@ -35,6 +45,7 @@ class ApplicationOwner:
         self._lease_seconds = lease_seconds
         self._retry_after_seconds = retry_after_seconds
         self._reconcile_after_seconds = reconcile_after_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
         self._cover_letter = cover_letter
 
     async def recover_expired_leases(self) -> int:
@@ -48,12 +59,30 @@ class ApplicationOwner:
         if lease is None:
             return False
 
-        precheck = await self._transport.precheck(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
-            cover_letter=self._cover_letter,
-        )
+        try:
+            precheck = await self._run_external_with_heartbeat(
+                lease,
+                lambda: self._transport.precheck(
+                    account_key=lease.account_key,
+                    vacancy_id=lease.source_vacancy_id,
+                    resume_id=lease.source_resume_id,
+                    cover_letter=self._cover_letter,
+                ),
+            )
+        except TimeoutError:
+            timeout_uri = await self._audit.write_event(
+                application_id=lease.application_id,
+                event="precheck_timeout",
+                payload={"reason_code": "application.precheck_operation_timeout"},
+            )
+            await self._renew_lease(lease)
+            await self._mark_safe_failure(
+                lease,
+                reason_code="application.precheck_operation_timeout",
+                audit_uri=timeout_uri,
+            )
+            return True
+
         precheck_uri = await self._audit.write_event(
             application_id=lease.application_id,
             event="precheck",
@@ -71,6 +100,7 @@ class ApplicationOwner:
                 ],
             },
         )
+        await self._renew_lease(lease)
 
         if precheck.state is TransportPrecheckState.ALREADY_SUBMITTED:
             await self._mark_confirmed(lease, precheck_uri)
@@ -96,6 +126,7 @@ class ApplicationOwner:
                 event="candidate_stale_before_submit",
                 payload={"reason_code": "application.candidate_stale_before_submit"},
             )
+            await self._renew_lease(lease)
             await self._mark_blocked(
                 lease,
                 reason_code="application.candidate_stale_before_submit",
@@ -103,13 +134,31 @@ class ApplicationOwner:
             )
             return True
 
-        submit = await self._transport.submit(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
-            cover_letter=self._cover_letter,
-            questionnaire_answers={},
-        )
+        try:
+            submit = await self._run_external_with_heartbeat(
+                lease,
+                lambda: self._transport.submit(
+                    account_key=lease.account_key,
+                    vacancy_id=lease.source_vacancy_id,
+                    resume_id=lease.source_resume_id,
+                    cover_letter=self._cover_letter,
+                    questionnaire_answers={},
+                ),
+            )
+        except TimeoutError:
+            timeout_uri = await self._audit.write_event(
+                application_id=lease.application_id,
+                event="submit_timeout",
+                payload={"reason_code": "application.submit_outcome_unknown"},
+            )
+            await self._renew_lease(lease)
+            await self._mark_uncertain(
+                lease,
+                reason_code="application.submit_outcome_unknown",
+                audit_uri=timeout_uri,
+            )
+            return True
+
         submit_uri = await self._audit.write_event(
             application_id=lease.application_id,
             event="submit",
@@ -119,6 +168,7 @@ class ApplicationOwner:
                 "upstream_id": submit.upstream_id,
             },
         )
+        await self._renew_lease(lease)
 
         if submit.state is TransportSubmitState.ALREADY_SUBMITTED:
             await self._mark_confirmed(lease, submit_uri)
@@ -154,16 +204,23 @@ class ApplicationOwner:
         if lease is None:
             return False
 
-        upstream_id = await self._transport.find_submission(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
-        )
+        try:
+            upstream_id = await self._run_external_with_heartbeat(
+                lease,
+                lambda: self._transport.find_submission(
+                    account_key=lease.account_key,
+                    vacancy_id=lease.source_vacancy_id,
+                    resume_id=lease.source_resume_id,
+                ),
+            )
+        except TimeoutError:
+            upstream_id = None
         audit_uri = await self._audit.write_event(
             application_id=lease.application_id,
             event="reconcile",
             payload={"found": upstream_id is not None, "upstream_id": upstream_id},
         )
+        await self._renew_lease(lease)
         if upstream_id is not None:
             await self._mark_confirmed(lease, audit_uri)
         else:
@@ -188,6 +245,35 @@ class ApplicationOwner:
             )
             await uow.commit()
             return lease
+
+    async def _renew_lease(self, lease: ApplicationLease) -> None:
+        async with self._uow_factory() as uow:
+            await uow.applications.renew_lease(lease, lease_seconds=self._lease_seconds)
+            await uow.commit()
+
+    async def _run_external_with_heartbeat(
+        self,
+        lease: ApplicationLease,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        await self._renew_lease(lease)
+        stop = asyncio.Event()
+        heartbeat = asyncio.create_task(self._heartbeat(lease, stop))
+        try:
+            async with asyncio.timeout(self._operation_timeout_seconds):
+                return await operation()
+        finally:
+            stop.set()
+            await heartbeat
+
+    async def _heartbeat(self, lease: ApplicationLease, stop: asyncio.Event) -> None:
+        interval = max(1.0, self._lease_seconds / 3)
+        while True:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                await self._renew_lease(lease)
 
     async def _mark_submitting(self, lease: ApplicationLease, audit_uri: str) -> bool:
         async with self._uow_factory() as uow:
