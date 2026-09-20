@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import TracebackType
@@ -24,6 +25,7 @@ class FakeRepository:
     reconcile_lease: ApplicationLease | None = None
     transitions: list[tuple[str, str | None]] = field(default_factory=list)
     submitting_current: bool = True
+    renewals: int = 0
 
     async def recover_expired_leases(self) -> int:
         return 0
@@ -42,6 +44,10 @@ class FakeRepository:
         del worker_id, lease_seconds
         lease, self.reconcile_lease = self.reconcile_lease, None
         return lease
+
+    async def renew_lease(self, lease: ApplicationLease, *, lease_seconds: int) -> None:
+        del lease, lease_seconds
+        self.renewals += 1
 
     async def mark_submitting(self, lease: ApplicationLease, *, audit_uri: str) -> bool:
         del lease, audit_uri
@@ -135,6 +141,7 @@ class FakeTransport:
     submit_result: TransportSubmitResult
     found_submission: str | None = None
     submit_calls: int = 0
+    precheck_delay_seconds: float = 0.0
 
     async def precheck(
         self,
@@ -145,6 +152,8 @@ class FakeTransport:
         cover_letter: str,
     ) -> TransportPrecheck:
         del account_key, vacancy_id, resume_id, cover_letter
+        if self.precheck_delay_seconds:
+            await asyncio.sleep(self.precheck_delay_seconds)
         return self.precheck_result
 
     async def submit(
@@ -261,10 +270,9 @@ async def test_stale_candidate_is_blocked_immediately_before_submit() -> None:
     )
 
     assert await _owner(repo, transport).execute_next() is True
-    assert repo.transitions == [(
-        "blocked",
-        "application.candidate_stale_before_submit",
-    )]
+    assert repo.transitions == [
+        ("blocked", "application.candidate_stale_before_submit"),
+    ]
     assert transport.submit_calls == 0
 
 
@@ -298,3 +306,30 @@ async def test_negative_reconciliation_never_blindly_retries() -> None:
     assert await _owner(repo, transport).reconcile_next() is True
     assert repo.transitions == [("reconciliation_required", None)]
     assert transport.submit_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_long_precheck_renews_application_lease() -> None:
+    repo = FakeRepository(next_lease=_lease())
+    transport = FakeTransport(
+        precheck_result=TransportPrecheck(
+            state=TransportPrecheckState.SAFE_FAILURE,
+            reason_code="application.hh_transport_unavailable",
+        ),
+        submit_result=TransportSubmitResult(state=TransportSubmitState.SUBMITTED),
+        precheck_delay_seconds=0.04,
+    )
+    owner = ApplicationOwner(
+        uow_factory=lambda: FakeUow(repo),
+        transport=transport,
+        audit=FakeAudit(),
+        worker_id="test-worker",
+        lease_seconds=1,
+        lease_heartbeat_seconds=0.01,
+    )
+
+    assert await owner.execute_next() is True
+    assert repo.renewals >= 1
+    assert repo.transitions == [
+        ("safe_failure", "application.hh_transport_unavailable"),
+    ]

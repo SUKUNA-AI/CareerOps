@@ -27,6 +27,9 @@ class _Repo:
         lease, self.lease = self.lease, None
         return lease
 
+    async def renew_lease(self, lease: ApplicationLease, *, lease_seconds: int) -> None:
+        del lease, lease_seconds
+
     async def mark_safe_failure(
         self,
         lease: ApplicationLease,
@@ -122,5 +125,8 @@ def test_postgres_safety_fences_are_explicit_in_runtime_queries() -> None:
     assert "application-account:" in claims
     assert "application.hh_limit_exceeded" in claims
     assert "active.lease_expires_at > now()" in claims
+    assert "claim_rebind_candidate" in claims
+    assert "application.candidate_stale_before_submit" in claims
     assert "newer.status IN" in claims
     assert "newer.status IN" in repository
+    assert "lease_expires_at > now()" in repository

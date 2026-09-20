@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -26,11 +27,22 @@ from ..domain import (
 class HHApplicantTransport:
     """The only CareerOPS facade allowed to depend on vendored applicant mechanics."""
 
-    def __init__(self, *, config_dir: Path, request_timeout_seconds: float = 45.0) -> None:
+    def __init__(
+        self,
+        *,
+        config_dir: Path,
+        request_timeout_seconds: float = 45.0,
+        operation_timeout_seconds: float = 90.0,
+    ) -> None:
         if request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be > 0")
+        if operation_timeout_seconds <= 0:
+            raise ValueError("operation_timeout_seconds must be > 0")
+        if request_timeout_seconds > operation_timeout_seconds:
+            raise ValueError("request timeout must not exceed operation timeout")
         self._config_dir = config_dir
         self._request_timeout_seconds = request_timeout_seconds
+        self._operation_timeout_seconds = operation_timeout_seconds
 
     async def precheck(
         self,
@@ -87,7 +99,7 @@ class HHApplicantTransport:
         resume_id: str,
         cover_letter: str,
     ) -> TransportPrecheck:
-        tool = self._tool(account_key)
+        tool = self._tool(account_key, deadline=time.monotonic() + self._operation_timeout_seconds)
         try:
             result = VendorApplicantTransport(tool).precheck(
                 vacancy_id=vacancy_id,
@@ -141,7 +153,7 @@ class HHApplicantTransport:
         cover_letter: str,
         questionnaire_answers: Mapping[str, str],
     ) -> TransportSubmitResult:
-        tool = self._tool(account_key)
+        tool = self._tool(account_key, deadline=time.monotonic() + self._operation_timeout_seconds)
         try:
             result = VendorApplicantTransport(tool).submit(
                 vacancy_id=vacancy_id,
@@ -207,7 +219,7 @@ class HHApplicantTransport:
         vacancy_id: str,
         resume_id: str,
     ) -> str | None:
-        tool = self._tool(account_key)
+        tool = self._tool(account_key, deadline=time.monotonic() + self._operation_timeout_seconds)
         try:
             negotiation_id = VendorApplicantTransport(tool).find_negotiation(
                 vacancy_id=vacancy_id,
@@ -219,7 +231,7 @@ class HHApplicantTransport:
         finally:
             self._persist(tool)
 
-    def _tool(self, account_key: str) -> Any:
+    def _tool(self, account_key: str, *, deadline: float) -> Any:
         profile = (self._config_dir / account_key).resolve()
         root = self._config_dir.resolve()
         if profile.parent != root:
@@ -236,16 +248,19 @@ class HHApplicantTransport:
         tool.openai_proxy_url = None
         tool.openai_timeout = None
         tool.openai_connect_timeout = None
-        self._install_request_timeout(tool)
+        self._install_request_timeout(tool, deadline=deadline)
         return tool
 
-    def _install_request_timeout(self, tool: Any) -> None:
+    def _install_request_timeout(self, tool: Any, *, deadline: float) -> None:
         session = tool.session
         original_request = session.request
         timeout = self._request_timeout_seconds
 
         def request_with_timeout(method: str, url: str, **kwargs: Any) -> Any:
-            kwargs.setdefault("timeout", timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise requests.Timeout("HH applicant operation deadline exceeded")
+            kwargs["timeout"] = min(timeout, remaining)
             return original_request(method, url, **kwargs)
 
         session.request = request_with_timeout

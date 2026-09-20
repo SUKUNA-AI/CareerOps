@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable
+from typing import TypeVar
 from uuid import UUID
 
 from .domain import (
@@ -14,6 +17,8 @@ from .ports import (
     ApplicationUnitOfWorkFactory,
 )
 
+_T = TypeVar("_T")
+
 
 class ApplicationOwner:
     def __init__(
@@ -24,15 +29,24 @@ class ApplicationOwner:
         audit: ApplicationAuditStore,
         worker_id: str,
         lease_seconds: int = 120,
+        lease_heartbeat_seconds: float | None = None,
         retry_after_seconds: int = 900,
         reconcile_after_seconds: int = 120,
         cover_letter: str = "",
     ) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        heartbeat_seconds = (
+            lease_seconds / 3.0 if lease_heartbeat_seconds is None else lease_heartbeat_seconds
+        )
+        if heartbeat_seconds <= 0 or heartbeat_seconds >= lease_seconds:
+            raise ValueError("lease heartbeat must be > 0 and smaller than lease_seconds")
         self._uow_factory = uow_factory
         self._transport = transport
         self._audit = audit
         self._worker_id = worker_id
         self._lease_seconds = lease_seconds
+        self._lease_heartbeat_seconds = heartbeat_seconds
         self._retry_after_seconds = retry_after_seconds
         self._reconcile_after_seconds = reconcile_after_seconds
         self._cover_letter = cover_letter
@@ -48,28 +62,34 @@ class ApplicationOwner:
         if lease is None:
             return False
 
-        precheck = await self._transport.precheck(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
-            cover_letter=self._cover_letter,
+        precheck = await self._run_with_heartbeat(
+            lease,
+            self._transport.precheck(
+                account_key=lease.account_key,
+                vacancy_id=lease.source_vacancy_id,
+                resume_id=lease.source_resume_id,
+                cover_letter=self._cover_letter,
+            ),
         )
-        precheck_uri = await self._audit.write_event(
-            application_id=lease.application_id,
-            event="precheck",
-            payload={
-                "state": precheck.state,
-                "reason_code": precheck.reason_code,
-                "upstream_id": precheck.upstream_id,
-                "questions": [
-                    {
-                        "question_id": item.question_id,
-                        "text": item.text,
-                        "options": list(item.options),
-                    }
-                    for item in precheck.questions
-                ],
-            },
+        precheck_uri = await self._run_with_heartbeat(
+            lease,
+            self._audit.write_event(
+                application_id=lease.application_id,
+                event="precheck",
+                payload={
+                    "state": precheck.state,
+                    "reason_code": precheck.reason_code,
+                    "upstream_id": precheck.upstream_id,
+                    "questions": [
+                        {
+                            "question_id": item.question_id,
+                            "text": item.text,
+                            "options": list(item.options),
+                        }
+                        for item in precheck.questions
+                    ],
+                },
+            ),
         )
 
         if precheck.state is TransportPrecheckState.ALREADY_SUBMITTED:
@@ -91,10 +111,13 @@ class ApplicationOwner:
             return True
 
         if not await self._mark_submitting(lease, precheck_uri):
-            stale_uri = await self._audit.write_event(
-                application_id=lease.application_id,
-                event="candidate_stale_before_submit",
-                payload={"reason_code": "application.candidate_stale_before_submit"},
+            stale_uri = await self._run_with_heartbeat(
+                lease,
+                self._audit.write_event(
+                    application_id=lease.application_id,
+                    event="candidate_stale_before_submit",
+                    payload={"reason_code": "application.candidate_stale_before_submit"},
+                ),
             )
             await self._mark_blocked(
                 lease,
@@ -103,21 +126,27 @@ class ApplicationOwner:
             )
             return True
 
-        submit = await self._transport.submit(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
-            cover_letter=self._cover_letter,
-            questionnaire_answers={},
+        submit = await self._run_with_heartbeat(
+            lease,
+            self._transport.submit(
+                account_key=lease.account_key,
+                vacancy_id=lease.source_vacancy_id,
+                resume_id=lease.source_resume_id,
+                cover_letter=self._cover_letter,
+                questionnaire_answers={},
+            ),
         )
-        submit_uri = await self._audit.write_event(
-            application_id=lease.application_id,
-            event="submit",
-            payload={
-                "state": submit.state,
-                "reason_code": submit.reason_code,
-                "upstream_id": submit.upstream_id,
-            },
+        submit_uri = await self._run_with_heartbeat(
+            lease,
+            self._audit.write_event(
+                application_id=lease.application_id,
+                event="submit",
+                payload={
+                    "state": submit.state,
+                    "reason_code": submit.reason_code,
+                    "upstream_id": submit.upstream_id,
+                },
+            ),
         )
 
         if submit.state is TransportSubmitState.ALREADY_SUBMITTED:
@@ -154,15 +183,21 @@ class ApplicationOwner:
         if lease is None:
             return False
 
-        upstream_id = await self._transport.find_submission(
-            account_key=lease.account_key,
-            vacancy_id=lease.source_vacancy_id,
-            resume_id=lease.source_resume_id,
+        upstream_id = await self._run_with_heartbeat(
+            lease,
+            self._transport.find_submission(
+                account_key=lease.account_key,
+                vacancy_id=lease.source_vacancy_id,
+                resume_id=lease.source_resume_id,
+            ),
         )
-        audit_uri = await self._audit.write_event(
-            application_id=lease.application_id,
-            event="reconcile",
-            payload={"found": upstream_id is not None, "upstream_id": upstream_id},
+        audit_uri = await self._run_with_heartbeat(
+            lease,
+            self._audit.write_event(
+                application_id=lease.application_id,
+                event="reconcile",
+                payload={"found": upstream_id is not None, "upstream_id": upstream_id},
+            ),
         )
         if upstream_id is not None:
             await self._mark_confirmed(lease, audit_uri)
@@ -188,6 +223,46 @@ class ApplicationOwner:
             )
             await uow.commit()
             return lease
+
+    async def _renew_lease(self, lease: ApplicationLease) -> None:
+        async with self._uow_factory() as uow:
+            await uow.applications.renew_lease(lease, lease_seconds=self._lease_seconds)
+            await uow.commit()
+
+    async def _heartbeat_loop(self, lease: ApplicationLease, stop: asyncio.Event) -> None:
+        while True:
+            try:
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=self._lease_heartbeat_seconds,
+                )
+                return
+            except TimeoutError:
+                await self._renew_lease(lease)
+
+    async def _run_with_heartbeat(self, lease: ApplicationLease, operation: Awaitable[_T]) -> _T:
+        stop = asyncio.Event()
+        operation_task = asyncio.ensure_future(operation)
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(lease, stop))
+        heartbeat_failed = False
+        try:
+            done, _ = await asyncio.wait(
+                {operation_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if heartbeat_task in done:
+                heartbeat_error = heartbeat_task.exception()
+                if heartbeat_error is not None:
+                    heartbeat_failed = True
+                    try:
+                        await operation_task
+                    finally:
+                        raise heartbeat_error
+            return await operation_task
+        finally:
+            stop.set()
+            if not heartbeat_failed and not heartbeat_task.done():
+                await heartbeat_task
 
     async def _mark_submitting(self, lease: ApplicationLease, audit_uri: str) -> bool:
         async with self._uow_factory() as uow:
