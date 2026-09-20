@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import aioboto3
 import pytest
+import pytest_asyncio
 from botocore.config import Config
 
 from careerops_adapter.hh.raw import (
@@ -23,11 +25,18 @@ from careerops_storage.s3 import S3JsonStore, S3Settings
 
 pytestmark = pytest.mark.integration_storage
 
-ENDPOINT = os.getenv("CAREEROPS_TEST_S3_ENDPOINT", "http://127.0.0.1:8333")
+ENDPOINT_ENV = "CAREEROPS_TEST_S3_ENDPOINT"
 ACCESS_KEY = os.getenv("CAREEROPS_TEST_S3_ACCESS_KEY", "careerops-ci")
 SECRET_KEY = os.getenv("CAREEROPS_TEST_S3_SECRET_KEY", "careerops-ci-secret")
 RAW_BUCKET = "careerops-raw-ci"
 ARTIFACTS_BUCKET = "careerops-artifacts-ci"
+
+
+def _endpoint() -> str:
+    value = os.getenv(ENDPOINT_ENV, "").strip()
+    if not value:
+        pytest.skip(f"{ENDPOINT_ENV} is not configured")
+    return value
 
 
 def _config() -> Config:
@@ -38,12 +47,13 @@ def _config() -> Config:
     )
 
 
-@pytest.fixture(autouse=True)
-async def _clean_buckets() -> None:
+@pytest_asyncio.fixture(autouse=True)
+async def _clean_buckets() -> AsyncIterator[None]:
+    endpoint = _endpoint()
     session = aioboto3.Session()
     async with session.client(
         "s3",
-        endpoint_url=ENDPOINT,
+        endpoint_url=endpoint,
         aws_access_key_id=ACCESS_KEY,
         aws_secret_access_key=SECRET_KEY,
         region_name="us-east-1",
@@ -67,7 +77,7 @@ async def _clean_buckets() -> None:
 @pytest.mark.asyncio
 async def test_raw_observation_is_idempotent_and_collision_safe() -> None:
     settings = S3Settings(
-        endpoint_url=ENDPOINT,
+        endpoint_url=_endpoint(),
         access_key=ACCESS_KEY,
         secret_key=SECRET_KEY,
         bucket=RAW_BUCKET,
@@ -114,7 +124,7 @@ async def test_raw_observation_is_idempotent_and_collision_safe() -> None:
 @pytest.mark.asyncio
 async def test_processing_artifact_round_trips_by_content_address() -> None:
     settings = ProcessingArtifactStoreSettings(
-        endpoint_url=ENDPOINT,
+        endpoint_url=_endpoint(),
         access_key=ACCESS_KEY,
         secret_key=SECRET_KEY,
         bucket=ARTIFACTS_BUCKET,
@@ -144,7 +154,7 @@ async def test_processing_artifact_round_trips_by_content_address() -> None:
 @pytest.mark.asyncio
 async def test_application_audit_writes_distinct_persistent_events() -> None:
     settings = S3Settings(
-        endpoint_url=ENDPOINT,
+        endpoint_url=_endpoint(),
         access_key=ACCESS_KEY,
         secret_key=SECRET_KEY,
         bucket=ARTIFACTS_BUCKET,
