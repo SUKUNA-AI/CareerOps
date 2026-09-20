@@ -19,6 +19,7 @@ class ApplicationServiceSettings:
     retry_after_seconds: int = 900
     reconcile_after_seconds: int = 120
     transport_timeout_seconds: float = 45.0
+    operation_timeout_seconds: float = 90.0
     account_limit_cooldown_seconds: int = 900
     health_host: str = "127.0.0.1"
     health_port: int = 18082
@@ -59,9 +60,18 @@ class ApplicationServiceSettings:
             "CAREEROPS_APPLICATION_TRANSPORT_TIMEOUT_SECONDS",
             45.0,
         )
-        if transport_timeout_seconds >= lease_seconds:
+        operation_timeout_seconds = _float_env(
+            "CAREEROPS_APPLICATION_OPERATION_TIMEOUT_SECONDS",
+            90.0,
+        )
+        if transport_timeout_seconds >= operation_timeout_seconds:
             raise ValueError(
                 "CAREEROPS_APPLICATION_TRANSPORT_TIMEOUT_SECONDS must be smaller than "
+                "CAREEROPS_APPLICATION_OPERATION_TIMEOUT_SECONDS"
+            )
+        if operation_timeout_seconds >= lease_seconds:
+            raise ValueError(
+                "CAREEROPS_APPLICATION_OPERATION_TIMEOUT_SECONDS must be smaller than "
                 "CAREEROPS_APPLICATION_LEASE_SECONDS"
             )
         return cls(
@@ -80,6 +90,7 @@ class ApplicationServiceSettings:
                 120,
             ),
             transport_timeout_seconds=transport_timeout_seconds,
+            operation_timeout_seconds=operation_timeout_seconds,
             account_limit_cooldown_seconds=_int_env(
                 "CAREEROPS_APPLICATION_ACCOUNT_LIMIT_COOLDOWN_SECONDS",
                 900,
