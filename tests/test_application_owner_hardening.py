@@ -21,11 +21,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class _Repo:
     lease: ApplicationLease | None
     safe_failure_reason: str | None = None
+    renewals: int = 0
 
     async def claim_next(self, *, worker_id: str, lease_seconds: int) -> ApplicationLease | None:
         del worker_id, lease_seconds
         lease, self.lease = self.lease, None
         return lease
+
+    async def renew_lease(self, lease: ApplicationLease, *, lease_seconds: int) -> None:
+        del lease, lease_seconds
+        self.renewals += 1
 
     async def mark_safe_failure(
         self,
@@ -109,6 +114,7 @@ async def test_precheck_transport_failure_is_safe_retry_not_submit() -> None:
     assert await owner.execute_next() is True
     assert repo.safe_failure_reason == "application.hh_transport_unavailable"
     assert transport.submit_called is False
+    assert repo.renewals >= 2
 
 
 def test_postgres_safety_fences_are_explicit_in_runtime_queries() -> None:
@@ -121,6 +127,9 @@ def test_postgres_safety_fences_are_explicit_in_runtime_queries() -> None:
 
     assert "application-account:" in claims
     assert "application.hh_limit_exceeded" in claims
+    assert "unresolved.status IN" in claims
     assert "active.lease_expires_at > now()" in claims
+    assert "claim_rebind_candidate" in claims
     assert "newer.status IN" in claims
     assert "newer.status IN" in repository
+    assert "lease_expires_at > now()" in repository
