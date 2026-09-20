@@ -24,6 +24,7 @@ class FakeRepository:
     reconcile_lease: ApplicationLease | None = None
     transitions: list[tuple[str, str | None]] = field(default_factory=list)
     submitting_current: bool = True
+    renewals: int = 0
 
     async def recover_expired_leases(self) -> int:
         return 0
@@ -42,6 +43,10 @@ class FakeRepository:
         del worker_id, lease_seconds
         lease, self.reconcile_lease = self.reconcile_lease, None
         return lease
+
+    async def renew_lease(self, lease: ApplicationLease, *, lease_seconds: int) -> None:
+        del lease, lease_seconds
+        self.renewals += 1
 
     async def mark_submitting(self, lease: ApplicationLease, *, audit_uri: str) -> bool:
         del lease, audit_uri
@@ -218,6 +223,7 @@ async def test_success_is_never_assumed_confirmed_before_reconciliation() -> Non
     assert await _owner(repo, transport).execute_next() is True
     assert repo.transitions == [("submitting", None), ("submitted_unconfirmed", None)]
     assert transport.submit_calls == 1
+    assert repo.renewals >= 4
 
 
 @pytest.mark.asyncio
@@ -261,10 +267,9 @@ async def test_stale_candidate_is_blocked_immediately_before_submit() -> None:
     )
 
     assert await _owner(repo, transport).execute_next() is True
-    assert repo.transitions == [(
-        "blocked",
-        "application.candidate_stale_before_submit",
-    )]
+    assert repo.transitions == [
+        ("blocked", "application.candidate_stale_before_submit"),
+    ]
     assert transport.submit_calls == 0
 
 
