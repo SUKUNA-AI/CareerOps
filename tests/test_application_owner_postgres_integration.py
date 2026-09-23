@@ -44,20 +44,31 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
     )
     source_id = int((await source.fetchone())[0])
     account = await connection.execute(
-        "INSERT INTO careerops_v2.accounts (source_id, account_key) VALUES (%s, 'primary') RETURNING id",
+        """
+        INSERT INTO careerops_v2.accounts (source_id, account_key)
+        VALUES (%s, 'primary')
+        RETURNING id
+        """,
         (source_id,),
     )
     account_id = int((await account.fetchone())[0])
     profile = await connection.execute(
-        "INSERT INTO careerops_v2.profiles (source_id, account_id, profile_key) VALUES (%s, %s, 'profile') RETURNING id",
+        """
+        INSERT INTO careerops_v2.profiles (source_id, account_id, profile_key)
+        VALUES (%s, %s, 'profile')
+        RETURNING id
+        """,
         (source_id, account_id),
     )
     profile_id = int((await profile.fetchone())[0])
     resume = await connection.execute(
         """
         INSERT INTO careerops_v2.resumes (
-            source_id, account_id, profile_id, source_resume_id, lifecycle, present_in_upstream
-        ) VALUES (%s, %s, %s, 'resume-hash', 'active', true) RETURNING id
+            source_id, account_id, profile_id, source_resume_id,
+            lifecycle, present_in_upstream
+        )
+        VALUES (%s, %s, %s, 'resume-hash', 'active', true)
+        RETURNING id
         """,
         (source_id, account_id, profile_id),
     )
@@ -65,8 +76,11 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
     binding = await connection.execute(
         """
         INSERT INTO careerops_v2.resume_bindings (
-            account_id, resume_id, binding_key, binding_version, target_key, enabled, auto_apply
-        ) VALUES (%s, %s, 'binding', 1, 'de', true, true) RETURNING id
+            account_id, resume_id, binding_key, binding_version,
+            target_key, enabled, auto_apply
+        )
+        VALUES (%s, %s, 'binding', 1, 'de', true, true)
+        RETURNING id
         """,
         (account_id, resume_id),
     )
@@ -75,7 +89,9 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
         """
         INSERT INTO careerops_v2.vacancies (
             source_id, source_vacancy_id, archived, closed_for_applicants
-        ) VALUES (%s, 'vacancy-123', false, false) RETURNING id
+        )
+        VALUES (%s, 'vacancy-123', false, false)
+        RETURNING id
         """,
         (source_id,),
     )
@@ -99,7 +115,11 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
         INSERT INTO careerops_v2.match_results (
             vacancy_id, binding_id, processing_job_id, decision,
             deterministic_score, reason_codes, artifact_uri, computed_at
-        ) VALUES (%s, %s, %s, 'eligible', 95, ARRAY['ok'], 's3://ci/result.json', now())
+        )
+        VALUES (
+            %s, %s, %s, 'eligible', 95,
+            ARRAY['ok'], 's3://ci/result.json', now()
+        )
         """,
         (vacancy_id, binding_id, job_id),
     )
@@ -108,7 +128,8 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
         """
         INSERT INTO careerops_v2.application_candidates (
             id, vacancy_id, binding_id, processing_job_id, status, expires_at
-        ) VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
+        )
+        VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
         """,
         (candidate_id, vacancy_id, binding_id, job_id),
     )
@@ -116,10 +137,15 @@ async def _seed_candidate(connection: psycopg.AsyncConnection[object]) -> UUID:
 
 
 async def _publish_newer_current_result(
-    connection: psycopg.AsyncConnection[object], candidate_id: UUID
+    connection: psycopg.AsyncConnection[object],
+    candidate_id: UUID,
 ) -> UUID:
     current = await connection.execute(
-        "SELECT vacancy_id, binding_id FROM careerops_v2.application_candidates WHERE id = %s",
+        """
+        SELECT vacancy_id, binding_id
+        FROM careerops_v2.application_candidates
+        WHERE id = %s
+        """,
         (candidate_id,),
     )
     row = await current.fetchone()
@@ -142,8 +168,11 @@ async def _publish_newer_current_result(
     await connection.execute(
         """
         UPDATE careerops_v2.match_results
-        SET processing_job_id = %s, deterministic_score = 96,
-            artifact_uri = 's3://ci/result-new.json', computed_at = now(), updated_at = now()
+        SET processing_job_id = %s,
+            deterministic_score = 96,
+            artifact_uri = 's3://ci/result-new.json',
+            computed_at = now(),
+            updated_at = now()
         WHERE vacancy_id = %s AND binding_id = %s
         """,
         (job_id, vacancy_id, binding_id),
@@ -151,8 +180,10 @@ async def _publish_newer_current_result(
     await connection.execute(
         """
         UPDATE careerops_v2.application_candidates
-        SET processing_job_id = %s, status = 'eligible',
-            expires_at = now() + interval '1 hour', updated_at = now()
+        SET processing_job_id = %s,
+            status = 'eligible',
+            expires_at = now() + interval '1 hour',
+            updated_at = now()
         WHERE id = %s
         """,
         (job_id, candidate_id),
@@ -170,13 +201,24 @@ async def test_claim_creates_permanent_guard_atomically(
         lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
         assert lease is not None and lease.candidate_id == candidate_id
         await uow.commit()
+
     guard = await application_connection.execute(
-        "SELECT application_id FROM careerops_v2.application_guards WHERE account_id = %s AND source_vacancy_id = %s",
+        """
+        SELECT application_id
+        FROM careerops_v2.application_guards
+        WHERE account_id = %s AND source_vacancy_id = %s
+        """,
         (lease.account_id, lease.source_vacancy_id),
     )
-    assert UUID(str((await guard.fetchone())[0])) == lease.application_id
+    guard_row = await guard.fetchone()
+    assert guard_row is not None
+    assert UUID(str(guard_row[0])) == lease.application_id
+
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
-        assert await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120) is None
+        assert await uow.applications.claim_next(
+            worker_id="worker-b",
+            lease_seconds=120,
+        ) is None
 
 
 @pytest.mark.asyncio
@@ -188,25 +230,44 @@ async def test_expired_submitting_requires_reconciliation_and_blocks_new_work(
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
         lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
         assert lease is not None
-        assert await uow.applications.mark_submitting(lease, audit_uri="s3://ci/precheck.json")
+        assert await uow.applications.mark_submitting(
+            lease,
+            audit_uri="s3://ci/precheck.json",
+        )
         await uow.commit()
+
     await application_connection.execute(
-        "UPDATE careerops_v2.applications SET leased_at=now()-interval '2 min', lease_expires_at=now()-interval '1 min' WHERE id=%s",
+        """
+        UPDATE careerops_v2.applications
+        SET leased_at = now() - interval '2 minutes',
+            lease_expires_at = now() - interval '1 minute'
+        WHERE id = %s
+        """,
         (lease.application_id,),
     )
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
         assert await uow.applications.recover_expired_leases() == 1
         await uow.commit()
-    row = await (
-        await application_connection.execute(
-            "SELECT status, next_attempt_at, next_reconcile_at FROM careerops_v2.applications WHERE id=%s",
-            (lease.application_id,),
-        )
-    ).fetchone()
-    assert row == ("reconciliation_required", None, row[2])
+
+    cursor = await application_connection.execute(
+        """
+        SELECT status, next_attempt_at, next_reconcile_at
+        FROM careerops_v2.applications
+        WHERE id = %s
+        """,
+        (lease.application_id,),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] == "reconciliation_required"
+    assert row[1] is None
     assert row[2] is not None
+
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
-        assert await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120) is None
+        assert await uow.applications.claim_next(
+            worker_id="worker-b",
+            lease_seconds=120,
+        ) is None
 
 
 @pytest.mark.asyncio
@@ -222,7 +283,10 @@ async def test_stale_pre_submit_guard_rebinds_same_application_to_current_result
 
     newer_job_id = await _publish_newer_current_result(application_connection, candidate_id)
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
-        assert not await uow.applications.mark_submitting(lease, audit_uri="s3://ci/old.json")
+        assert not await uow.applications.mark_submitting(
+            lease,
+            audit_uri="s3://ci/old.json",
+        )
         await uow.applications.mark_blocked(
             lease,
             reason_code="application.candidate_stale_before_submit",
@@ -250,8 +314,14 @@ async def test_expired_lease_cannot_commit_transition(
         lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
         assert lease is not None
         await uow.commit()
+
     await application_connection.execute(
-        "UPDATE careerops_v2.applications SET leased_at=now()-interval '2 min', lease_expires_at=now()-interval '1 min' WHERE id=%s",
+        """
+        UPDATE careerops_v2.applications
+        SET leased_at = now() - interval '2 minutes',
+            lease_expires_at = now() - interval '1 minute'
+        WHERE id = %s
+        """,
         (lease.application_id,),
     )
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
@@ -274,9 +344,17 @@ async def test_withdrawn_candidate_cannot_cross_precheck_to_submit(
         lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
         assert lease is not None
         await uow.commit()
+
     await application_connection.execute(
-        "UPDATE careerops_v2.application_candidates SET status='withdrawn', updated_at=now() WHERE id=%s",
+        """
+        UPDATE careerops_v2.application_candidates
+        SET status = 'withdrawn', updated_at = now()
+        WHERE id = %s
+        """,
         (candidate_id,),
     )
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
-        assert not await uow.applications.mark_submitting(lease, audit_uri="s3://ci/precheck.json")
+        assert not await uow.applications.mark_submitting(
+            lease,
+            audit_uri="s3://ci/precheck.json",
+        )
