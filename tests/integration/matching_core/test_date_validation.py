@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+from collections.abc import Iterator
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -9,13 +13,33 @@ from google.protobuf.struct_pb2 import Struct
 
 from tests.integration.matching_core.test_decision_contract import (
     _evidence,
+    _free_loopback_port,
+    _generate_python_stubs,
+    _matching_core_binary,
     _request,
     _requirement,
     _selection,
-    decision_stub,
+    _stop_process,
+    _wait_for_channel,
 )
 
 pytestmark = pytest.mark.integration_matching_core
+
+
+@pytest.fixture
+def decision_stub(tmp_path: Path) -> Iterator[tuple[ModuleType, Any]]:
+    grpc, _control_pb2, control_pb2_grpc = _generate_python_stubs(tmp_path)
+    target = f"127.0.0.1:{_free_loopback_port()}"
+    env = os.environ.copy()
+    env["CAREEROPS_MATCHING_CORE_LISTEN_ADDR"] = target
+    process = subprocess.Popen([str(_matching_core_binary())], env=env, text=True)
+    channel = grpc.insecure_channel(target)
+    try:
+        _wait_for_channel(grpc, channel, process)
+        yield grpc, control_pb2_grpc.MatchingCoreDecisionStub(channel)
+    finally:
+        channel.close()
+        _stop_process(process)
 
 
 @pytest.mark.parametrize(
