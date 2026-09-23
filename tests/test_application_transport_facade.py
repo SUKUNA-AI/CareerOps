@@ -12,7 +12,12 @@ from careerops_application.infrastructure.hh_applicant_transport import HHApplic
 
 
 class _Vendor:
-    def __init__(self, *, precheck_error: BaseException | None = None, submit_error: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        precheck_error: BaseException | None = None,
+        submit_error: BaseException | None = None,
+    ) -> None:
         self.precheck_error = precheck_error
         self.submit_error = submit_error
 
