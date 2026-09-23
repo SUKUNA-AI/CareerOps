@@ -117,9 +117,12 @@ async def test_precheck_transport_failure_is_safe_retry_not_submit() -> None:
     assert repo.renewals >= 2
 
 
-def test_postgres_safety_fences_are_explicit_in_runtime_queries() -> None:
+def test_postgres_safety_fences_are_explicit_at_runtime_boundaries() -> None:
     claims = (
         PROJECT_ROOT / "src/careerops_application/infrastructure/postgres_claims.py"
+    ).read_text(encoding="utf-8")
+    rebind = (
+        PROJECT_ROOT / "src/careerops_application/infrastructure/postgres_rebind.py"
     ).read_text(encoding="utf-8")
     repository = (
         PROJECT_ROOT / "src/careerops_application/infrastructure/postgres.py"
@@ -129,7 +132,16 @@ def test_postgres_safety_fences_are_explicit_in_runtime_queries() -> None:
     assert "application.hh_limit_exceeded" in claims
     assert "unresolved.status IN" in claims
     assert "active.lease_expires_at > now()" in claims
-    assert "claim_rebind_candidate" in claims
-    assert "newer.status IN" in claims
-    assert "newer.status IN" in repository
+    assert "ac.processing_job_id = app.processing_job_id" in claims
+    assert "mr.processing_job_id = app.processing_job_id" in claims
+    assert "app.lease_token IS NULL" in claims
+
+    assert "claim_rebind_candidate" in rebind
+    assert "ac.id <> %(old_candidate_id)s" in rebind
+    assert "ac.processing_job_id <> %(old_processing_job_id)s" in rebind
+    assert "mr.processing_job_id = ac.processing_job_id" in rebind
+    assert "newer.status IN" in rebind
+    assert "application.hh_limit_exceeded" in rebind
+
+    assert "claim_rebind_candidate" in repository
     assert "lease_expires_at > now()" in repository
