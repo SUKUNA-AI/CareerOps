@@ -23,7 +23,7 @@ class ApplicationServiceSettings:
     max_reconciliation_burst: int = 8
     account_limit_cooldown_seconds: int = 900
     health_host: str = "127.0.0.1"
-    health_port: int = 18082
+    health_port: int = 18083
     cover_letter: str = ""
 
     @classmethod
@@ -101,7 +101,7 @@ class ApplicationServiceSettings:
                 900,
             ),
             health_host=os.getenv("CAREEROPS_APPLICATION_HEALTH_HOST", "127.0.0.1"),
-            health_port=_int_env("CAREEROPS_APPLICATION_HEALTH_PORT", 18082),
+            health_port=_int_env("CAREEROPS_APPLICATION_HEALTH_PORT", 18083),
             cover_letter=_cover_letter_from_env(),
         )
 
