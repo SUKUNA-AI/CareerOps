@@ -105,5 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     del args
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(_run(ApplicationServiceSettings.from_env()))
+    settings = ApplicationServiceSettings.from_env()
+    if not settings.allow_external_writes:
+        raise RuntimeError(
+            "application submission is parked; set "
+            "CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES=true explicitly to enable HH writes"
+        )
+    asyncio.run(_run(settings))
     return 0

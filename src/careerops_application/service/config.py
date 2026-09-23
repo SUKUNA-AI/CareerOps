@@ -25,6 +25,7 @@ class ApplicationServiceSettings:
     health_host: str = "127.0.0.1"
     health_port: int = 18083
     cover_letter: str = ""
+    allow_external_writes: bool = False
 
     @classmethod
     def from_env(cls) -> ApplicationServiceSettings:
@@ -103,6 +104,10 @@ class ApplicationServiceSettings:
             health_host=os.getenv("CAREEROPS_APPLICATION_HEALTH_HOST", "127.0.0.1"),
             health_port=_int_env("CAREEROPS_APPLICATION_HEALTH_PORT", 18083),
             cover_letter=_cover_letter_from_env(),
+            allow_external_writes=_bool_env(
+                "CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES",
+                False,
+            ),
         )
 
 
@@ -118,6 +123,18 @@ def _float_env(name: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be > 0")
     return value
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be an explicit boolean")
 
 
 def _cover_letter_from_env() -> str:

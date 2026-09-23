@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 import normalizer as core
@@ -131,6 +134,191 @@ def normalize_partition(
         )
 
 
+def parquet_batch_fingerprint(results: Iterable[core.NormalizedResult]) -> str:
+    identity = [
+        {
+            "entity_type": result.kind,
+            "source_entity_id": result.source_entity_id,
+            "normalized_sha256": result.normalized_sha256,
+        }
+        for result in results
+    ]
+    identity.sort(
+        key=lambda row: (
+            str(row["entity_type"]),
+            str(row["source_entity_id"]),
+            str(row["normalized_sha256"]),
+        )
+    )
+    return core.sha256_bytes(
+        core.canonical_json_bytes(
+            {
+                "normalization_version": core.NORMALIZATION_VERSION,
+                "objects": identity,
+            }
+        )
+    )
+
+
+def parquet_rows(results: Iterable[core.NormalizedResult]) -> list[dict[str, Any]]:
+    return [
+        {
+            "entity_type": result.kind,
+            "source_entity_id": result.source_entity_id,
+            "account_key": result.account_key if result.kind == "resume" else None,
+            "profile_key": result.profile_key if result.kind == "resume" else None,
+            "observed_at": result.observed_at,
+            "raw_sha256": result.raw_sha256,
+            "normalized_sha256": result.normalized_sha256,
+            "semantic_content_hash": result.semantic_content_hash,
+            "materialization_key": result.materialization_key,
+            "dq_status": result.dq_status,
+            "processing_ready": result.processing_ready,
+            "payload_json": result.payload_json,
+        }
+        for result in results
+    ]
+
+
+def _is_missing_s3_object(exc: Exception) -> bool:
+    response = getattr(exc, "response", {})
+    code = str(response.get("Error", {}).get("Code", ""))
+    return code in {"404", "NoSuchKey", "NotFound"}
+
+
+def _existing_parquet_manifest(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    batch_sha256: str,
+) -> str | None:
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_object(exc):
+            return None
+        raise
+    payload = json.loads(response["Body"].read().decode("utf-8"))
+    if payload.get("batch_sha256") != batch_sha256:
+        raise RuntimeError(f"Parquet manifest collision at s3://{bucket}/{key}")
+    return f"s3://{bucket}/{key}"
+
+
+def publish_parquet(
+    spark: Any,
+    settings: core.Settings,
+    results: Iterable[core.NormalizedResult],
+) -> list[str]:
+    """Publish immutable batch Parquet snapshots without requiring Spark S3A jars.
+
+    Spark writes Parquet to the container's /tmp tmpfs. The driver then uploads the
+    generated part files through the same S3-compatible boto3 client used for JSON.
+    A content-addressed manifest makes replay of the exact same normalized input set
+    idempotent: a second run reuses the existing Parquet snapshot instead of creating
+    another copy.
+    """
+
+    from pyspark.sql.types import BooleanType, StringType, StructField, StructType
+
+    grouped: dict[str, list[core.NormalizedResult]] = defaultdict(list)
+    for result in results:
+        grouped[result.kind].append(result)
+
+    schema = StructType(
+        [
+            StructField("entity_type", StringType(), nullable=False),
+            StructField("source_entity_id", StringType(), nullable=False),
+            StructField("account_key", StringType(), nullable=True),
+            StructField("profile_key", StringType(), nullable=True),
+            StructField("observed_at", StringType(), nullable=False),
+            StructField("raw_sha256", StringType(), nullable=False),
+            StructField("normalized_sha256", StringType(), nullable=False),
+            StructField("semantic_content_hash", StringType(), nullable=False),
+            StructField("materialization_key", StringType(), nullable=False),
+            StructField("dq_status", StringType(), nullable=False),
+            StructField("processing_ready", BooleanType(), nullable=False),
+            StructField("payload_json", StringType(), nullable=False),
+        ]
+    )
+
+    client = core._s3_client(settings)
+    manifest_uris: list[str] = []
+    for kind in sorted(grouped):
+        kind_results = grouped[kind]
+        batch_sha256 = parquet_batch_fingerprint(kind_results)
+        prefix = (
+            f"silver/{kind}/normalization_version={core.NORMALIZATION_VERSION}/"
+            f"batch_sha256={batch_sha256}"
+        )
+        manifest_key = f"{prefix}/_manifest.json"
+        existing_uri = _existing_parquet_manifest(
+            client,
+            bucket=settings.lake_bucket,
+            key=manifest_key,
+            batch_sha256=batch_sha256,
+        )
+        if existing_uri is not None:
+            manifest_uris.append(existing_uri)
+            continue
+
+        rows = parquet_rows(kind_results)
+        with tempfile.TemporaryDirectory(prefix="careerops-normalizer-parquet-") as temp_dir:
+            output_dir = Path(temp_dir) / kind
+            frame = spark.createDataFrame(rows, schema=schema)
+            part_count = max(1, min(settings.partitions, len(rows)))
+            frame.coalesce(part_count).write.mode("overwrite").parquet(str(output_dir))
+
+            parquet_objects: list[dict[str, Any]] = []
+            for index, part in enumerate(sorted(output_dir.glob("part-*.parquet"))):
+                body = part.read_bytes()
+                part_sha256 = core.sha256_bytes(body)
+                object_key = f"{prefix}/part-{index:05d}-{part_sha256}.parquet"
+                client.put_object(
+                    Bucket=settings.lake_bucket,
+                    Key=object_key,
+                    Body=body,
+                    ContentType="application/vnd.apache.parquet",
+                    Metadata={
+                        "sha256": part_sha256,
+                        "batch-sha256": batch_sha256,
+                        "producer": "careerops-normalizer-spark",
+                    },
+                )
+                parquet_objects.append(
+                    {
+                        "uri": f"s3://{settings.lake_bucket}/{object_key}",
+                        "sha256": part_sha256,
+                        "size_bytes": len(body),
+                    }
+                )
+
+        manifest = {
+            "schema_version": "careerops.normalized-parquet-manifest.v1",
+            "normalization_version": core.NORMALIZATION_VERSION,
+            "entity_type": kind,
+            "batch_sha256": batch_sha256,
+            "row_count": len(rows),
+            "normalized_sha256": sorted(result.normalized_sha256 for result in kind_results),
+            "objects": parquet_objects,
+        }
+        manifest_body = core.canonical_json_bytes(manifest)
+        client.put_object(
+            Bucket=settings.lake_bucket,
+            Key=manifest_key,
+            Body=manifest_body,
+            ContentType="application/json; charset=utf-8",
+            Metadata={
+                "sha256": core.sha256_bytes(manifest_body),
+                "batch-sha256": batch_sha256,
+                "producer": "careerops-normalizer-spark",
+            },
+        )
+        manifest_uris.append(f"s3://{settings.lake_bucket}/{manifest_key}")
+
+    return manifest_uris
+
+
 def main() -> int:
     from pyspark.sql import SparkSession
 
@@ -154,10 +342,13 @@ def main() -> int:
     )
 
     manifest_rows: list[dict[str, Any]] = []
+    materialized_results: list[core.NormalizedResult] = []
+    parquet_manifests: list[str] = []
     try:
         for result in normalized.toLocalIterator():
             normalized_uri = core.put_normalized(settings, result)
             core.publish_postgres(settings, result, normalized_uri)
+            materialized_results.append(result)
             manifest_rows.append(
                 {
                     "entity_type": result.kind,
@@ -174,6 +365,7 @@ def main() -> int:
                     "dq_status": result.dq_status,
                 }
             )
+        parquet_manifests = publish_parquet(spark, settings, materialized_results)
     finally:
         spark.stop()
 
@@ -181,7 +373,11 @@ def main() -> int:
     manifest_uri = core.write_manifest(settings, manifest_rows, run_id)
     print(
         json.dumps(
-            {"processed": len(manifest_rows), "manifest_uri": manifest_uri},
+            {
+                "processed": len(manifest_rows),
+                "manifest_uri": manifest_uri,
+                "parquet_manifests": parquet_manifests,
+            },
             ensure_ascii=False,
         )
     )
