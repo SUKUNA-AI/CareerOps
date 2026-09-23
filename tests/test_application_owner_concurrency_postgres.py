@@ -29,24 +29,36 @@ def application_target(v2_postgres_test_target: PostgresTestTarget) -> PostgresT
 async def _seed_one_candidate(dsn: str) -> None:
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as connection:
         source = await connection.execute(
-            "INSERT INTO careerops_v2.sources (source_key) VALUES ('hh-concurrency') RETURNING id"
+            "INSERT INTO careerops_v2.sources (source_key) "
+            "VALUES ('hh-concurrency') RETURNING id"
         )
         source_id = int((await source.fetchone())[0])
         account = await connection.execute(
-            "INSERT INTO careerops_v2.accounts (source_id, account_key) VALUES (%s, 'primary') RETURNING id",
+            """
+            INSERT INTO careerops_v2.accounts (source_id, account_key)
+            VALUES (%s, 'primary')
+            RETURNING id
+            """,
             (source_id,),
         )
         account_id = int((await account.fetchone())[0])
         profile = await connection.execute(
-            "INSERT INTO careerops_v2.profiles (source_id, account_id, profile_key) VALUES (%s, %s, 'profile') RETURNING id",
+            """
+            INSERT INTO careerops_v2.profiles (source_id, account_id, profile_key)
+            VALUES (%s, %s, 'profile')
+            RETURNING id
+            """,
             (source_id, account_id),
         )
         profile_id = int((await profile.fetchone())[0])
         resume = await connection.execute(
             """
             INSERT INTO careerops_v2.resumes (
-                source_id, account_id, profile_id, source_resume_id, lifecycle, present_in_upstream
-            ) VALUES (%s, %s, %s, 'resume', 'active', true) RETURNING id
+                source_id, account_id, profile_id, source_resume_id,
+                lifecycle, present_in_upstream
+            )
+            VALUES (%s, %s, %s, 'resume', 'active', true)
+            RETURNING id
             """,
             (source_id, account_id, profile_id),
         )
@@ -54,8 +66,11 @@ async def _seed_one_candidate(dsn: str) -> None:
         binding = await connection.execute(
             """
             INSERT INTO careerops_v2.resume_bindings (
-                account_id, resume_id, binding_key, binding_version, target_key, enabled, auto_apply
-            ) VALUES (%s, %s, 'binding', 1, 'default', true, true) RETURNING id
+                account_id, resume_id, binding_key, binding_version,
+                target_key, enabled, auto_apply
+            )
+            VALUES (%s, %s, 'binding', 1, 'default', true, true)
+            RETURNING id
             """,
             (account_id, resume_id),
         )
@@ -64,7 +79,9 @@ async def _seed_one_candidate(dsn: str) -> None:
             """
             INSERT INTO careerops_v2.vacancies (
                 source_id, source_vacancy_id, archived, closed_for_applicants
-            ) VALUES (%s, 'vacancy', false, false) RETURNING id
+            )
+            VALUES (%s, 'vacancy', false, false)
+            RETURNING id
             """,
             (source_id,),
         )
@@ -88,7 +105,11 @@ async def _seed_one_candidate(dsn: str) -> None:
             INSERT INTO careerops_v2.match_results (
                 vacancy_id, binding_id, processing_job_id, decision,
                 deterministic_score, reason_codes, artifact_uri, computed_at
-            ) VALUES (%s, %s, %s, 'eligible', 100, ARRAY['ok'], 's3://ci/result.json', now())
+            )
+            VALUES (
+                %s, %s, %s, 'eligible', 100,
+                ARRAY['ok'], 's3://ci/result.json', now()
+            )
             """,
             (vacancy_id, binding_id, job_id),
         )
@@ -96,7 +117,8 @@ async def _seed_one_candidate(dsn: str) -> None:
             """
             INSERT INTO careerops_v2.application_candidates (
                 id, vacancy_id, binding_id, processing_job_id, status, expires_at
-            ) VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
+            )
+            VALUES (%s, %s, %s, %s, 'eligible', now() + interval '1 hour')
             """,
             (uuid4(), vacancy_id, binding_id, job_id),
         )
@@ -144,7 +166,10 @@ async def test_recovered_uncertain_submit_blocks_new_account_work(
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
         lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
         assert lease is not None
-        assert await uow.applications.mark_submitting(lease, audit_uri="s3://ci/precheck.json")
+        assert await uow.applications.mark_submitting(
+            lease,
+            audit_uri="s3://ci/precheck.json",
+        )
         await uow.commit()
 
     async with await psycopg.AsyncConnection.connect(
@@ -165,5 +190,8 @@ async def test_recovered_uncertain_submit_blocks_new_account_work(
         await uow.commit()
 
     async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
-        assert await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120) is None
+        assert await uow.applications.claim_next(
+            worker_id="worker-b",
+            lease_seconds=120,
+        ) is None
         await uow.commit()
