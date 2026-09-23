@@ -7,7 +7,7 @@ from uuid import UUID
 import psycopg
 
 from ..domain import ApplicationLease, ApplicationStateView
-from . import postgres_claims
+from . import postgres_claims, postgres_rebind
 
 
 class PostgresApplicationRepository:
@@ -37,7 +37,7 @@ class PostgresApplicationRepository:
         )
         if retry is not None:
             return retry
-        rebound = await postgres_claims.claim_rebind_candidate(
+        rebound = await postgres_rebind.claim_rebind_candidate(
             self._connection,
             worker_id=worker_id,
             lease_seconds=lease_seconds,
