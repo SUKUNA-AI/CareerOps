@@ -1,0 +1,27 @@
+name: careerops-hh-adapter
+
+services:
+  hh-adapter:
+    container_name: careerops-hh-adapter
+    build:
+      context: ../../..
+      dockerfile: infra/compose/hh-adapter/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/hh-adapter/env
+    volumes:
+      - /etc/careerops/hh:/etc/careerops/hh:ro
+      - /etc/careerops/hh-applicant-tool:/var/lib/careerops/hh-applicant-tool:rw
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
