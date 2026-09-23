@@ -317,6 +317,43 @@ async def test_stale_pre_submit_guard_rebinds_same_application_to_current_result
 
 
 @pytest.mark.asyncio
+async def test_safe_failure_rebinds_after_same_candidate_moves_to_new_processing_job(
+    application_target: PostgresTestTarget,
+    application_connection: psycopg.AsyncConnection[object],
+) -> None:
+    candidate_id = await _seed_candidate(application_connection)
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        lease = await uow.applications.claim_next(worker_id="worker-a", lease_seconds=120)
+        assert lease is not None
+        await uow.applications.mark_safe_failure(
+            lease,
+            reason_code="application.test_safe_failure",
+            audit_uri="s3://ci/safe-failure.json",
+            retry_after_seconds=1,
+        )
+        await uow.commit()
+
+    await application_connection.execute(
+        """
+        UPDATE careerops_v2.applications
+        SET next_attempt_at = now() - interval '1 second'
+        WHERE id = %s
+        """,
+        (lease.application_id,),
+    )
+    newer_job_id = await _publish_newer_current_result(application_connection, candidate_id)
+
+    async with PostgresApplicationUnitOfWork(application_target.dsn) as uow:
+        rebound = await uow.applications.claim_next(worker_id="worker-b", lease_seconds=120)
+        assert rebound is not None
+        assert rebound.application_id == lease.application_id
+        assert rebound.candidate_id == candidate_id
+        assert rebound.processing_job_id == newer_job_id
+        assert rebound.attempt_count == 2
+        await uow.commit()
+
+
+@pytest.mark.asyncio
 async def test_expired_lease_cannot_commit_transition(
     application_target: PostgresTestTarget,
     application_connection: psycopg.AsyncConnection[object],
