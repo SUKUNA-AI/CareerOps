@@ -18,41 +18,21 @@ async def claim_rebind_candidate(
 ) -> ApplicationLease | None:
     """Rebind one guarded pre-submit application to its newer current Processing result."""
 
-    cursor = await connection.execute(
-        f"""
+    application = await connection.execute(
+        """
         SELECT app.id,
                app.account_id,
                acc.account_key,
                app.source_vacancy_id,
                app.attempt_count,
-               current_ac.id,
-               current_ac.processing_job_id,
-               current_resume.id,
-               current_resume.source_resume_id
+               app.candidate_id,
+               app.processing_job_id
         FROM careerops_v2.applications app
         JOIN careerops_v2.application_guards guard
           ON guard.account_id = app.account_id
          AND guard.source_vacancy_id = app.source_vacancy_id
          AND guard.application_id = app.id
-        JOIN careerops_v2.accounts acc
-          ON acc.id = app.account_id
-        JOIN careerops_v2.vacancies vacancy
-          ON vacancy.source_id = acc.source_id
-         AND vacancy.source_vacancy_id = app.source_vacancy_id
-        JOIN careerops_v2.application_candidates current_ac
-          ON current_ac.vacancy_id = vacancy.id
-        JOIN careerops_v2.processing_jobs current_job
-          ON current_job.id = current_ac.processing_job_id
-        JOIN careerops_v2.match_results current_match
-          ON current_match.vacancy_id = current_ac.vacancy_id
-         AND current_match.binding_id = current_ac.binding_id
-         AND current_match.processing_job_id = current_ac.processing_job_id
-        JOIN careerops_v2.resume_bindings current_binding
-          ON current_binding.id = current_ac.binding_id
-        JOIN careerops_v2.resumes current_resume
-          ON current_resume.id = current_binding.resume_id
-         AND current_resume.account_id = current_binding.account_id
-         AND current_resume.account_id = app.account_id
+        JOIN careerops_v2.accounts acc ON acc.id = app.account_id
         WHERE app.submitted_at IS NULL
           AND app.confirmed_at IS NULL
           AND app.lease_token IS NULL
@@ -63,65 +43,22 @@ async def claim_rebind_candidate(
               )
               OR app.status = 'safe_failure'
           )
-          AND (
-              current_ac.id <> app.candidate_id
-              OR current_ac.processing_job_id <> app.processing_job_id
-          )
-          AND current_ac.status = 'eligible'
-          AND current_ac.expires_at > now()
-          AND current_job.status = 'succeeded'
-          AND current_match.decision = 'eligible'
-          AND current_binding.enabled IS TRUE
-          AND current_binding.auto_apply IS TRUE
-          AND current_binding.binding_version = current_job.binding_version
-          AND current_resume.lifecycle = 'active'
-          AND current_resume.present_in_upstream IS TRUE
-          AND vacancy.archived IS DISTINCT FROM TRUE
-          AND vacancy.closed_for_applicants IS DISTINCT FROM TRUE
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.processing_jobs newer
-              WHERE newer.vacancy_id = current_ac.vacancy_id
-                AND newer.binding_id = current_ac.binding_id
-                AND newer.id <> current_job.id
-                AND newer.status IN ({postgres_claims._ACTIVE_PROCESSING_STATUSES})
-                AND newer.created_at > current_job.created_at
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications unresolved
-              WHERE unresolved.account_id = app.account_id
-                AND unresolved.id <> app.id
-                AND unresolved.status IN ({postgres_claims._UNRESOLVED_SUBMIT_STATUSES})
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications active
-              WHERE active.account_id = app.account_id
-                AND active.id <> app.id
-                AND active.status IN ({postgres_claims._LIVE_PRE_SUBMIT_STATUSES})
-                AND active.lease_expires_at > now()
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications limited
-              WHERE limited.account_id = app.account_id
-                AND limited.reason_code = 'application.hh_limit_exceeded'
-                AND limited.state_changed_at
-                    > now() - make_interval(secs => %(limit_cooldown_seconds)s)
-          )
-        ORDER BY app.state_changed_at, current_ac.updated_at DESC, current_ac.id
-        FOR UPDATE OF app, current_ac SKIP LOCKED
+        ORDER BY app.state_changed_at, app.id
+        FOR UPDATE OF app SKIP LOCKED
         LIMIT 1
-        """,
-        {"limit_cooldown_seconds": limit_cooldown_seconds},
+        """
     )
-    row = await cursor.fetchone()
-    if row is None:
+    app_row = await application.fetchone()
+    if app_row is None:
         return None
 
-    application_id = UUID(str(row[0]))
-    account_id = int(row[1])
+    application_id = UUID(str(app_row[0]))
+    account_id = int(app_row[1])
+    account_key = str(app_row[2])
+    source_vacancy_id = str(app_row[3])
+    old_candidate_id = UUID(str(app_row[5]))
+    old_processing_job_id = UUID(str(app_row[6]))
+
     await postgres_claims._lock_account(connection, account_id=account_id)
     if not await postgres_claims._account_gate_open(
         connection,
@@ -131,7 +68,6 @@ async def claim_rebind_candidate(
     ):
         return None
 
-    source_vacancy_id = str(row[3])
     await connection.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
         (f"{account_id}:{source_vacancy_id}",),
@@ -149,10 +85,97 @@ async def claim_rebind_candidate(
     if guard_row is None or UUID(str(guard_row[0])) != application_id:
         return None
 
+    current = await connection.execute(
+        f"""
+        SELECT ac.id,
+               ac.processing_job_id,
+               r.id,
+               r.source_resume_id
+        FROM careerops_v2.accounts acc
+        JOIN careerops_v2.vacancies v
+          ON v.source_id = acc.source_id
+         AND v.source_vacancy_id = %(source_vacancy_id)s
+        JOIN careerops_v2.application_candidates ac ON ac.vacancy_id = v.id
+        JOIN careerops_v2.processing_jobs pj ON pj.id = ac.processing_job_id
+        JOIN careerops_v2.match_results mr
+          ON mr.vacancy_id = ac.vacancy_id
+         AND mr.binding_id = ac.binding_id
+         AND mr.processing_job_id = ac.processing_job_id
+        JOIN careerops_v2.resume_bindings rb ON rb.id = ac.binding_id
+        JOIN careerops_v2.resumes r
+          ON r.id = rb.resume_id
+         AND r.account_id = rb.account_id
+        WHERE acc.id = %(account_id)s
+          AND r.account_id = %(account_id)s
+          AND (
+              ac.id <> %(old_candidate_id)s
+              OR ac.processing_job_id <> %(old_processing_job_id)s
+          )
+          AND ac.status = 'eligible'
+          AND ac.expires_at > now()
+          AND pj.status = 'succeeded'
+          AND mr.decision = 'eligible'
+          AND rb.enabled IS TRUE
+          AND rb.auto_apply IS TRUE
+          AND rb.binding_version = pj.binding_version
+          AND r.lifecycle = 'active'
+          AND r.present_in_upstream IS TRUE
+          AND v.archived IS DISTINCT FROM TRUE
+          AND v.closed_for_applicants IS DISTINCT FROM TRUE
+          AND NOT EXISTS (
+              SELECT 1
+              FROM careerops_v2.processing_jobs newer
+              WHERE newer.vacancy_id = ac.vacancy_id
+                AND newer.binding_id = ac.binding_id
+                AND newer.id <> pj.id
+                AND newer.status IN ({postgres_claims._ACTIVE_PROCESSING_STATUSES})
+                AND newer.created_at > pj.created_at
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM careerops_v2.applications unresolved
+              WHERE unresolved.account_id = %(account_id)s
+                AND unresolved.id <> %(application_id)s
+                AND unresolved.status IN ({postgres_claims._UNRESOLVED_SUBMIT_STATUSES})
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM careerops_v2.applications active
+              WHERE active.account_id = %(account_id)s
+                AND active.id <> %(application_id)s
+                AND active.status IN ({postgres_claims._LIVE_PRE_SUBMIT_STATUSES})
+                AND active.lease_expires_at > now()
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM careerops_v2.applications limited
+              WHERE limited.account_id = %(account_id)s
+                AND limited.reason_code = 'application.hh_limit_exceeded'
+                AND limited.state_changed_at
+                    > now() - make_interval(secs => %(limit_cooldown_seconds)s)
+          )
+        ORDER BY ac.updated_at DESC, ac.id
+        FOR UPDATE OF ac SKIP LOCKED
+        LIMIT 1
+        """,
+        {
+            "account_id": account_id,
+            "application_id": application_id,
+            "source_vacancy_id": source_vacancy_id,
+            "old_candidate_id": old_candidate_id,
+            "old_processing_job_id": old_processing_job_id,
+            "limit_cooldown_seconds": limit_cooldown_seconds,
+        },
+    )
+    current_row = await current.fetchone()
+    if current_row is None:
+        return None
+
+    candidate_id = UUID(str(current_row[0]))
+    processing_job_id = UUID(str(current_row[1]))
+    resume_id = int(current_row[2])
+    source_resume_id = str(current_row[3])
     lease_token = uuid4()
-    candidate_id = UUID(str(row[5]))
-    processing_job_id = UUID(str(row[6]))
-    resume_id = int(row[7])
     updated = await connection.execute(
         """
         UPDATE careerops_v2.applications
@@ -197,10 +220,10 @@ async def claim_rebind_candidate(
     return ApplicationLease(
         application_id=application_id,
         account_id=account_id,
-        account_key=str(row[2]),
+        account_key=account_key,
         source_vacancy_id=source_vacancy_id,
         resume_id=resume_id,
-        source_resume_id=str(row[8]),
+        source_resume_id=source_resume_id,
         candidate_id=candidate_id,
         processing_job_id=processing_job_id,
         lease_token=lease_token,
