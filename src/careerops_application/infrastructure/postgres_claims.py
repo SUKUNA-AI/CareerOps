@@ -132,16 +132,21 @@ async def claim_retry(
         FROM careerops_v2.applications app
         JOIN careerops_v2.accounts acc ON acc.id = app.account_id
         JOIN careerops_v2.resumes r ON r.id = app.resume_id AND r.account_id = app.account_id
-        JOIN careerops_v2.application_candidates ac ON ac.id = app.candidate_id
-        JOIN careerops_v2.processing_jobs pj ON pj.id = app.processing_job_id
+        JOIN careerops_v2.application_candidates ac
+          ON ac.id = app.candidate_id
+         AND ac.processing_job_id = app.processing_job_id
+        JOIN careerops_v2.processing_jobs pj
+          ON pj.id = app.processing_job_id
+         AND pj.id = ac.processing_job_id
         JOIN careerops_v2.match_results mr
           ON mr.vacancy_id = ac.vacancy_id
          AND mr.binding_id = ac.binding_id
-         AND mr.processing_job_id = ac.processing_job_id
+         AND mr.processing_job_id = app.processing_job_id
         JOIN careerops_v2.resume_bindings rb ON rb.id = ac.binding_id
         JOIN careerops_v2.vacancies v ON v.id = ac.vacancy_id
         WHERE app.status = 'safe_failure'
           AND app.next_attempt_at <= now()
+          AND app.lease_token IS NULL
           AND ac.status = 'eligible'
           AND ac.expires_at > now()
           AND pj.status = 'succeeded'
@@ -221,6 +226,9 @@ async def claim_retry(
             state_changed_at = now(),
             updated_at = now()
         WHERE id = %s
+          AND status = 'safe_failure'
+          AND lease_token IS NULL
+          AND next_attempt_at <= now()
         RETURNING attempt_count
         """,
         (worker_id, lease_token, lease_seconds, application_id),
@@ -229,180 +237,6 @@ async def claim_retry(
     if attempt_row is None:
         raise RuntimeError("failed to claim safe retry application")
     return _lease_from_row(row, lease_token=lease_token, attempt_count=int(attempt_row[0]))
-
-
-async def claim_rebind_candidate(
-    connection: psycopg.AsyncConnection[Any],
-    *,
-    worker_id: str,
-    lease_seconds: int,
-    limit_cooldown_seconds: int,
-) -> ApplicationLease | None:
-    """Rebind a pre-submit guarded application to a newer eligible Processing result."""
-
-    cursor = await connection.execute(
-        f"""
-        SELECT app.id, app.account_id, acc.account_key, v.source_vacancy_id,
-               r.id, r.source_resume_id, ac.id, ac.processing_job_id, app.attempt_count
-        FROM careerops_v2.application_guards g
-        JOIN careerops_v2.applications app ON app.id = g.application_id
-        JOIN careerops_v2.accounts acc ON acc.id = app.account_id
-        JOIN careerops_v2.application_candidates ac
-          ON ac.status = 'eligible'
-         AND ac.expires_at > now()
-        JOIN careerops_v2.processing_jobs pj ON pj.id = ac.processing_job_id
-        JOIN careerops_v2.match_results mr
-          ON mr.vacancy_id = ac.vacancy_id
-         AND mr.binding_id = ac.binding_id
-         AND mr.processing_job_id = ac.processing_job_id
-        JOIN careerops_v2.resume_bindings rb ON rb.id = ac.binding_id
-        JOIN careerops_v2.resumes r ON r.id = rb.resume_id AND r.account_id = rb.account_id
-        JOIN careerops_v2.vacancies v ON v.id = ac.vacancy_id
-        WHERE g.account_id = rb.account_id
-          AND g.source_vacancy_id = v.source_vacancy_id
-          AND app.account_id = rb.account_id
-          AND app.source_vacancy_id = v.source_vacancy_id
-          AND app.submitted_at IS NULL
-          AND app.lease_token IS NULL
-          AND (
-              app.status = 'safe_failure'
-              OR (
-                  app.status = 'blocked'
-                  AND app.reason_code = 'application.candidate_stale_before_submit'
-              )
-          )
-          AND app.processing_job_id IS DISTINCT FROM ac.processing_job_id
-          AND pj.status = 'succeeded'
-          AND mr.decision = 'eligible'
-          AND rb.enabled IS TRUE
-          AND rb.auto_apply IS TRUE
-          AND rb.binding_version = pj.binding_version
-          AND r.lifecycle = 'active'
-          AND r.present_in_upstream IS TRUE
-          AND v.archived IS DISTINCT FROM TRUE
-          AND v.closed_for_applicants IS DISTINCT FROM TRUE
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.processing_jobs newer
-              WHERE newer.vacancy_id = ac.vacancy_id
-                AND newer.binding_id = ac.binding_id
-                AND newer.id <> pj.id
-                AND newer.status IN ({_ACTIVE_PROCESSING_STATUSES})
-                AND newer.created_at > pj.created_at
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications unresolved
-              WHERE unresolved.account_id = app.account_id
-                AND unresolved.id <> app.id
-                AND unresolved.status IN ({_UNRESOLVED_SUBMIT_STATUSES})
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications active
-              WHERE active.account_id = app.account_id
-                AND active.id <> app.id
-                AND active.status IN ({_LIVE_PRE_SUBMIT_STATUSES})
-                AND active.lease_expires_at > now()
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM careerops_v2.applications limited
-              WHERE limited.account_id = app.account_id
-                AND limited.reason_code = 'application.hh_limit_exceeded'
-                AND limited.state_changed_at
-                    > now() - make_interval(secs => %(limit_cooldown_seconds)s)
-          )
-        ORDER BY ac.created_at DESC, ac.id DESC
-        FOR UPDATE OF app, ac SKIP LOCKED
-        LIMIT 1
-        """,
-        {"limit_cooldown_seconds": limit_cooldown_seconds},
-    )
-    row = await cursor.fetchone()
-    if row is None:
-        return None
-
-    application_id = UUID(str(row[0]))
-    account_id = int(row[1])
-    await _lock_account(connection, account_id=account_id)
-    if not await _account_gate_open(
-        connection,
-        account_id=account_id,
-        exclude_application_id=application_id,
-        limit_cooldown_seconds=limit_cooldown_seconds,
-    ):
-        return None
-
-    source_vacancy_id = str(row[3])
-    await connection.execute(
-        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-        (f"{account_id}:{source_vacancy_id}",),
-    )
-    guard = await connection.execute(
-        """
-        SELECT application_id
-        FROM careerops_v2.application_guards
-        WHERE account_id = %s AND source_vacancy_id = %s
-        FOR UPDATE
-        """,
-        (account_id, source_vacancy_id),
-    )
-    guard_row = await guard.fetchone()
-    if guard_row is None or UUID(str(guard_row[0])) != application_id:
-        return None
-
-    lease_token = uuid4()
-    updated = await connection.execute(
-        """
-        UPDATE careerops_v2.applications
-        SET resume_id = %s,
-            candidate_id = %s,
-            processing_job_id = %s,
-            status = 'preparing',
-            attempt_count = attempt_count + 1,
-            next_attempt_at = NULL,
-            next_reconcile_at = NULL,
-            prechecked_at = NULL,
-            precheck_evidence_uri = NULL,
-            reason_code = NULL,
-            error_category = NULL,
-            lease_owner = %s,
-            lease_token = %s,
-            leased_at = now(),
-            lease_expires_at = now() + make_interval(secs => %s),
-            state_changed_at = now(),
-            updated_at = now()
-        WHERE id = %s
-          AND submitted_at IS NULL
-          AND lease_token IS NULL
-        RETURNING attempt_count
-        """,
-        (
-            int(row[4]),
-            UUID(str(row[6])),
-            UUID(str(row[7])),
-            worker_id,
-            lease_token,
-            lease_seconds,
-            application_id,
-        ),
-    )
-    attempt_row = await updated.fetchone()
-    if attempt_row is None:
-        return None
-    return ApplicationLease(
-        application_id=application_id,
-        account_id=account_id,
-        account_key=str(row[2]),
-        source_vacancy_id=source_vacancy_id,
-        resume_id=int(row[4]),
-        source_resume_id=str(row[5]),
-        candidate_id=UUID(str(row[6])),
-        processing_job_id=UUID(str(row[7])),
-        lease_token=lease_token,
-        attempt_count=int(attempt_row[0]),
-    )
 
 
 async def claim_new_candidate(
