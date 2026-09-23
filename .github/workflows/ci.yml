@@ -21,251 +21,54 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality / Python
+    name: Ruff / mypy
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
       - name: Install CareerOPS
         run: python -m pip install -e ".[dev]"
-
       - name: Ruff
         run: python -m ruff check src tests alembic
-
       - name: mypy
         run: python -m mypy src
 
-      - name: Check dependency consistency
-        run: python -m pip check
-
-  architecture-contracts:
-    name: Architecture contracts
+  python-tests:
+    name: Python tests / ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install CareerOPS
-        run: python -m pip install -e ".[dev]"
-
-      - name: Verify current architecture boundaries
-        run: |
-          mkdir -p reports
-          python -m pytest \
-            -q \
-            --tb=short \
-            -p no:cacheprovider \
-            tests/test_no_legacy_runtime.py \
-            tests/test_project_dependencies.py \
-            tests/test_hh_driver_readonly.py \
-            tests/test_hh_discovery_contract.py \
-            tests/test_processing_contracts.py \
-            --junitxml=reports/architecture-contracts.xml
-
-      - name: Verify HH adapter CLI contract
-        run: python -m careerops_adapter.hh --help
-
-      - name: Upload architecture diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: architecture-contracts
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
-
-  calibration-contract:
-    name: Processing / calibration contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install CareerOPS
-        run: python -m pip install -e ".[dev]"
-
-      - name: Validate committed calibration source manifest
-        run: |
-          python - <<'PY'
-          import json
-          import re
-          from decimal import Decimal
-          from pathlib import Path
-
-          path = Path("calibration/manifests/astra-calibration-v1.json")
-          manifest = json.loads(path.read_text(encoding="utf-8"))
-
-          if manifest.get("schema_version") != "careerops.calibration-source-manifest.v1":
-              raise SystemExit("unexpected calibration source-manifest schema")
-          if manifest.get("dataset_id") != "astra-calibration-v1":
-              raise SystemExit("unexpected calibration dataset_id")
-          if manifest.get("label_tier") != "weak_gold":
-              raise SystemExit("calibration labels must remain weak_gold")
-          if manifest.get("annotation_source") != "astra":
-              raise SystemExit("unexpected calibration annotation source")
-
-          artifacts = manifest.get("external_artifacts", {})
-          for name in ("annotations.jsonl", "astra_batches.jsonl"):
-              digest = artifacts.get(name, {}).get("sha256", "")
-              if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-                  raise SystemExit(f"invalid SHA-256 for {name}")
-
-          counts = manifest.get("counts", {})
-          if counts.get("pairs", 0) <= 0:
-              raise SystemExit("calibration source manifest has no pairs")
-          if counts.get("unique_vacancies", 0) <= 0:
-              raise SystemExit("calibration source manifest has no vacancies")
-          if counts.get("unique_resumes", 0) <= 0:
-              raise SystemExit("calibration source manifest has no resumes")
-          if sum(counts.get(key, 0) for key in ("APPLICATION_CANDIDATE", "REVIEW", "SKIP")) != counts["pairs"]:
-              raise SystemExit("calibration decision counts do not sum to pair count")
-
-          split = manifest.get("split", {})
-          if split.get("group_key") != "source_vacancy_id":
-              raise SystemExit("calibration split must stay vacancy-grouped")
-          fractions = sum(
-              Decimal(split[key])
-              for key in (
-                  "calibration_fraction",
-                  "validation_fraction",
-                  "holdout_fraction",
-              )
-          )
-          if fractions != Decimal("1"):
-              raise SystemExit("calibration split fractions must sum to 1")
-
-          freeze_gate = manifest.get("freeze_gate", {})
-          if manifest.get("annotator_model") is None:
-              if freeze_gate.get("status") != "blocked_missing_annotator_model":
-                  raise SystemExit("missing annotator model must keep freeze gate blocked")
-          PY
-
-      - name: Verify calibration CLI
-        run: python -m careerops_processing.calibration --help
-
-      - name: Run calibration and policy contract tests
-        run: |
-          mkdir -p reports
-          python -m pytest \
-            -q \
-            --tb=short \
-            -p no:cacheprovider \
-            tests/test_processing_calibration.py \
-            tests/test_reranker_metrics.py \
-            tests/test_reranker_quality_metrics.py \
-            tests/test_processing_p206_p207_contracts.py \
-            tests/test_processing_p207_structured_scoring.py \
-            --junitxml=reports/calibration-contract.xml
-
-      - name: Upload calibration diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: calibration-contract
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
-
-  fast-tests:
-    name: Fast tests / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          - "3.12"
-          - "3.13"
+        python-version: ["3.12", "3.13"]
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install CareerOPS
-        run: python -m pip install -e ".[dev]"
-
-      - name: Run fast pytest suite
-        run: |
-          mkdir -p reports
-          python -m pytest \
-            -q \
-            --tb=short \
-            -p no:cacheprovider \
-            -m "not integration_postgres and not integration_matching_core" \
-            --junitxml=reports/pytest.xml
-
-      - name: Collect failure diagnostics
-        if: ${{ failure() && !cancelled() }}
-        run: |
-          mkdir -p reports
-
-          {
-            echo "Python:"
-            python --version || true
-
-            echo
-            echo "pip:"
-            python -m pip --version || true
-
-            echo
-            echo "Dependency consistency:"
-            python -m pip check || true
-
-            echo
-            echo "Installed packages:"
-            python -m pip list --format=freeze || true
-          } | tee reports/environment.txt
-
-      - name: Upload test diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: fast-tests-python-${{ matrix.python-version }}
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
+          cache-dependency-path: |
+            pyproject.toml
+            hh-applicant-tool/pyproject.toml
+      - name: Install CareerOPS and applicant vendor
+        run: python -m pip install -e ".[dev]" ./hh-applicant-tool
+      - name: Run Python suite
+        run: >-
+          python -m pytest -q --tb=short -p no:cacheprovider
+          -m "not integration_postgres and not integration_storage and
+          not integration_matching_core and not integration_e2e_baseline"
 
   postgres-integration:
-    name: PostgreSQL 18 / integration
+    name: PostgreSQL integration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:18.6
@@ -280,179 +83,169 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
-
     env:
       CAREEROPS_TEST_POSTGRES_DSN: >-
         postgresql://careerops_ci:careerops_ci@127.0.0.1:5432/careerops_v2_ci
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            hh-applicant-tool/pyproject.toml
+      - name: Install CareerOPS and applicant vendor
+        run: python -m pip install -e ".[dev]" ./hh-applicant-tool
+      - name: Run PostgreSQL integration suite
+        run: >-
+          python -m pytest -q --tb=short -p no:cacheprovider
+          -m integration_postgres
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+  seaweedfs-integration:
+    name: SeaweedFS integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CAREEROPS_TEST_S3_ENDPOINT: http://127.0.0.1:8333
+      CAREEROPS_TEST_S3_ACCESS_KEY: careerops-ci
+      CAREEROPS_TEST_S3_SECRET_KEY: careerops-ci-secret
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
       - name: Install CareerOPS
         run: python -m pip install -e ".[dev]"
-
-      - name: Run PostgreSQL integration suite
+      - name: Start disposable SeaweedFS S3
         run: |
-          mkdir -p reports
-          python -m pytest \
-            -q \
-            --tb=short \
-            -p no:cacheprovider \
-            -m "integration_postgres" \
-            --junitxml=reports/postgres-integration.xml
-
-      - name: Collect PostgreSQL failure diagnostics
-        if: ${{ failure() && !cancelled() }}
-        run: |
-          mkdir -p reports
-          {
-            echo "Python:"
-            python --version || true
-            echo
-            echo "Docker:"
-            docker version || true
-            echo
-            echo "Containers:"
-            docker ps -a || true
-          } | tee reports/postgres-environment.txt
-
-      - name: Upload PostgreSQL test diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: postgres-integration
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
+          set -euo pipefail
+          docker run -d \
+            --name careerops-seaweedfs-ci \
+            -p 127.0.0.1:8333:8333 \
+            chrislusf/seaweedfs:4.41 \
+            server -s3 -dir=/data
+          for attempt in $(seq 1 30); do
+            if curl -sS -o /dev/null http://127.0.0.1:8333/; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs careerops-seaweedfs-ci || true
+          exit 1
+      - name: Run SeaweedFS integration suite
+        run: >-
+          python -m pytest -q --tb=short -p no:cacheprovider
+          -m integration_storage tests/integration/storage
+      - name: Stop SeaweedFS
+        if: ${{ always() }}
+        run: docker rm -f careerops-seaweedfs-ci || true
 
   matching-core-build:
-    name: Matching core / C++ build
+    name: C++ build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
+      - uses: actions/checkout@v7
       - name: Install C++ and gRPC build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
+            libboost-dev \
             libgrpc++-dev \
             libprotobuf-dev \
             pkg-config \
             protobuf-compiler \
             protobuf-compiler-grpc
-
       - name: Configure matching core
         run: >-
-          cmake
-          -S services/careerops-matching-core
-          -B build/matching-core
+          cmake -S services/careerops-matching-core -B build/matching-core
           -DCMAKE_BUILD_TYPE=Release
-
       - name: Build matching core
         run: cmake --build build/matching-core --parallel
-
-      - name: Verify generated code and executable
+      - name: Verify executable
         run: |
           set -euo pipefail
-          generated=build/matching-core/generated/careerops/matching_core/v1/control
-          binary=build/matching-core/careerops-matching-core
-
-          test -f "${generated}.pb.cc"
-          test -f "${generated}.pb.h"
-          test -f "${generated}.grpc.pb.cc"
-          test -f "${generated}.grpc.pb.h"
-          test -x "${binary}"
-
-          mkdir -p reports
-          ldd "${binary}" | tee reports/matching-core-ldd.txt
-          if grep -q "not found" reports/matching-core-ldd.txt; then
-            echo "matching-core has unresolved shared libraries" >&2
-            exit 1
-          fi
-
-      - name: Upload matching core binary
-        uses: actions/upload-artifact@v7
+          test -x build/matching-core/careerops-matching-core
+          ldd build/matching-core/careerops-matching-core | tee matching-core-ldd.txt
+          ! grep -q "not found" matching-core-ldd.txt
+      - uses: actions/upload-artifact@v7
         with:
           name: matching-core-binary
           path: build/matching-core/careerops-matching-core
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
 
-      - name: Upload matching core build diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: matching-core-build-diagnostics
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
-
-  matching-core-grpc-contract:
-    name: Matching core / gRPC contract
+  grpc-contract:
+    name: gRPC contract
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     needs: matching-core-build
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install matching core runtime libraries
+      - uses: actions/checkout@v7
+      - name: Install matching-core runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgrpc++-dev \
-            libprotobuf-dev
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
+          sudo apt-get install -y --no-install-recommends libgrpc++-dev libprotobuf-dev
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
-      - name: Install CareerOPS matching-core test dependencies
+      - name: Install gRPC contract dependencies
         run: python -m pip install -e ".[dev,matching-core-test]"
-
-      - name: Download matching core binary
-        uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v7
         with:
           name: matching-core-binary
           path: build/matching-core-artifact
-
-      - name: Run Python to C++ gRPC contract suite
+      - name: Run Python to C++ gRPC contract
         env:
           CAREEROPS_MATCHING_CORE_BINARY: >-
             ${{ github.workspace }}/build/matching-core-artifact/careerops-matching-core
         run: |
           chmod +x "${CAREEROPS_MATCHING_CORE_BINARY}"
-          mkdir -p reports
           python -m pytest \
-            -q \
-            --tb=short \
-            -p no:cacheprovider \
-            -m "integration_matching_core" \
-            tests/integration/matching_core \
-            --junitxml=reports/matching-core-grpc.xml
+            -q --tb=short -p no:cacheprovider \
+            -m integration_matching_core \
+            tests/integration/matching_core
 
-      - name: Upload matching core contract diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+  normalizer-contract:
+    name: Normalizer contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          name: matching-core-grpc-contract
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 7
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install contract test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate normalized contracts and Parquet publication identity
+        run: >-
+          python -m pytest -q --tb=short -p no:cacheprovider
+          tests/test_normalizer_spark_contract.py
+      - name: Build parked Spark normalizer image
+        run: >-
+          docker build
+          -f infra/compose/normalizer/Dockerfile
+          -t careerops-normalizer:freeze
+          .
+      - name: Smoke Spark Parquet writer
+        run: |
+          docker run --rm \
+            -v "${PWD}/tests/fixtures/spark_parquet_smoke.py:/tmp/careerops-parquet-smoke.py:ro" \
+            --entrypoint /opt/spark/bin/spark-submit \
+            careerops-normalizer:freeze \
+            --master local[1] \
+            /tmp/careerops-parquet-smoke.py

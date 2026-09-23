@@ -25,6 +25,7 @@ from careerops_processing.infrastructure import (
     ProcessingArtifactStoreSettings,
     S3ProcessingInputLoader,
 )
+from careerops_processing.native_decision import MatchingCoreDecisionClient
 from careerops_processing.selector import EvidenceCandidateSelector
 from careerops_processing.semantic_cache import P204SemanticArtifactResolver
 from careerops_processing.worker import ProcessingWorker, ProcessingWorkerPolicy
@@ -132,6 +133,12 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                     timeout_seconds=config.reranker_timeout_seconds,
                 )
             )
+            decision_core = await stack.enter_async_context(
+                MatchingCoreDecisionClient(
+                    config.matching_core_target,
+                    timeout_seconds=config.matching_core_timeout_seconds,
+                )
+            )
 
             publisher = ProcessingArtifactPublisher(artifact_store)
             artifact_loader = ProcessingArtifactLoader(artifact_store)
@@ -169,6 +176,7 @@ async def _serve_async(config: ProcessingRuntimeConfig) -> int:
                 p205=p205,
                 artifact_loader=artifact_loader,
                 publisher=publisher,
+                decision_core=decision_core,
             )
             executor = P207Executor(
                 p206=p206,

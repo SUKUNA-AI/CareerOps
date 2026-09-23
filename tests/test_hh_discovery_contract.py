@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from careerops_integrations.hh.configuration import HHConfigError, load_discovery_config
+from careerops_adapter.hh.configuration import HHConfigError, load_discovery_config
 
 DISCOVERY_PATH = Path("config/hh_discovery.toml")
 

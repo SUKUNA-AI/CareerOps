@@ -29,6 +29,7 @@ calibration/
       annotations.jsonl
       astra_batches.jsonl
       prepared/
+        p205_runtime_cases.jsonl
   predictions/
     astra-calibration-v1/
       p203.jsonl
@@ -58,6 +59,45 @@ python -m careerops_processing.calibration prepare \
 ```
 
 `prepare` валидирует pair coverage, считает hashes и создаёт deterministic vacancy-grouped split `70/15/15`. Все пары одной вакансии всегда находятся только в одном split.
+
+## P2-05 full-pool Jina calibration
+
+`run-p205` запускает production `EvidenceCandidateSelector` против живого Jina endpoint. Никакого reducer перед Jina нет: каждый requirement получает полный `ResumeEvidenceSet` своей пары.
+
+Input `p205_runtime_cases.jsonl` содержит по одной vacancy × resume паре на строку:
+
+```json
+{
+  "pair_id": "...",
+  "requirement_set": {},
+  "resume_evidence_set": {},
+  "alignments": [
+    {
+      "gold_requirement_index": 0,
+      "requirement_id": "req-..."
+    }
+  ]
+}
+```
+
+`requirement_set` и `resume_evidence_set` — обычные production contracts Processing v2. `alignments` должны приходить из P2-04 явно. Runner не делает fuzzy matching между gold requirement и system requirement.
+
+Пары без P2-05 gold alignment могут иметь пустой `alignments`: они всё равно проходят реальный Jina workload, но не создают строк в `p205.jsonl`.
+
+После запуска GPU Jina service:
+
+```bash
+python -m careerops_processing.calibration run-p205 \
+  --cases calibration/datasets/astra-calibration-v1/prepared/p205_runtime_cases.jsonl \
+  --endpoint http://127.0.0.1:18082 \
+  --output calibration/predictions/astra-calibration-v1/p205.jsonl \
+  --top-k 5 \
+  --token-budget <explicit-full-pool-token-budget>
+```
+
+Runner сначала читает `/readyz` и фиксирует фактические model/runtime revisions. Несовпадение runtime identity затем ловится production HTTP client, а не скрывается calibration кодом.
+
+`--token-budget` задаётся явно: calibration не должна молча обрезать evidence pool ради прохождения запроса.
 
 ## Evaluate
 

@@ -76,13 +76,24 @@ def _policy(**filtering) -> TargetPolicy:
     )
 
 
-def test_java_backend_title_is_a_proven_foreign_occupation() -> None:
+def test_java_backend_allowed_role_mismatch_is_not_a_proven_exclusion() -> None:
     result = evaluate_filter(
         _vacancy(title="Java Backend Developer"),
         _policy(allowed_primary_roles=["data_engineering"]),
     )
+    assert result.outcome is FilterOutcome.KEEP
+
+
+def test_java_backend_explicit_forbidden_role_is_a_proven_exclusion() -> None:
+    result = evaluate_filter(
+        _vacancy(title="Java Backend Developer"),
+        _policy(
+            allowed_primary_roles=["data_engineering"],
+            forbidden_primary_roles=["java_backend"],
+        ),
+    )
     assert result.outcome is FilterOutcome.EXCLUDE_PROVEN
-    assert result.exclusions[0].reason_code == "filter.primary_role_disjoint"
+    assert result.exclusions[0].reason_code == "filter.primary_role_forbidden"
 
 
 def test_incidental_java_does_not_override_data_engineering_title() -> None:
@@ -93,16 +104,24 @@ def test_incidental_java_does_not_override_data_engineering_title() -> None:
     assert result.outcome is FilterOutcome.KEEP
 
 
-def test_cpp_token_boundary_recognizes_cpp_occupation() -> None:
-    foreign = evaluate_filter(
+def test_cpp_token_boundary_recognizes_cpp_occupation_without_over_excluding() -> None:
+    advisory_foreign = evaluate_filter(
         _vacancy(title="Senior C++ Engineer"),
         _policy(allowed_primary_roles=["data_engineering"]),
+    )
+    explicitly_forbidden = evaluate_filter(
+        _vacancy(title="Senior C++ Engineer"),
+        _policy(
+            allowed_primary_roles=["data_engineering"],
+            forbidden_primary_roles=["cpp"],
+        ),
     )
     compatible = evaluate_filter(
         _vacancy(title="Senior C++ Engineer"),
         _policy(allowed_primary_roles=["cpp"]),
     )
-    assert foreign.outcome is FilterOutcome.EXCLUDE_PROVEN
+    assert advisory_foreign.outcome is FilterOutcome.KEEP
+    assert explicitly_forbidden.outcome is FilterOutcome.EXCLUDE_PROVEN
     assert compatible.outcome is FilterOutcome.KEEP
 
 

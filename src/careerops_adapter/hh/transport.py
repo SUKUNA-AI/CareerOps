@@ -14,12 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from careerops_integrations.hh.driver import (
-    HHApplicantToolCLI,
-    HHDriverError,
-    ParamValue,
-)
-
+from .driver import HHApplicantToolCLI, HHDriverError, ParamValue
 from .errors import HHFailureKind, HHTransportError
 
 _DEFAULT_MIN_REQUEST_INTERVAL_SECONDS = 3.0

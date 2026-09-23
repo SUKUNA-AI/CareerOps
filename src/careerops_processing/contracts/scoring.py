@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
 
@@ -33,6 +34,41 @@ SCORING_COMPONENT_KEYS = frozenset(
         "other_fit",
     }
 )
+
+REQUIREMENT_COVERAGE_COMPONENT_KEYS = frozenset(
+    {
+        "mandatory_coverage",
+        "preferred_coverage",
+        "optional_coverage",
+    }
+)
+REQUIREMENT_KIND_COMPONENT_KEYS = frozenset(
+    {
+        "responsibility_fit",
+        "technology_fit",
+        "experience_fit",
+        "domain_fit",
+        "education_fit",
+        "language_fit",
+        "work_condition_fit",
+        "other_fit",
+    }
+)
+
+
+def validate_non_overlapping_requirement_component_weights(
+    component_weights: Mapping[str, Decimal],
+) -> None:
+    """Prevent one requirement support signal from being weighted through two projections."""
+
+    positive = {key for key, weight in component_weights.items() if weight > 0}
+    coverage = positive & REQUIREMENT_COVERAGE_COMPONENT_KEYS
+    kinds = positive & REQUIREMENT_KIND_COMPONENT_KEYS
+    if coverage and kinds:
+        raise ValueError(
+            "scoring component weights would double-count requirement support across "
+            f"coverage={sorted(coverage)} and kind={sorted(kinds)} components"
+        )
 
 
 class MatchDecision(StrEnum):
@@ -92,6 +128,7 @@ class ScoringPolicy(FrozenModel):
             raise ValueError("scoring component weights must be non-negative")
         if sum(self.component_weights.values(), Decimal("0")) <= 0:
             raise ValueError("scoring component weights must contain positive weight")
+        validate_non_overlapping_requirement_component_weights(self.component_weights)
         return self
 
     @classmethod

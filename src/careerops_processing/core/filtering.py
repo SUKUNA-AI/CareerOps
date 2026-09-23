@@ -418,16 +418,17 @@ def _role_exclusion(
     if not families:
         return None
 
-    allowed = set(policy.allowed_primary_roles)
+    # allowed_primary_roles is advisory for downstream scoring/prioritization.
+    # High-recall admission may exclude a role only when policy explicitly
+    # marks every detected primary role family as forbidden.
     forbidden = set(policy.forbidden_primary_roles)
-    disjoint_from_allowed = bool(allowed) and families.isdisjoint(allowed)
     wholly_forbidden = bool(forbidden) and families <= forbidden
-    if not (disjoint_from_allowed or wholly_forbidden):
+    if not wholly_forbidden:
         return None
 
     return _exclude(
-        rule_id="filter.role.primary_disjoint.v1",
-        reason_code="filter.primary_role_disjoint",
+        rule_id="filter.role.primary_forbidden.v1",
+        reason_code="filter.primary_role_forbidden",
         target_policy=target_policy,
         evidence=(_evidence("vacancy.title", vacancy.title.value),),
     )

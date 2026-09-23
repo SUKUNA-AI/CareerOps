@@ -2,9 +2,19 @@ syntax = "proto3";
 
 package careerops.matching_core.v1;
 
+import "google/protobuf/struct.proto";
+
 service MatchingCoreControl {
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc GetCapabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+}
+
+// P2-06 + P2-07 canonical decision boundary. The outer RPC is stable protobuf;
+// the payload is a versioned Struct so Python orchestration can pass the existing
+// immutable Processing contracts without maintaining a second generated model tree.
+service MatchingCoreDecision {
+  rpc Evaluate(google.protobuf.Struct) returns (google.protobuf.Struct);
+  rpc EvaluateBatch(google.protobuf.Struct) returns (google.protobuf.Struct);
 }
 
 message HealthRequest {}

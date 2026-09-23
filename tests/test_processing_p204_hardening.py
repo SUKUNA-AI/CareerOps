@@ -109,6 +109,47 @@ def _vacancy(
     )
 
 
+def test_offer_benefit_sections_are_ignored_without_dropping_requirements() -> None:
+    def block(
+        block_id: str,
+        text: str,
+        ordinal: int,
+        heading: str,
+        section_hint: str,
+    ) -> TextBlock:
+        return TextBlock(
+            block_id=block_id,
+            text=text,
+            ordinal=ordinal,
+            heading=heading,
+            section_hint=section_hint,
+            source_ref=SourceTextRef(
+                source_path="description",
+                locator=f"block:{block_id}",
+                quote=text,
+            ),
+        )
+
+    vacancy = _vacancy().model_copy(
+        update={
+            "text_blocks": (
+                block("requirements", "Python", 0, "Требования", "requirements"),
+                block("benefits", "ДМС, бонусы, обучение", 1, "Мы предлагаем", "benefits"),
+                block("preferred", "Airflow", 2, "Будет плюсом", "preferred"),
+                block("conditions", "Удаленная работа", 3, "Условия", "conditions"),
+            )
+        }
+    )
+
+    result = extract_requirements(vacancy, extraction_version="requirements-v2")
+    statements = {item.statement.casefold() for item in result.requirements}
+
+    assert "python" in statements
+    assert "airflow" in statements
+    assert "удаленная работа" in statements
+    assert not any("дмс" in item or "бонус" in item for item in statements)
+
+
 def test_technology_with_experience_threshold_stays_technology() -> None:
     result = extract_requirements(
         _vacancy(text="Python или Scala, опыт от 3 лет\nОпыт от 4 лет"),

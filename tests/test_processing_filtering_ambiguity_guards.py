@@ -59,7 +59,7 @@ def _vacancy(title: str) -> NormalizedVacancy:
     )
 
 
-def _policy(*, role: str) -> TargetPolicy:
+def _policy(*, role: str, forbidden_roles: tuple[str, ...] = ()) -> TargetPolicy:
     return TargetPolicy.from_content(
         target_key="guard",
         schema_version="careerops.target-policy.v1",
@@ -68,6 +68,7 @@ def _policy(*, role: str) -> TargetPolicy:
             "filtering": {
                 "schema_version": 1,
                 "allowed_primary_roles": [role],
+                "forbidden_primary_roles": list(forbidden_roles),
             }
         },
     )
@@ -99,8 +100,19 @@ def test_ambiguous_titles_cannot_prove_foreign_occupation(title: str) -> None:
         ("Data Analyst", "data_analytics"),
     ],
 )
-def test_explicit_titles_still_prove_their_occupation(title: str, role: str) -> None:
+def test_allowed_role_mismatch_stays_keep_until_explicitly_forbidden(
+    title: str, role: str
+) -> None:
     compatible = evaluate_filter(_vacancy(title), _policy(role=role))
-    foreign = evaluate_filter(_vacancy(title), _policy(role="cpp"))
+    advisory_foreign = evaluate_filter(_vacancy(title), _policy(role="cpp"))
+    explicitly_forbidden = evaluate_filter(
+        _vacancy(title),
+        _policy(role="cpp", forbidden_roles=(role,)),
+    )
     assert compatible.outcome is FilterOutcome.KEEP
-    assert foreign.outcome is FilterOutcome.EXCLUDE_PROVEN
+    assert advisory_foreign.outcome is FilterOutcome.KEEP
+    assert explicitly_forbidden.outcome is FilterOutcome.EXCLUDE_PROVEN
+    assert (
+        explicitly_forbidden.exclusions[0].reason_code
+        == "filter.primary_role_forbidden"
+    )

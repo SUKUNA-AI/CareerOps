@@ -53,6 +53,24 @@ _RESPONSIBILITY = re.compile(
 _REQUIREMENT_SECTIONS = ("требован", "requirements", "qualification", "must have")
 _RESPONSIBILITY_SECTIONS = ("обязанност", "задач", "responsibilit", "what you will do")
 _GENERIC_EXPERIENCE_SUBJECTS = {"опыт", "experience", "стаж"}
+_NON_REQUIREMENT_BENEFIT_SECTIONS = (
+    "мы предлагаем",
+    "что мы предлагаем",
+    "что предлагаем",
+    "мы можем предложить",
+    "что ты приобрет",
+    "что ты получ",
+    "социальный пакет",
+    "соцпакет",
+    "бонус",
+    "льгот",
+    "дмс",
+    "плюшк",
+    "we offer",
+    "what we offer",
+    "benefits",
+    "perks",
+)
 
 
 def _source_ref_for_block(block: TextBlock, statement: str) -> SemanticSourceRef:
@@ -70,6 +88,11 @@ def _source_ref(path: str, rendered_value: str) -> SemanticSourceRef:
 
 def _section_text(block: TextBlock) -> str:
     return " ".join(part for part in (block.heading, block.section_hint) if part).casefold()
+
+
+def _is_non_requirement_benefit_section(block: TextBlock) -> bool:
+    section = _section_text(block)
+    return any(marker in section for marker in _NON_REQUIREMENT_BENEFIT_SECTIONS)
 
 
 def _known_subjects(vacancy: NormalizedVacancy) -> tuple[str, ...]:
@@ -465,6 +488,8 @@ def extract_requirements(
         root_requirement_ids.append(item.requirement_id)
 
     for block in sorted(vacancy.text_blocks, key=lambda item: item.ordinal):
+        if _is_non_requirement_benefit_section(block):
+            continue
         section = _section_text(block)
         statements = split_statements(
             block.text,

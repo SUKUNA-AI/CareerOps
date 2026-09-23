@@ -19,16 +19,16 @@ from typing import Any
 import psycopg
 from psycopg import AsyncConnection
 
-from careerops_integrations.hh.configuration import (
+from careerops_storage.s3 import S3JsonStore, S3Settings
+
+from .configuration import (
     HHAccountConfig,
     HHAccountsConfig,
     HHConfigError,
     accounts_config_path_from_env,
     load_accounts_config,
 )
-from careerops_integrations.hh.driver import HHApplicantToolCLI
-from careerops_storage.s3 import S3JsonStore, S3Settings
-
+from .driver import HHApplicantToolCLI
 from .errors import (
     HHFailureDisposition,
     HHFailureKind,

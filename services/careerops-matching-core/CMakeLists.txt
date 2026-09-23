@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(careerops_matching_core VERSION 0.1.0 LANGUAGES CXX)
+project(careerops_matching_core VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,7 @@ add_custom_command(
     COMMAND
         "${PROTOC_EXECUTABLE}"
         "--proto_path=${PROTO_ROOT}"
+        "--proto_path=${Protobuf_INCLUDE_DIRS}"
         "--cpp_out=${GENERATED_DIR}"
         "--grpc_out=${GENERATED_DIR}"
         "--plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}"
@@ -38,12 +39,25 @@ add_library(matching_core_proto STATIC
     "${GENERATED_PREFIX}.pb.cc"
     "${GENERATED_PREFIX}.grpc.pb.cc"
 )
-
 target_include_directories(matching_core_proto PUBLIC "${GENERATED_DIR}")
 target_link_libraries(matching_core_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 
+add_library(matching_core_decision STATIC src/decision_core.cpp)
+target_include_directories(matching_core_decision PUBLIC src)
+target_link_libraries(matching_core_decision PUBLIC protobuf::libprotobuf)
+target_compile_options(
+    matching_core_decision
+    PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+        -Wno-error=range-loop-construct
+        -Wno-error=unused-function
+)
+
 add_executable(careerops-matching-core src/main.cpp)
-target_link_libraries(careerops-matching-core PRIVATE matching_core_proto)
+target_link_libraries(careerops-matching-core PRIVATE matching_core_proto matching_core_decision)
 target_compile_options(careerops-matching-core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_compile_definitions(
     careerops-matching-core

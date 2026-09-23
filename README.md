@@ -1,545 +1,369 @@
 # CareerOPS
 
-CareerOPS — self-hosted платформа для сбора вакансий, хранения исходных данных, нормализации и воспроизводимого сопоставления вакансий с резюме
+**Status: FROZEN / PARKED.**
 
-Проект одновременно решает прикладную задачу поиска работы и используется как Data Engineering / Backend / ML Systems проект
+CareerOPS is a self-hosted job-search data and matching platform built around immutable source data, reproducible normalization, deterministic matching, a local reranker, and guarded application submission.
 
-## Нормативная архитектура
+The project is intentionally parked. Nothing in the canonical runtime collects vacancies or submits applications unless an operator explicitly selects the corresponding Compose profile and command. Kubernetes, Airflow, Kafka, ClickHouse, CDC, streaming schedulers and background ingestion are not required to restore or demonstrate the system.
+
+## Architecture
 
 ```text
-HH
-│
-│ read-only adapter
-▼
-SeaweedFS S3
-Immutable RAW
-│
-│ Spark normalization
-▼
-NormalizedVacancy / NormalizedResume
-│
-├──────────────► SeaweedFS S3
-│                normalized bundles
-│
-└──────────────► PostgreSQL careerops_v2
-                 current refs + control state
-                          │
-                          ▼
-                    Processing v2
-                          │
-                     P2-03 filter
-                          │
-                    KEEP / EXCLUDE_PROVEN
-                          │
-                          ▼
-              P2-04 Requirements + Evidence
-                          │
-                          ▼
-              P2-05 Jina evidence selector
-                          │
-                          ▼
-              P2-06 deterministic qualification
-                          │
-                          ▼
-              P2-07 scoring / policy decision
-                          │
-                          ▼
-             SKIP / REVIEW / APPLICATION_CANDIDATE
-                          │
-                          ▼
-               будущий Application Owner
+                    explicit operator command
+                             |
+                             v
+HH --------------------> HH Adapter
+                             |
+                             v
+                    SeaweedFS / careerops-raw
+                             |
+                   manual PySpark batch
+                             |
+                             v
+                        Normalizer
+                   /         |         \
+                  v          v          v
+       normalized JSON   Parquet     PostgreSQL
+       careerops-lake    silver      current refs
+                  \          |          /
+                   +---------+---------+
+                             |
+                             v
+                         Processing
+                    /        |        \
+                   v         v         v
+           matching-core    Jina   deterministic
+              C++/gRPC    reranker    policy
+                   \         |         /
+                    +--------+--------+
+                             |
+               SKIP / REVIEW / APPLICATION_CANDIDATE
+                             |
+                             v
+                    Application Owner
+                             |
+                 explicit external-write gate
+                             |
+                             v
+                            HH
 ```
 
-Spark владеет преобразованием RAW → normalized data
+The decision unit is `vacancy × resume`. Processing never owns HH transport. The HH adapter never owns matching or scoring.
 
-Processing не выполняет нормализацию и не меняет Spark contracts
+## Safety model
 
-## Состояние реализации
+Freeze v1 is fail-closed:
 
-Реализованы:
+- plain `docker compose up` starts no CareerOPS service because every service is profile-gated;
+- every service in the frozen stack has `restart: "no"`;
+- HH ingestion is a one-shot `seed` / `work` CLI, with no CareerOPS cron or systemd scheduler;
+- the normalizer is a one-shot batch container;
+- Application Owner is behind the `apply` profile **and** requires `CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES=true`;
+- the default application setting is `false`;
+- no Kubernetes component is required by the runtime.
 
-- read-only HH ingestion
-- immutable RAW в SeaweedFS S3
-- PostgreSQL schema `careerops_v2`
-- durable source tasks и watermarks
-- immutable Processing contracts
-- `ProcessingInputManifest`
-- durable Processing queue с fencing lease
-- P2-03 deterministic high-recall filter
-- P2-04 `RequirementSet`
-- P2-04 `ResumeEvidenceSet`
-- постоянное переиспользование P2-04 semantic artifacts через PostgreSQL registry
-- P2-05 `EvidenceCandidateSet`
-- P2-05 `P205ResultArtifact`
-- отдельный HTTP boundary к Jina reranker runtime
-- отдельный GPU service `careerops-reranker`
-- runtime identity handshake для model/code/tokenizer/torch/transformers
-- P2-06 `RequirementQualificationSet`
-- P2-06 deterministic qualification с `MATCHED / NOT_EVIDENCED / UNKNOWN / CONTRADICTED`
-- P2-07 bounded scoring и `SKIP / REVIEW / APPLICATION_CANDIDATE`
-- fenced PostgreSQL current publication в `match_results` и `application_candidates`
-- stale-output invalidation при supersede/reconciliation/withdraw
-- content-addressed Processing artifacts в S3
-- production wiring `careerops-processing serve` через P2-07
-- C++20 `careerops-matching-core` с gRPC control plane и health/capability contract
+If an old machine still has historical `careerops-hh-planner.timer`, `careerops-hh-dispatcher.timer` or `careerops-hh-materializer.timer` units installed from an earlier generation, disable them once before treating that host as parked:
 
-Пока не реализован Application Owner, который будет владеть финальной отправкой отклика и внешними application guards
-
-P2-07 runtime/contracts реализованы, но production calibration намеренно остаётся `calibration-unset` до Gold Set. Поэтому автоматический `APPLICATION_CANDIDATE` пока является закрытым release gate, а не выдуманным набором thresholds/weights
-
-`careerops-matching-core` пока не публикует фиктивный evaluator: capability API явно сообщает, что evaluate methods недоступны. Текущая P2-06 qualification реализована как deterministic Processing core и не зависит от незавершённого C++ evaluator
-
-## Главные инварианты
-
-### RAW неизменяем
-
-Ответ источника сначала сохраняется в SeaweedFS S3 без смыслового преобразования
-
-Каждое наблюдение имеет точный RAW URI, SHA-256 и `observed_at`
-
-PostgreSQL не заменяет RAW-слой
-
-### Spark владеет normalized data
-
-```text
-RAW
-↓
-parse
-↓
-normalize
-↓
-canonicalize
-↓
-DQ
-↓
-dedup
-↓
-NormalizedVacancy / NormalizedResume
+```bash
+sudo systemctl disable --now \
+  careerops-hh-planner.timer \
+  careerops-hh-dispatcher.timer \
+  careerops-hh-materializer.timer 2>/dev/null || true
 ```
 
-Spark записывает неизменяемые normalized bundles в S3 и текущую проекцию в PostgreSQL
+The vendored `hh-applicant-tool` is used as a Python transport/auth dependency only. Its old standalone Docker/cron deployment files are not part of Freeze v1.
 
-Processing получает normalized contracts как внешний вход и не дублирует ETL
+## Frozen Compose stack
 
-### Processing работает только с зафиксированными входами
-
-Один job получает точный `ProcessingInputManifest`
-
-Manifest фиксирует:
-
-- `NormalizedRef` вакансии
-- `NormalizedRef` резюме
-- `BindingSnapshot`
-- `TargetPolicy`
-- `ProcessingVersionBundle`
-- `as_of`
-
-Из manifest вычисляется детерминированный `input_fingerprint`
-
-Processing не должен читать произвольное текущее состояние после начала job
-
-### Единица решения — vacancy × binding
-
-Одна вакансия независимо рассматривается для каждого подходящего binding
+Canonical file:
 
 ```text
-vacancy A × resume 1
-vacancy A × resume 2
-vacancy A × resume 3
+infra/compose/stack/compose.yml
 ```
 
-Каждая пара имеет собственный durable Processing job
+Profiles:
 
-### P2-03 исключает только доказанную несовместимость
+| Profile | Services | Purpose |
+|---|---|---|
+| `state` | PostgreSQL, SeaweedFS master/volume/filer/S3 | persistent operational + object state |
+| `admin` | `migrate` | Alembic schema administration |
+| `collect` | `hh-adapter` | explicit one-shot HH ingestion |
+| `normalize` | `normalizer` | explicit PySpark batch |
+| `decision` | `matching-core`, `reranker`, `processing` | matching and candidate production |
+| `apply` | `application-owner` | guarded external application submission |
 
-P2-03 возвращает только:
+For the examples below:
 
-```text
-KEEP
-EXCLUDE_PROVEN
+```bash
+COMPOSE='docker compose -f infra/compose/stack/compose.yml'
 ```
 
-Неопределённость остаётся `KEEP`
+## Prerequisites
 
-### P2-04 не принимает match decision
+Required for the complete stack:
 
-P2-04 строит:
+- Docker Engine + Docker Compose;
+- persistent directories under `/srv/careerops`;
+- service configuration under `/etc/careerops`;
+- NVIDIA Container Toolkit only when running the GPU reranker;
+- a valid HH runtime profile only when running `collect` or `apply`.
 
-```text
-NormalizedVacancy → RequirementSet
-NormalizedResume  → ResumeEvidenceSet
+Create service configuration from the checked-in examples and replace placeholder credentials:
+
+```bash
+sudo install -d \
+  /etc/careerops/postgres \
+  /etc/careerops/seaweedfs \
+  /etc/careerops/hh-adapter \
+  /etc/careerops/normalizer \
+  /etc/careerops/processing \
+  /etc/careerops/reranker \
+  /etc/careerops/application-owner
+
+sudo cp infra/compose/postgres/env.example /etc/careerops/postgres/env
+sudo cp infra/compose/seaweedfs/s3.example.json /etc/careerops/seaweedfs/s3.json
+sudo cp infra/compose/hh-adapter/env.example /etc/careerops/hh-adapter/env
+sudo cp infra/compose/normalizer/env.example /etc/careerops/normalizer/env
+sudo cp infra/compose/processing/env.example /etc/careerops/processing/env
+sudo cp infra/compose/reranker/env.example /etc/careerops/reranker/env
+sudo cp infra/compose/application-owner/env.example /etc/careerops/application-owner/env
 ```
 
-`RequirementSet` сохраняет логическую структуру `ALL / ANY / CONDITIONAL`, importance, modality, polarity, activity, context, threshold и provenance
+HH account definitions live separately under `/etc/careerops/hh`, and the persistent upstream HH session/profile is mounted from `/etc/careerops/hh-applicant-tool`.
 
-`ResumeEvidenceSet` сохраняет subject, activity, actor scope, context, polarity, strength, time span и provenance
+## Start storage
 
-P2-04 не выбирает evidence для конкретного requirement и не решает, подходит ли кандидат
+Create the persistent directories once:
 
-### Один semantic artifact на одну semantic version
-
-`RequirementSet` не пересчитывается для каждого resume
-
-`ResumeEvidenceSet` не пересчитывается для каждой vacancy
-
-PostgreSQL таблица `careerops_v2.processing_semantic_artifacts` хранит semantic identity → `ProcessingArtifactRef`
-
-Перед первой сборкой используется PostgreSQL advisory lock
-
-Сами semantic artifacts остаются immutable и content-addressed в S3
-
-### P2-05 — selector, а не judge
-
-Для каждого requirement P2-05 детерминированно рендерит query и полный high-recall pool `ResumeEvidence`, затем вызывает отдельный Jina runtime
-
-P2-05 публикует только ordered evidence candidates:
-
-```text
-requirement_id
-→ evidence_id + rank + relevance_score
+```bash
+sudo mkdir -p \
+  /srv/careerops/postgres \
+  /srv/careerops/seaweedfs/master \
+  /srv/careerops/seaweedfs/volume \
+  /srv/careerops/seaweedfs/filer
 ```
 
-Низкий relevance score сам по себе не означает несовместимость
+Start only state services:
 
-Jina не определяет:
+```bash
+$COMPOSE --profile state up -d
+```
+
+Apply database migrations explicitly:
+
+```bash
+$COMPOSE --profile admin run --rm migrate upgrade head
+```
+
+Nothing in these commands contacts HH.
+
+## Run HH ingestion
+
+There is no scheduler. Both operations are explicit one-shot commands.
+
+Seed persistent source work:
+
+```bash
+$COMPOSE --profile collect run --rm hh-adapter \
+  seed --account <account-key> --pages 1
+```
+
+Execute bounded work:
+
+```bash
+$COMPOSE --profile collect run --rm hh-adapter \
+  work --account <account-key> --limit 25
+```
+
+The adapter publishes immutable source payloads to `careerops-raw`. It does not decide vacancy suitability and it does not own application policy.
+
+## Run the normalizer
+
+The normalizer is a manual PySpark batch:
+
+```bash
+$COMPOSE --profile normalize run --rm normalizer
+```
+
+Optional bounded run:
+
+```bash
+$COMPOSE --profile normalize run --rm normalizer --limit 100
+```
+
+A successful batch materializes three outputs:
 
 ```text
-MATCHED
-NOT_EVIDENCED
-UNKNOWN
-CONTRADICTED
+careerops-raw
+    ↓
+PySpark normalization / dedup / DQ
+    ├── careerops-lake/normalized/.../*.json
+    ├── careerops-lake/silver/<entity>/.../*.parquet
+    └── PostgreSQL current references
+```
+
+Parquet batches are content-addressed. Replaying the exact same normalized input set reuses the existing Parquet manifest instead of creating a second logical snapshot.
+
+To validate object output without touching PostgreSQL:
+
+```bash
+$COMPOSE --profile normalize run --rm normalizer --no-postgres
+```
+
+## Run Processing
+
+Start the decision plane explicitly:
+
+```bash
+$COMPOSE --profile decision up -d matching-core reranker processing
+```
+
+Processing consumes normalized vacancy/resume versions, uses the deterministic core plus Jina evidence reranking, and publishes reproducible decisions:
+
+```text
 SKIP
 REVIEW
 APPLICATION_CANDIDATE
 ```
 
-Первые четыре состояния принадлежат P2-06, последние три — P2-07
+It does not submit applications.
 
-### P2-05 не использует lexical prefilter перед Jina
-
-Candidate pool сохраняет высокий recall: обычный requirement получает весь `ResumeEvidenceSet`
-
-`NOT_REQUIRED` requirement не отправляется в reranker
-
-Пустой `ResumeEvidenceSet` фиксируется как `NO_EVIDENCE` без model call
-
-### P2-06 квалифицирует evidence детерминированно
-
-P2-06 использует только ranked candidates P2-05 и квалифицирует их по semantic identity, polarity, actor scope, evidence strength и time spans
-
-Evidence вне выбранного Jina top-k не может молча создать `MATCHED` или `CONTRADICTED` в обход P2-05
-
-Отрицательный вывод `NOT_EVIDENCED` требует exhaustive evidence check: pre-Jina pool должен покрывать весь `ResumeEvidenceSet`, а selected candidates должны исчерпывать этот pool. Если `top_k < |pool|`, отсутствие decisive evidence остаётся `UNKNOWN`; то же правило применяется к выводу о недостаточной длительности опыта
-
-Jina relevance score не используется как threshold для qualification
-
-```text
-MATCHED        → [1,1]
-CONTRADICTED   → [0,0]
-NOT_EVIDENCED  → [0,1]
-UNKNOWN        → [0,1]
-```
-
-`ALL` агрегируется через `min`, `ANY` через `max`. Неустранимый `CONDITIONAL` остаётся неопределённым, а недостаточная evidence duration не превращается в contradiction
-
-### P2-07 принимает bounded policy decision
-
-P2-07 использует qualification bounds и first-class structured compatibility components, включая role, seniority, work format и location
-
-`MANDATORY` и hard critical gate не смешиваются. Contradiction обычного `REQUIRED/MANDATORY` requirement влияет на `mandatory_coverage` и после calibration оценивается через versioned `mandatory_min_support`; до calibration такой случай остаётся `REVIEW`
-
-Доказанное нарушение `PROHIBITED` requirement является non-compensable hard gate и приводит к `SKIP`
-
-Если calibrated policy задаёт положительный вес сигналу, который для exact input нельзя построить, этот компонент остаётся `[0,100]`. Его вес не перераспределяется на доступные компоненты, поэтому отсутствие сигнала не может искусственно повысить conservative score
-
-До появления versioned calibration:
-
-```text
-calibration-unset
-→ APPLICATION_CANDIDATE запрещён
-→ violation PROHIBITED может дать SKIP
-→ остальные случаи REVIEW
-```
-
-После calibration candidate выдаётся только если conservative lower bounds проходят policy. Если даже upper bounds не проходят policy, результат `SKIP`; иначе `REVIEW`
-
-### Runtime Jina полностью pin'ится
-
-Новый P2-05 manifest содержит `JinaVersionBundle`:
-
-- model id/revision
-- custom code revision
-- tokenizer revision
-- backend
-- dtype/quantization
-- фактическую версию torch
-- фактическую версию transformers
-- rendering version
-- selection version
-- block protocol
-- token budget
-- top-k
-
-`careerops-reranker` не доверяет env для версий torch/transformers: они читаются из реально установленных Python distributions
-
-Каждый `/v1/rerank` request содержит expected runtime identity из manifest. Несовпадение runtime identity является deterministic protocol failure
-
-### Manifest cutover P2-04 → P2-05 явный
-
-Исторические P2-04 manifests без `JinaVersionBundle` остаются валидными для P2-04 replay
-
-P2-05 не выполняется для manifest без pinned Jina identity
-
-Новые P2-05 manifests должны содержать `JinaVersionBundle` до запуска P2-03. Поэтому identity остаётся частью input fingerprint независимо от результата filter
-
-### Ошибки модели и отсутствие evidence не смешиваются
-
-Временная недоступность reranker:
-
-```text
-DEFERRED
-→ retry later
-```
-
-Она не превращается в `NO_EVIDENCE` или отрицательный match
-
-Нарушение runtime identity, response contract или pinned token budget является deterministic failure
-
-Deterministic content-addressed integrity/configuration failures в stage executors завершаются terminal failure; transport failures остаются retryable, а потеря lease продолжает работать как отдельный fencing signal
-
-### Current output защищён fencing
-
-P2-07 сначала публикует immutable artifacts и только потом обновляет PostgreSQL current projection
-
-Current publication требует действующую lease точной job identity. Supersede, reconciliation cancellation и explicit pair withdrawal инвалидируют старый `match_results` и withdraw соответствующий `application_candidates`
-
-Stale worker не может вернуть устаревший result в current state
-
-## Production runtime Processing
+Stop the decision plane without touching storage:
 
 ```bash
-python -m careerops_processing check-config
-python -m careerops_processing serve
+$COMPOSE --profile decision stop processing reranker matching-core
 ```
 
-`serve` собирает:
+## Enable applications
+
+Applications are deliberately harder to enable than to disable.
+
+Default configuration:
 
 ```text
-PostgreSQL queue connection
-        │
-        └── PostgresProcessingJobStore
-                │
-                ▼
-        ProcessingWorker
-                │
-                ▼
-          P207Executor
-          │
-          ├── P206Executor
-          │   └── P205Executor
-          │       └── P204Executor
-          │           ├── S3ProcessingInputLoader
-          │           ├── P2-03 filter
-          │           └── P204SemanticArtifactResolver
-          │
-          ├── ProcessingArtifactLoader / Publisher
-          ├── HttpJinaRerankerClient
-          │         │
-          │         ▼
-          │  careerops-reranker
-          │         │
-          │       Jina GPU
-          │
-          └── PostgresMatchPublicationStore
+CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES=false
 ```
 
-Queue, semantic registry и fenced current publication используют отдельные PostgreSQL connections, чтобы heartbeat lease не блокировался extraction, S3, model calls или current-result transaction
+Starting Application Owner while the flag is false fails closed.
 
-Health endpoints:
+For an intentional live application session:
+
+1. inspect the current application candidates and HH profile;
+2. set the following in `/etc/careerops/application-owner/env`:
 
 ```text
-/healthz  liveness процесса
-/readyz   готовность полностью собранного Processing worker
+CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES=true
 ```
 
-Processing readiness означает, что зависимости и worker собраны. Временный model outage обрабатывается на уровне job как `DEFERRED`
-
-## Отдельный GPU runtime
-
-`careerops-reranker` находится в `src/careerops_reranker/`
-
-PyTorch/Transformers не входят в обязательные зависимости основного Processing процесса. Для GPU runtime используется optional extra `reranker-runtime` и отдельный container из `infra/compose/reranker/`
-
-Текущий проверенный container profile использует PyTorch 2.14, CUDA 13.2, Transformers 4.57.3 и FP16. Model/code/tokenizer revision pin'ится отдельно через runtime env
-
-Reranker endpoints:
-
-```text
-/healthz
-/readyz
-/v1/rerank
-```
-
-`/readyz` публикует фактическую runtime identity
-
-Triton JIT cache хранится отдельно от hardened `noexec /tmp` через `TRITON_CACHE_DIR`, чтобы скомпилированные runtime modules могли загружаться с executable persistent filesystem
-
-Подробный deployment runbook находится в `infra/compose/reranker/README.md`
-
-## Processing runtime environment
-
-Processing использует:
-
-```text
-CAREEROPS_PROCESSING_POSTGRES_DSN
-CAREEROPS_PROCESSING_S3_ENDPOINT_URL
-CAREEROPS_PROCESSING_S3_ACCESS_KEY
-CAREEROPS_PROCESSING_S3_SECRET_KEY
-CAREEROPS_PROCESSING_S3_REGION
-CAREEROPS_PROCESSING_NORMALIZED_BUCKET
-CAREEROPS_PROCESSING_ARTIFACTS_BUCKET
-CAREEROPS_PROCESSING_ARTIFACTS_PREFIX
-CAREEROPS_PROCESSING_RERANKER_URL
-CAREEROPS_PROCESSING_RERANKER_TIMEOUT_SECONDS
-CAREEROPS_PROCESSING_RERANKER_UNAVAILABLE_DELAY_SECONDS
-CAREEROPS_PROCESSING_WORKER_ID
-CAREEROPS_PROCESSING_WORKER_LEASE_SECONDS
-CAREEROPS_PROCESSING_WORKER_IDLE_SLEEP_SECONDS
-CAREEROPS_PROCESSING_HEALTH_HOST
-CAREEROPS_PROCESSING_HEALTH_PORT
-```
-
-Текущая P2-06 qualification не требует matching-core target. C++ evaluator должен подключаться только после появления versioned evaluate capability, без изменения semantic contracts P2-06/P2-07
-
-Примеры находятся в `.env.example`, `infra/compose/processing/env.example` и `infra/compose/reranker/env.example`
-
-## Структура кода
-
-```text
-src/
-├── careerops_adapter/
-│   └── hh/
-├── careerops_integrations/
-│   └── hh/
-├── careerops_processing/
-│   ├── contracts/
-│   ├── core/
-│   ├── evaluation/
-│   ├── infrastructure/
-│   ├── service/
-│   ├── executor.py
-│   ├── queue.py
-│   ├── reconciliation.py
-│   ├── selector.py
-│   ├── semantic_cache.py
-│   └── worker.py
-├── careerops_reranker/
-│   ├── config.py
-│   ├── runtime.py
-│   └── server.py
-└── careerops_storage/
-    ├── s3.py
-    └── v2/
-```
-
-### `careerops_adapter.hh`
-
-Владеет read-only HH ingestion и не выполняет matching или отправку откликов
-
-### `careerops_integrations.hh`
-
-Минимальная граница вокруг vendored `hh-applicant-tool`
-
-`hh-applicant-tool/**` рассматривается как внешняя закреплённая зависимость и не меняется кодом CareerOPS
-
-### `careerops_processing.contracts`
-
-Единственный публичный набор versioned DTO Processing
-
-### `careerops_processing.core`
-
-Детерминированная бизнес-логика без PostgreSQL, S3, HTTP, gRPC, HH adapter и service runtime
-
-### `careerops_processing.infrastructure`
-
-Внешние границы Processing:
-
-- PostgreSQL durable queue
-- PostgreSQL semantic artifact registry
-- PostgreSQL fenced current result publication
-- S3 input/artifact stores
-- HTTP client reranker
-- `TargetPolicy` repository
-
-### `careerops_reranker`
-
-Отдельный GPU/model boundary. Не владеет queue, match decision или application actions
-
-## PostgreSQL v2
-
-Каноническая schema:
-
-```text
-careerops_v2
-```
-
-Миграции выполняются только через Alembic v2 lineage
+3. start the owner explicitly:
 
 ```bash
-alembic upgrade head
+$COMPOSE --profile apply up application-owner
 ```
 
-`processing_semantic_artifacts` является индексом переиспользования P2-04 semantic artifacts, а не заменой S3
+Use foreground mode for deliberate live sessions so external writes remain visible. To park applications again:
 
-`match_results` хранит только current pair projection P2-07, а immutable decision trace остаётся в S3
+```bash
+$COMPOSE --profile apply stop application-owner
+```
 
-`application_candidates` является handoff projection и не означает, что отклик уже отправлен
-
-## Артефакты Processing
-
-До P2-07 включительно публикуются:
+Then restore:
 
 ```text
-INPUT_MANIFEST
-FILTER_TRACE
-REQUIREMENT_SET
-RESUME_EVIDENCE_SET
-P2_04_RESULT
-EVIDENCE_CANDIDATE_SET
-P2_05_RESULT
-REQUIREMENT_QUALIFICATION_SET
-P2_06_RESULT
-MATCH_DECISION
-P2_07_RESULT
+CAREEROPS_APPLICATION_ALLOW_EXTERNAL_WRITES=false
 ```
 
-Все артефакты неизменяемы и адресуются по SHA-256. Mutable `latest` pointers не используются
+## Stop everything
 
-## Проверки
+Because Freeze v1 uses no restart policies, stopped containers stay stopped after Docker or host restart.
 
-CI для pull request в `ar/processing-v2` включает:
+```bash
+$COMPOSE \
+  --profile state \
+  --profile admin \
+  --profile collect \
+  --profile normalize \
+  --profile decision \
+  --profile apply \
+  down
+```
 
-- Ruff
-- mypy
-- dependency consistency
-- fast pytest на Python 3.12
-- fast pytest на Python 3.13
-- PostgreSQL integration tests
-- C++ matching-core build
-- Python → C++ gRPC contract tests
+This removes containers and the Compose network. Persistent PostgreSQL and SeaweedFS data under `/srv/careerops` are not deleted.
 
-PostgreSQL integration tests требуют отдельный disposable local/CI database target и не используют runtime DSN как fallback
+## Cold resurrection
 
-## Документация
+With the repository, persistent data and `/etc/careerops` configuration restored, the system does not require a scheduler, Kubernetes cluster or external orchestration layer.
 
-Актуальные документы Processing:
+The minimal resurrection path is:
 
-- `docs/processing/P2-03.md`
-- `docs/processing/P2-03-evaluation.md`
-- `docs/processing/P2-04.md`
-- `docs/processing/P2-05.md`
-- `docs/processing/P2-06.md`
-- `docs/processing/P2-07.md`
-- `infra/compose/reranker/README.md`
+```bash
+$COMPOSE --profile state up -d
+$COMPOSE --profile admin run --rm migrate upgrade head
+$COMPOSE --profile decision up -d matching-core reranker processing
+```
 
-`docs/architecture-reset/progress/**` содержит только исторические снимки разработки и не является нормативным описанием текущей архитектуры
+Ingestion and application submission remain off until separately invoked.
+
+## CI release gates
+
+Freeze v1 has one CI workflow and only these release gates:
+
+1. Ruff + mypy;
+2. Python tests on supported Python versions;
+3. PostgreSQL integration;
+4. SeaweedFS integration;
+5. C++ matching-core build;
+6. Python ↔ C++ gRPC contract;
+7. normalizer contract, image build and Spark Parquet smoke.
+
+Calibration experiments, live Jina E2E, Kubernetes checks and historical architecture experiments are not release gates for the frozen artifact.
+
+## Repository map
+
+```text
+src/careerops_adapter/                 HH source adapter
+src/careerops_processing/              Processing v2 orchestration/contracts
+src/careerops_application/             Application Owner
+services/careerops-matching-core/       C++20 + gRPC deterministic core
+services/careerops-normalizer-spark/    PySpark batch normalizer
+infra/compose/stack/                    canonical parked Compose stack
+infra/compose/*/env.example             runtime configuration examples
+alembic/                                PostgreSQL schema migrations
+proto/                                  gRPC contracts
+tests/                                  unit/contract/integration tests
+docs/                                   architecture history and reference material
+hh-applicant-tool/                      vendored HH transport/auth dependency
+```
+
+## Explicit non-goals of Freeze v1
+
+The frozen runtime does **not** require or automatically start:
+
+- Airflow;
+- Kafka;
+- ClickHouse;
+- Flink;
+- CDC;
+- Kubernetes;
+- cron/systemd ingestion schedulers;
+- continuous production calibration.
+
+Historical documents and experiments can stay in the repository because they explain how the architecture evolved. They are not runtime dependencies and they are not a promise of future implementation.
+
+## Final state
+
+```text
+architecture preserved
+contracts preserved
+containers reproducible
+RAW preserved
+normalized JSON + Parquet reproducible
+PostgreSQL current state reproducible
+matching reproducible
+ingestion OFF by default
+applications OFF by default
+no mandatory running server
+no mandatory Kubernetes
+```
+
+CareerOPS is meant to be resurrectable, not permanently hungry.

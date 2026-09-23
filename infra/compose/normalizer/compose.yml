@@ -1,0 +1,25 @@
+name: careerops-normalizer
+
+services:
+  normalizer:
+    container_name: careerops-normalizer
+    build:
+      context: ../../..
+      dockerfile: infra/compose/normalizer/Dockerfile
+    network_mode: host
+    env_file:
+      - /etc/careerops/normalizer/env
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    command: []
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

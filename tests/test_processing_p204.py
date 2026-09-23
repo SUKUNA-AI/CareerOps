@@ -281,7 +281,7 @@ def _normalized_ref(entity_type: EntityType) -> NormalizedRef:
 def _manifest(*, frontend_exclusion: bool = False) -> ProcessingInputManifest:
     filtering: dict[str, object] = {"schema_version": 1}
     if frontend_exclusion:
-        filtering["allowed_primary_roles"] = ["data_engineering"]
+        filtering["forbidden_primary_roles"] = ["frontend"]
     policy = TargetPolicy.from_content(
         target_key="data_engineer_junior",
         schema_version="careerops.target-policy.v1",

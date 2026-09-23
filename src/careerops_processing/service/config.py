@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProcessingRuntimeConfig(BaseModel):
-    """Настройки Processing runtime до P2-05 включительно"""
+    """Настройки production Processing runtime."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -25,6 +25,8 @@ class ProcessingRuntimeConfig(BaseModel):
     reranker_endpoint_url: str = Field(min_length=1)
     reranker_timeout_seconds: float = Field(gt=0)
     reranker_unavailable_delay_seconds: float = Field(gt=0)
+    matching_core_target: str = Field(default="127.0.0.1:50051", min_length=1)
+    matching_core_timeout_seconds: float = Field(default=5.0, gt=0)
     worker_id: str = Field(min_length=1)
     worker_lease_seconds: int = Field(ge=3)
     worker_idle_sleep_seconds: float = Field(gt=0)
@@ -96,6 +98,15 @@ class ProcessingRuntimeConfig(BaseModel):
                 "CAREEROPS_PROCESSING_RERANKER_UNAVAILABLE_DELAY_SECONDS",
                 "120",
             ),
+            matching_core_target=env.get(
+                "CAREEROPS_PROCESSING_MATCHING_CORE_TARGET",
+                "127.0.0.1:50051",
+            ).strip()
+            or "127.0.0.1:50051",
+            matching_core_timeout_seconds=floating(
+                "CAREEROPS_PROCESSING_MATCHING_CORE_TIMEOUT_SECONDS",
+                "5",
+            ),
             worker_id=env.get("CAREEROPS_PROCESSING_WORKER_ID", socket.gethostname()).strip()
             or socket.gethostname(),
             worker_lease_seconds=integer(
@@ -125,6 +136,8 @@ class ProcessingRuntimeConfig(BaseModel):
             "reranker_endpoint_url": self.reranker_endpoint_url,
             "reranker_timeout_seconds": self.reranker_timeout_seconds,
             "reranker_unavailable_delay_seconds": self.reranker_unavailable_delay_seconds,
+            "matching_core_target": self.matching_core_target,
+            "matching_core_timeout_seconds": self.matching_core_timeout_seconds,
             "worker_id": self.worker_id,
             "worker_lease_seconds": self.worker_lease_seconds,
             "worker_idle_sleep_seconds": self.worker_idle_sleep_seconds,

@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from careerops_adapter.hh.producer import SourceSeedKind, build_source_generation_plan
-from careerops_adapter.hh.worker import _page_watermark_state
-from careerops_integrations.hh.configuration import (
+from careerops_adapter.hh.configuration import (
     load_accounts_config,
     load_discovery_config,
 )
+from careerops_adapter.hh.producer import SourceSeedKind, build_source_generation_plan
+from careerops_adapter.hh.worker import _page_watermark_state
 
 
 def _item(published_at: str | None) -> dict[str, object]:

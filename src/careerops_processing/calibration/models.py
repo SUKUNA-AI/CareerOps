@@ -7,6 +7,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from careerops_processing.contracts.scoring import (
+    validate_non_overlapping_requirement_component_weights,
+)
+
 
 class FrozenCalibrationModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -234,4 +238,5 @@ class P207PolicyCandidate(FrozenCalibrationModel):
             raise ValueError("component weights must be non-negative")
         if sum(self.component_weights.values(), Decimal("0")) <= 0:
             raise ValueError("component_weights must contain positive total weight")
+        validate_non_overlapping_requirement_component_weights(self.component_weights)
         return self

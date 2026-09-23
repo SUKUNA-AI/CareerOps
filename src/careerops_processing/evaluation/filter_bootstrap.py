@@ -384,7 +384,8 @@ def build_filter_bootstrap_corpus(
             target_key="data_engineer_junior",
             expected=exclude,
             title="Java Backend Developer",
-            expected_reason_codes=("filter.primary_role_disjoint",),
+            policy_overrides={"forbidden_primary_roles": ["java_backend"]},
+            expected_reason_codes=("filter.primary_role_forbidden",),
             tags=("role", "hard-exclude"),
         ),
         _case(
@@ -393,7 +394,8 @@ def build_filter_bootstrap_corpus(
             target_key="python_backend_junior",
             expected=exclude,
             title="Frontend Developer",
-            expected_reason_codes=("filter.primary_role_disjoint",),
+            policy_overrides={"forbidden_primary_roles": ["frontend"]},
+            expected_reason_codes=("filter.primary_role_forbidden",),
             tags=("role", "hard-exclude"),
         ),
         _case(
@@ -446,7 +448,8 @@ def build_filter_bootstrap_corpus(
             target_key="data_engineer_junior",
             expected=exclude,
             title="C++ Engineer",
-            expected_reason_codes=("filter.primary_role_disjoint",),
+            policy_overrides={"forbidden_primary_roles": ["cpp"]},
+            expected_reason_codes=("filter.primary_role_forbidden",),
             tags=("role", "cpp", "hard-exclude"),
         ),
         _case(

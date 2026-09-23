@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from careerops_processing.contracts import (
     EntityType,
     FilterOutcome,
     MatchDecision,
+    MatchDecisionBundle,
     NormalizedRef,
     P204ResultArtifact,
     P205ResultArtifact,
@@ -28,8 +30,12 @@ from careerops_processing.contracts import (
     ProcessingInputManifest,
     ProcessingVersionBundle,
     RawObservationRef,
+    RequirementGroupQualification,
+    RequirementQualification,
     RequirementQualificationSet,
     RequirementQualificationState,
+    ScoreBounds,
+    SupportBounds,
 )
 from careerops_processing.executor import (
     P204StageResult,
@@ -37,6 +43,7 @@ from careerops_processing.executor import (
     P206Executor,
     P207Executor,
 )
+from careerops_processing.native_decision import NativeDecisionResult
 from careerops_processing.queue import ProcessingJobLeaseLost
 from careerops_processing.worker import ProcessingExecutionDisposition
 
@@ -206,11 +213,55 @@ class _Loader:
     async def load_evidence_candidate_set(self, _ref: ProcessingArtifactRef):
         return self.candidates
 
-    async def load_requirement_qualification_set(
-        self,
-        _ref: ProcessingArtifactRef,
-    ) -> RequirementQualificationSet:
-        raise AssertionError("P2-07 reuses P2-06 qualification")
+
+class _DecisionCore:
+    def __init__(self, *, calibrated: bool) -> None:
+        self.calibrated = calibrated
+        self.calls = 0
+
+    async def evaluate(self, **kwargs: Any) -> NativeDecisionResult:
+        self.calls += 1
+        manifest: ProcessingInputManifest = kwargs["manifest"]
+        qualification = RequirementQualificationSet(
+            input_fingerprint=manifest.input_fingerprint(),
+            requirement_set_sha256=kwargs["requirement_set_sha256"],
+            resume_evidence_set_sha256=kwargs["resume_evidence_set_sha256"],
+            evidence_candidate_set_sha256=kwargs["evidence_candidate_set_sha256"],
+            qualification_version=manifest.versions.qualification_version,
+            evaluations=(
+                RequirementQualification(
+                    requirement_id="req-python",
+                    state=RequirementQualificationState.MATCHED,
+                    support=SupportBounds(lower=Decimal("1"), upper=Decimal("1")),
+                    selection_complete=True,
+                    ranked_evidence_ids=("ev-python",),
+                    supporting_evidence_ids=("ev-python",),
+                    reason_codes=("requirements.direct_support",),
+                ),
+            ),
+            groups=(
+                RequirementGroupQualification(
+                    group_id="root",
+                    support=SupportBounds(lower=Decimal("1"), upper=Decimal("1")),
+                ),
+            ),
+        )
+        decision_kind = (
+            MatchDecision.APPLICATION_CANDIDATE if self.calibrated else MatchDecision.REVIEW
+        )
+        reason = "match.policy_satisfied" if self.calibrated else "match.calibration_unset"
+        decision = MatchDecisionBundle(
+            input_fingerprint=manifest.input_fingerprint(),
+            requirement_qualification_set_sha256=None,
+            scoring_version=manifest.versions.scoring_version,
+            calibration_version=manifest.versions.calibration_version,
+            policy_version=manifest.target_policy.policy_version,
+            decision=decision_kind,
+            score=ScoreBounds(lower=Decimal("100"), upper=Decimal("100")),
+            deterministic_score=Decimal("100"),
+            reason_codes=(reason,),
+        )
+        return NativeDecisionResult(qualification_set=qualification, decision=decision)
 
 
 class _Publisher:
@@ -333,12 +384,14 @@ def _build_executor(
     events: list[str] = []
     publisher = _Publisher(events)
     loader = _Loader(candidates)
+    native = _DecisionCore(calibrated=calibrated)
     p206 = P206Executor(
         p205=_P205(
             _p205_stage(manifest, outcome=outcome, candidate_ref=candidate_ref)
         ),  # type: ignore[arg-type]
         artifact_loader=loader,
         publisher=publisher,  # type: ignore[arg-type]
+        decision_core=native,
     )
     current = _CurrentPublisher(events, fail_lease=fail_current_lease)
     p207 = P207Executor(
@@ -347,28 +400,27 @@ def _build_executor(
         publisher=publisher,  # type: ignore[arg-type]
         current_publisher=current,  # type: ignore[arg-type]
     )
-    return p206, p207, publisher, current, events
+    return p206, p207, publisher, current, native, events
 
 
 @pytest.mark.asyncio
-async def test_p206_keep_publishes_selected_evidence_qualification() -> None:
-    p206, _, publisher, _, events = _build_executor(calibrated=False)
+async def test_p206_keep_publishes_native_qualification() -> None:
+    p206, _, publisher, _, native, events = _build_executor(calibrated=False)
 
     result = await p206.execute(object())  # type: ignore[arg-type]
 
     assert result.disposition is ProcessingExecutionDisposition.SUCCEEDED
+    assert native.calls == 1
     assert publisher.qualification is not None
     evaluation = publisher.qualification.evaluations[0]
     assert evaluation.state is RequirementQualificationState.MATCHED
-    assert evaluation.ranked_evidence_ids == ("ev-python",)
-    assert evaluation.supporting_evidence_ids == ("ev-python",)
     assert publisher.p206_result.filter_outcome is FilterOutcome.KEEP
     assert events == ["qualification_artifact", "p206_result"]
 
 
 @pytest.mark.asyncio
-async def test_p206_candidate_identity_mismatch_is_terminal_without_publication() -> None:
-    p206, _, _, _, events = _build_executor(
+async def test_p206_candidate_identity_mismatch_is_terminal_without_native_call() -> None:
+    p206, _, _, _, native, events = _build_executor(
         calibrated=False,
         candidate_fingerprint=HASH_A,
     )
@@ -377,17 +429,20 @@ async def test_p206_candidate_identity_mismatch_is_terminal_without_publication(
 
     assert result.disposition is ProcessingExecutionDisposition.TERMINAL_FAILURE
     assert result.error_category == "processing.p206.input_identity_mismatch"
+    assert native.calls == 0
     assert events == []
 
 
 @pytest.mark.asyncio
-async def test_p207_uncalibrated_keep_is_review_and_artifact_first() -> None:
-    _, p207, publisher, current, events = _build_executor(calibrated=False)
+async def test_p207_uncalibrated_keep_is_native_review_and_artifact_first() -> None:
+    _, p207, publisher, current, native, events = _build_executor(calibrated=False)
 
     result = await p207.execute(object())  # type: ignore[arg-type]
 
     assert result.disposition is ProcessingExecutionDisposition.SUCCEEDED
+    assert native.calls == 1
     assert publisher.decision.decision is MatchDecision.REVIEW
+    assert publisher.decision.requirement_qualification_set_sha256 == HASH_C
     assert current.decision.decision is MatchDecision.REVIEW
     assert current.candidate_ttl_seconds is None
     assert events == [
@@ -401,11 +456,12 @@ async def test_p207_uncalibrated_keep_is_review_and_artifact_first() -> None:
 
 @pytest.mark.asyncio
 async def test_p207_calibrated_match_publishes_application_candidate_ttl() -> None:
-    _, p207, publisher, current, events = _build_executor(calibrated=True)
+    _, p207, publisher, current, native, events = _build_executor(calibrated=True)
 
     result = await p207.execute(object())  # type: ignore[arg-type]
 
     assert result.disposition is ProcessingExecutionDisposition.SUCCEEDED
+    assert native.calls == 1
     assert publisher.decision.decision is MatchDecision.APPLICATION_CANDIDATE
     assert current.decision.decision is MatchDecision.APPLICATION_CANDIDATE
     assert current.candidate_ttl_seconds == 3600
@@ -413,8 +469,8 @@ async def test_p207_calibrated_match_publishes_application_candidate_ttl() -> No
 
 
 @pytest.mark.asyncio
-async def test_p207_exclude_proven_skips_qualification_and_publishes_skip() -> None:
-    _, p207, publisher, current, events = _build_executor(
+async def test_p207_exclude_proven_skips_native_core_and_publishes_skip() -> None:
+    _, p207, publisher, current, native, events = _build_executor(
         calibrated=False,
         outcome=FilterOutcome.EXCLUDE_PROVEN,
     )
@@ -422,6 +478,7 @@ async def test_p207_exclude_proven_skips_qualification_and_publishes_skip() -> N
     result = await p207.execute(object())  # type: ignore[arg-type]
 
     assert result.disposition is ProcessingExecutionDisposition.SUCCEEDED
+    assert native.calls == 0
     assert publisher.qualification is None
     assert publisher.decision.decision is MatchDecision.SKIP
     assert publisher.decision.requirement_qualification_set_sha256 is None
@@ -436,7 +493,7 @@ async def test_p207_exclude_proven_skips_qualification_and_publishes_skip() -> N
 
 @pytest.mark.asyncio
 async def test_p207_stale_current_publication_leaves_immutable_artifacts_first() -> None:
-    _, p207, _, _, events = _build_executor(
+    _, p207, _, _, _, events = _build_executor(
         calibrated=True,
         fail_current_lease=True,
     )
