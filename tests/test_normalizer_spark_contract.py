@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -55,7 +54,7 @@ def test_vacancy_normalization_matches_processing_contract() -> None:
         "careerops-raw",
     )
 
-    contract = NormalizedVacancy.model_validate(json.loads(result.payload_json))
+    contract = NormalizedVacancy.model_validate_json(result.payload_json)
     assert contract.source_entity_id == "vac-1"
     assert contract.raw.raw_sha256 == normalizer.sha256_bytes(body)
     assert contract.dq.processing_ready is True
@@ -96,7 +95,7 @@ def test_resume_normalization_matches_processing_contract() -> None:
         "careerops-raw",
     )
 
-    contract = NormalizedResume.model_validate(json.loads(result.payload_json))
+    contract = NormalizedResume.model_validate_json(result.payload_json)
     assert contract.source_entity_id == "resume-1"
     assert contract.account_key == "primary"
     assert contract.experience_entries[0].currently_active.value is True
