@@ -50,18 +50,7 @@ async def claim_rebind_candidate(
     )
     app_row = await application.fetchone()
     if app_row is None:
-        diagnostic = await connection.execute(
-            """
-            SELECT app.id, app.status, app.reason_code, app.submitted_at,
-                   app.confirmed_at, app.lease_token, guard.application_id
-            FROM careerops_v2.applications app
-            LEFT JOIN careerops_v2.application_guards guard
-              ON guard.application_id = app.id
-            ORDER BY app.created_at DESC
-            LIMIT 5
-            """
-        )
-        raise RuntimeError(f"stale rebind application diagnostic: {await diagnostic.fetchall()!r}")
+        return None
 
     application_id = UUID(str(app_row[0]))
     account_id = int(app_row[1])
