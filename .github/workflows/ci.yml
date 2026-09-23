@@ -145,7 +145,10 @@ jobs:
               raise SystemExit("calibration source manifest has no vacancies")
           if counts.get("unique_resumes", 0) <= 0:
               raise SystemExit("calibration source manifest has no resumes")
-          if sum(counts.get(key, 0) for key in ("APPLICATION_CANDIDATE", "REVIEW", "SKIP")) != counts["pairs"]:
+          if sum(
+              counts.get(key, 0)
+              for key in ("APPLICATION_CANDIDATE", "REVIEW", "SKIP")
+          ) != counts["pairs"]:
               raise SystemExit("calibration decision counts do not sum to pair count")
 
           split = manifest.get("split", {})
@@ -214,10 +217,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            hh-applicant-tool/pyproject.toml
 
-      - name: Install CareerOPS
-        run: python -m pip install -e ".[dev]"
+      - name: Install CareerOPS and applicant vendor
+        run: python -m pip install -e ".[dev]" ./hh-applicant-tool
 
       - name: Run fast pytest suite
         run: |
@@ -293,10 +298,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            hh-applicant-tool/pyproject.toml
 
-      - name: Install CareerOPS
-        run: python -m pip install -e ".[dev]"
+      - name: Install CareerOPS and applicant vendor
+        run: python -m pip install -e ".[dev]" ./hh-applicant-tool
 
       - name: Run PostgreSQL integration suite
         run: |
