@@ -244,6 +244,8 @@ jobs:
       - name: Smoke Spark Parquet writer
         run: |
           docker run --rm \
-            --entrypoint python3 \
+            -v "${PWD}/tests/fixtures/spark_parquet_smoke.py:/tmp/careerops-parquet-smoke.py:ro" \
+            --entrypoint /opt/spark/bin/spark-submit \
             careerops-normalizer:freeze \
-            -c 'from pyspark.sql import SparkSession; import tempfile; s=SparkSession.builder.master("local[1]").getOrCreate(); p=tempfile.mkdtemp(); s.createDataFrame([("ok",)], ["value"]).write.parquet(p + "/out"); s.stop()'
+            --master local[1] \
+            /tmp/careerops-parquet-smoke.py

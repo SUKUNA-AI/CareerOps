@@ -1,5 +1,7 @@
 name: careerops
 
+# CareerOPS Freeze v1: every runtime component is profile-gated and restart is disabled.
+# Nothing starts from this file unless the operator explicitly selects a profile/service.
 services:
   postgres:
     profiles: ["state"]
@@ -11,7 +13,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - /srv/careerops/postgres:/var/lib/postgresql
-    restart: unless-stopped
+    restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
@@ -43,7 +45,7 @@ services:
     volumes:
       - /srv/careerops/seaweedfs/master:/data
     networks: ["seaweed"]
-    restart: unless-stopped
+    restart: "no"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9333/cluster/status"]
       interval: 10s
@@ -59,7 +61,7 @@ services:
     volumes:
       - /srv/careerops/seaweedfs/volume:/data
     networks: ["seaweed"]
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       seaweed-master:
         condition: service_healthy
@@ -78,7 +80,7 @@ services:
     volumes:
       - /srv/careerops/seaweedfs/filer:/data
     networks: ["seaweed"]
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       seaweed-master:
         condition: service_healthy
@@ -101,7 +103,7 @@ services:
     ports:
       - "127.0.0.1:8333:8333"
     networks: ["seaweed"]
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       seaweed-filer:
         condition: service_healthy
@@ -156,7 +158,7 @@ services:
     network_mode: host
     environment:
       CAREEROPS_MATCHING_CORE_LISTEN_ADDR: 127.0.0.1:50051
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -195,7 +197,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: ["gpu"]
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -224,7 +226,7 @@ services:
     network_mode: host
     env_file:
       - /etc/careerops/processing/env
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -255,7 +257,7 @@ services:
       - /etc/careerops/application-owner/env
     volumes:
       - /etc/careerops/hh-applicant-tool:/var/lib/careerops/hh-applicant-tool:rw
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
