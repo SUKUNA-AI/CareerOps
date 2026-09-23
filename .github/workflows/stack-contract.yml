@@ -1,0 +1,78 @@
+name: Frozen stack contract
+
+on:
+  push:
+    branches:
+      - main
+      - architecture-reset
+      - "ar/**"
+  pull_request:
+    branches:
+      - main
+      - architecture-reset
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-config:
+    name: Docker Compose / frozen stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Materialize non-secret validation config
+        run: |
+          sudo mkdir -p \
+            /etc/careerops/postgres \
+            /etc/careerops/seaweedfs \
+            /etc/careerops/hh-adapter \
+            /etc/careerops/normalizer \
+            /etc/careerops/reranker \
+            /etc/careerops/processing \
+            /etc/careerops/application-owner
+          sudo cp infra/compose/postgres/env.example /etc/careerops/postgres/env
+          sudo cp infra/compose/hh-adapter/env.example /etc/careerops/hh-adapter/env
+          sudo cp infra/compose/normalizer/env.example /etc/careerops/normalizer/env
+          sudo cp infra/compose/reranker/env.example /etc/careerops/reranker/env
+          sudo cp infra/compose/processing/env.example /etc/careerops/processing/env
+          sudo cp infra/compose/application-owner/env.example /etc/careerops/application-owner/env
+          echo '{"identities":[]}' | sudo tee /etc/careerops/seaweedfs/s3.json >/dev/null
+
+      - name: Validate full profile graph
+        run: |
+          docker compose \
+            -f infra/compose/stack/compose.yml \
+            --profile state \
+            --profile admin \
+            --profile collect \
+            --profile normalize \
+            --profile decision \
+            --profile apply \
+            config --quiet
+
+      - name: Assert parked default has no enabled services
+        run: |
+          set -euo pipefail
+          services="$(docker compose -f infra/compose/stack/compose.yml config --services)"
+          test -z "${services}"
+
+      - name: Assert explicit risk boundaries
+        run: |
+          set -euo pipefail
+          collect="$(docker compose -f infra/compose/stack/compose.yml --profile collect config --services)"
+          apply="$(docker compose -f infra/compose/stack/compose.yml --profile apply config --services)"
+          decision="$(docker compose -f infra/compose/stack/compose.yml --profile decision config --services)"
+          test "${collect}" = "hh-adapter"
+          test "${apply}" = "application-owner"
+          printf '%s\n' "${decision}" | grep -qx 'matching-core'
+          printf '%s\n' "${decision}" | grep -qx 'reranker'
+          printf '%s\n' "${decision}" | grep -qx 'processing'
