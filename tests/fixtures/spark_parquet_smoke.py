@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from pyspark.sql import SparkSession
 
+SparkSession = __import__("pyspark.sql", fromlist=["SparkSession"]).SparkSession
 
 spark = SparkSession.builder.master("local[1]").appName("careerops-parquet-smoke").getOrCreate()
 try:
