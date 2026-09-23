@@ -51,6 +51,6 @@ def test_retired_vendor_autonomous_application_runtime_is_absent() -> None:
     offenders = [
         str(path.relative_to(PROJECT_ROOT))
         for path in runtime_files
-        if "apply-vacancies" in path.read_text(encoding="utf-8")
+        if path.exists() and "apply-vacancies" in path.read_text(encoding="utf-8")
     ]
     assert offenders == []
