@@ -50,7 +50,18 @@ async def claim_rebind_candidate(
     )
     app_row = await application.fetchone()
     if app_row is None:
-        return None
+        diagnostic = await connection.execute(
+            """
+            SELECT app.id, app.status, app.reason_code, app.submitted_at,
+                   app.confirmed_at, app.lease_token, guard.application_id
+            FROM careerops_v2.applications app
+            LEFT JOIN careerops_v2.application_guards guard
+              ON guard.application_id = app.id
+            ORDER BY app.created_at DESC
+            LIMIT 5
+            """
+        )
+        raise RuntimeError(f"stale rebind application diagnostic: {await diagnostic.fetchall()!r}")
 
     application_id = UUID(str(app_row[0]))
     account_id = int(app_row[1])
@@ -66,7 +77,7 @@ async def claim_rebind_candidate(
         exclude_application_id=application_id,
         limit_cooldown_seconds=limit_cooldown_seconds,
     ):
-        return None
+        raise RuntimeError("stale rebind account gate unexpectedly closed")
 
     await connection.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
@@ -83,7 +94,7 @@ async def claim_rebind_candidate(
     )
     guard_row = await guard.fetchone()
     if guard_row is None or UUID(str(guard_row[0])) != application_id:
-        return None
+        raise RuntimeError(f"stale rebind guard diagnostic: {guard_row!r}")
 
     current = await connection.execute(
         f"""
@@ -169,7 +180,28 @@ async def claim_rebind_candidate(
     )
     current_row = await current.fetchone()
     if current_row is None:
-        return None
+        diagnostic = await connection.execute(
+            """
+            SELECT ac.id, ac.processing_job_id, ac.status, ac.expires_at > now(),
+                   pj.status, mr.processing_job_id, mr.decision,
+                   rb.account_id, rb.binding_version, rb.enabled, rb.auto_apply,
+                   r.id, r.lifecycle, r.present_in_upstream,
+                   v.source_vacancy_id, v.archived, v.closed_for_applicants,
+                   app.processing_job_id, app.status, app.reason_code
+            FROM careerops_v2.applications app
+            JOIN careerops_v2.application_candidates ac ON ac.id = app.candidate_id
+            JOIN careerops_v2.processing_jobs pj ON pj.id = ac.processing_job_id
+            LEFT JOIN careerops_v2.match_results mr
+              ON mr.vacancy_id = ac.vacancy_id
+             AND mr.binding_id = ac.binding_id
+            JOIN careerops_v2.resume_bindings rb ON rb.id = ac.binding_id
+            JOIN careerops_v2.resumes r ON r.id = rb.resume_id
+            JOIN careerops_v2.vacancies v ON v.id = ac.vacancy_id
+            WHERE app.id = %s
+            """,
+            (application_id,),
+        )
+        raise RuntimeError(f"stale rebind current diagnostic: {await diagnostic.fetchall()!r}")
 
     candidate_id = UUID(str(current_row[0]))
     processing_job_id = UUID(str(current_row[1]))
