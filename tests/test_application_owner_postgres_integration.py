@@ -152,42 +152,54 @@ async def _publish_newer_current_result(
     assert row is not None
     vacancy_id, binding_id = int(row[0]), int(row[1])
     job_id = uuid4()
-    await connection.execute(
-        """
-        INSERT INTO careerops_v2.processing_jobs (
-            id, vacancy_id, binding_id, binding_version, input_fingerprint,
-            input_manifest_uri, pipeline_version, policy_version,
-            status, next_attempt_at, finished_at, result_artifact_uri
-        ) VALUES (
-            %s, %s, %s, 1, %s, 's3://ci/manifest-new.json', 'pipeline', 'policy',
-            'succeeded', NULL, now(), 's3://ci/result-new.json'
+
+    async with connection.transaction():
+        await connection.execute(
+            """
+            INSERT INTO careerops_v2.processing_jobs (
+                id, vacancy_id, binding_id, binding_version, input_fingerprint,
+                input_manifest_uri, pipeline_version, policy_version,
+                status, next_attempt_at, finished_at, result_artifact_uri
+            ) VALUES (
+                %s, %s, %s, 1, %s, 's3://ci/manifest-new.json', 'pipeline', 'policy',
+                'succeeded', NULL, now(), 's3://ci/result-new.json'
+            )
+            """,
+            (job_id, vacancy_id, binding_id, "b" * 64),
         )
-        """,
-        (job_id, vacancy_id, binding_id, "b" * 64),
-    )
-    await connection.execute(
-        """
-        UPDATE careerops_v2.match_results
-        SET processing_job_id = %s,
-            deterministic_score = 96,
-            artifact_uri = 's3://ci/result-new.json',
-            computed_at = now(),
-            updated_at = now()
-        WHERE vacancy_id = %s AND binding_id = %s
-        """,
-        (job_id, vacancy_id, binding_id),
-    )
-    await connection.execute(
-        """
-        UPDATE careerops_v2.application_candidates
-        SET processing_job_id = %s,
-            status = 'eligible',
-            expires_at = now() + interval '1 hour',
-            updated_at = now()
-        WHERE id = %s
-        """,
-        (job_id, candidate_id),
-    )
+        await connection.execute(
+            """
+            INSERT INTO careerops_v2.match_results (
+                vacancy_id, binding_id, processing_job_id, decision,
+                deterministic_score, reason_codes, artifact_uri, computed_at
+            )
+            VALUES (
+                %s, %s, %s, 'eligible', 96,
+                ARRAY['ok'], 's3://ci/result-new.json', now()
+            )
+            ON CONFLICT (vacancy_id, binding_id)
+            DO UPDATE SET
+                processing_job_id = EXCLUDED.processing_job_id,
+                decision = EXCLUDED.decision,
+                deterministic_score = EXCLUDED.deterministic_score,
+                reason_codes = EXCLUDED.reason_codes,
+                artifact_uri = EXCLUDED.artifact_uri,
+                computed_at = EXCLUDED.computed_at,
+                updated_at = now()
+            """,
+            (vacancy_id, binding_id, job_id),
+        )
+        await connection.execute(
+            """
+            UPDATE careerops_v2.application_candidates
+            SET processing_job_id = %s,
+                status = 'eligible',
+                expires_at = now() + interval '1 hour',
+                updated_at = now()
+            WHERE id = %s
+            """,
+            (job_id, candidate_id),
+        )
     return job_id
 
 
